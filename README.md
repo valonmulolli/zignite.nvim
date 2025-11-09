@@ -36,7 +36,7 @@ The `zig build` command, executed from the `zig` directory, compiles the Zig sou
 
 <details>
 
-<summary>📋 Copy</summary>
+<summary>Copy</summary>
 
 
 
