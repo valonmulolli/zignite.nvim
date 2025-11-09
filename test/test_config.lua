@@ -19,7 +19,12 @@ _G.vim = {
             end
         end
         return result
-    end
+    end,
+    keymap = {
+        set = function(mode, lhs, rhs, opts)
+            -- Mock keymap.set - do nothing for testing
+        end
+    }
 }
 
 local config = require('zignite.config')

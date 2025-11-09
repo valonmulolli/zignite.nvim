@@ -1,5 +1,5 @@
 -- Simple test runner for Zignite.nvim
--- Run with: nvim --headless -c "lua require('test.runner')"
+-- Run with: lua test/runner.lua (from project root)
 
 local M = {}
 
@@ -14,9 +14,15 @@ end
 function M.run_tests()
     print("Running Zignite.nvim tests...")
 
+    -- Add the project root to package.path for local requires
+    local project_root = arg[1] or "."
+    package.path = package.path .. ';' .. project_root .. '/lua/?.lua'
+    package.path = package.path .. ';' .. project_root .. '/lua/?/init.lua'
+    package.path = package.path .. ';' .. project_root .. '/test/?.lua'
+
     local test_files = {
-        "test.utils",
-        "test.config"
+        "test_utils",
+        "test_config"
     }
 
     local passed = 0
@@ -41,6 +47,11 @@ function M.run_tests()
     if failed > 0 then
         os.exit(1)
     end
+end
+
+-- If run directly
+if arg and arg[0]:match("runner%.lua") then
+    M.run_tests()
 end
 
 return M
