@@ -135,10 +135,143 @@ Zignite comes with a set of default keymaps for common actions. You can customiz
 
 ## Usage
 
-## Usage
+### Commands
 
 - `:RunCode`: Execute the current file or visual selection.
 - `:RunFile`: Execute the current file.
+- `:RunFile tab`: Execute the current file in a new tab.
+- `:RunFile split`: Execute the current file in a horizontal split.
+- `:RunFile vsplit`: Execute the current file in a vertical split.
 - `:RunClose`: Close the runner window.
-- `:RunProject`: Run the project.
+- `:RunProject`: Run the project (detects project root automatically).
 - `:StopCode`: Terminate the currently running process.
+
+### Visual Mode
+
+Select code in visual mode and run `:RunCode` to execute only the selected portion.
+
+### Project Detection
+
+Zignite automatically detects project types based on common markers:
+
+- `package.json` → Node.js project
+- `Cargo.toml` → Rust project
+- `go.mod` → Go project
+- Custom project configurations can be added in the setup function
+
+## Examples
+
+### Basic Usage
+
+```vim
+" Run current file
+:RunFile
+
+" Run visual selection
+:'<,'>RunCode
+
+" Run project
+:RunProject
+
+" Stop running process
+:StopCode
+```
+
+### Custom Configuration
+
+```lua
+require('zignite.config').setup({
+    -- Custom runners
+    runners = {
+        python = "python3 -u $file",
+        javascript = "node $file",
+        -- Add compiled languages with cleanup
+        c = {
+            cmd = {"gcc $file -o /tmp/$fileNameWithoutExt", "/tmp/$fileNameWithoutExt"},
+            cleanup_command = "rm /tmp/$fileNameWithoutExt"
+        }
+    },
+
+    -- Custom keymaps
+    keymaps = {
+        { "n", "<F5>", ":RunFile<CR>", { desc = "Run file" } },
+        { "v", "<F5>", ":RunCode<CR>", { desc = "Run selection" } },
+    },
+
+    -- UI customization
+    float = {
+        width = 0.9,
+        height = 0.9,
+        border = "double"
+    }
+})
+```
+
+### Project Configuration
+
+```lua
+require('zignite.config').setup({
+    project = {
+        -- Node.js project
+        ["/home/user/myapp/.*"] = {
+            name = "My Node.js App",
+            command = "npm run dev"
+        },
+        -- Rust project
+        ["/home/user/rustapp/.*"] = {
+            name = "My Rust App",
+            command = "cargo run"
+        }
+    }
+})
+```
+
+## Variable Substitution
+
+Zignite supports extensive variable substitution in commands:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `$file` | Full file path | `/home/user/main.py` |
+| `$fileName` | Filename with extension | `main.py` |
+| `$fileNameWithoutExt` | Filename without extension | `main` |
+| `$dir` | Directory path | `/home/user/project` |
+| `$fileExt` | File extension | `py` |
+| `$dirName` | Directory name | `project` |
+
+## Troubleshooting
+
+### "Zig executable not found"
+Make sure Zig is installed and the plugin is built:
+```bash
+cd ~/.local/share/nvim/lazy/zignite.nvim/zig
+zig build
+```
+
+### "No runner configured for filetype"
+Add a custom runner in your configuration:
+```lua
+require('zignite.config').setup({
+    runners = {
+        your_filetype = "your_command $file"
+    }
+})
+```
+
+### Process doesn't stop
+Use `:StopCode` to terminate running processes. If that doesn't work, restart Neovim.
+
+### File not found errors
+Ensure your buffer is saved (`:w`) before running code.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
