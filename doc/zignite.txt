@@ -1,0 +1,59 @@
+*zignite.txt*    For Zignite.nvim
+
+==============================================================================
+CONTENTS                                                 *zignite-contents*
+
+1. Introduction........................................|zignite-introduction|
+2. Usage...............................................|zignite-usage|
+3. Configuration.......................................|zignite-configuration|
+
+==============================================================================
+INTRODUCTION                                           *zignite-introduction*
+
+Zignite.nvim is a blazingly fast, asynchronous code runner for Neovim,
+powered by a Zig backend.
+
+It allows you to execute code from the current buffer or a visual selection
+without blocking the UI, displaying the output in a clean floating window.
+
+==============================================================================
+USAGE                                                        *zignite-usage*
+
+COMMANDS                                                   *zignite-commands*
+
+:RunCode
+    Executes the code in the current buffer. If run from visual mode, it
+    will only execute the selected text.
+
+:RunFile
+    Executes the current file.
+
+:RunClose
+    Closes the runner window.
+
+:RunProject
+    Runs the project.
+
+:StopCode
+    Stops the currently running code execution.
+
+==============================================================================
+CONFIGURATION                                          *zignite-configuration*
+
+Zignite uses a setup function to allow for customization.
+
+Example:
+>lua
+    require('zignite.config').setup({
+        runners = {
+            -- Override or add new filetype runners here
+            python = "python3",
+            lua = "lua",
+        },
+    })
+<
+The `runners` table maps a filetype to the command that should be used to
+execute it. If the command contains a `%`, it will be replaced by the path
+to the file being executed.
+
+vim:tw=78:ts=8:sw=4:sts=4:et:ft=help:norl:
