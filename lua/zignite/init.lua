@@ -470,6 +470,10 @@ function M.setup(opts)
 	config.setup(opts)
 end
 
+function M.show_algorithms()
+	require("zignite.algorithm").show_algorithm_picker()
+end
+
 -- Initialize with defaults if not already set up
 if vim.tbl_isempty(config.options) then
 	config.setup()
