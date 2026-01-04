@@ -22,7 +22,8 @@ function M.run_tests()
 
     local test_files = {
         "test_utils",
-        "test_config"
+        "test_config",
+        -- "integration" -- Requires nvim environment
     }
 
     local passed = 0
