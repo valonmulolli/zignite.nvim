@@ -109,8 +109,3 @@ vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
  
 	zignite.select_build_command(mode)
 end, { nargs = "?" })
- 
--- Create the :ZigniteAlgo user command for algorithm visualizations (NEW!)
-vim.api.nvim_create_user_command("ZigniteAlgo", function()
-	zignite.show_algorithms()
-end, {})

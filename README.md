@@ -19,7 +19,6 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **High-Performance Backend**: Core process management logic is written in Zig.
 - **Safety Timeouts**: Automatically kill processes that run too long (infinite loops) via the Zig backend.
 - **Quickfix Integration**: Automatically populates the Quickfix list on error, allowing you to jump straight to the correct line.
-- **Algorithm Visualization**: Visual gallery of common algorithms rendered using Typst (Bubble Sort, Binary Search, etc.).
 - **Build System Support**: First-class support for `cargo`, `zig build`, `npm`, `make`, etc.
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
@@ -28,7 +27,6 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 
 - Neovim >= 0.7
 - Zig (latest version recommended)
-- Typst (optional, for algorithm rendering)
 
 
 ## Installation
@@ -103,7 +101,6 @@ require('zignite.config').setup({
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunClose`: Close the runner window.
 - `:StopCode`: Terminate the currently running process.
-- `:ZigniteAlgo`: Open the visual algorithm explorer (Typst).
 
 ### Build Command Picker
 
