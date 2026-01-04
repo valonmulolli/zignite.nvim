@@ -301,7 +301,7 @@ require("zignite.config").setup({
     -- ========================================================================
     
     -- Spinner configuration
-    spinner = "dots",              -- "dots", "line", "bar", "clock", "arrows", "dots2", etc.
+    spinner = "dots",              -- "dots", "line", "bar", "arrows", "dots2", etc.
     spinner_speed = 80,            -- Speed in milliseconds
     enable_animations = true,      -- Enable/disable animations and spinners
     
