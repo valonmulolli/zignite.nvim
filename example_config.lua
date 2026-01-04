@@ -80,6 +80,15 @@ require("zignite.config").setup({
         lua = { "cd $dir", "lua $fileName" },
         ruby = "ruby $file",
         php = "php $file",
+        odin = "odin run $file",
+        fortran = {
+            cmd = {
+                "cd $dir",
+                "gfortran $fileName -o /tmp/$fileNameWithoutExt",
+                "/tmp/$fileNameWithoutExt",
+            },
+            cleanup_command = "rm /tmp/$fileNameWithoutExt"
+        },
     },
     
     -- ========================================================================
@@ -128,6 +137,22 @@ require("zignite.config").setup({
             -- Add custom commands
             vet = "go vet ./...",
             fmt = "go fmt ./...",
+        },
+        
+        -- Odin
+        odin = {
+            build = "odin build .",
+            run = "odin run .",
+            test = "odin test .",
+            release = "odin build . -o:speed",
+            check = "odin check .",
+        },
+        
+        -- Fortran
+        fortran = {
+            build = "gfortran *.f90 -o main",
+            run = "gfortran *.f90 -o main && ./main",
+            clean = "rm main",
         },
         
         -- JavaScript/TypeScript
@@ -280,6 +305,9 @@ require("zignite.config").setup({
     spinner_speed = 80,            -- Speed in milliseconds
     enable_animations = true,      -- Enable/disable animations and spinners
     
+    -- Execution configuration
+    timeout = nil,                 -- Timeout in ms (e.g. 5000). nil = disabled.
+    
     -- Output configuration
     show_stderr_prefix = false,    -- Whether to prefix stderr with [STDERR]
     no_stderr_prefix_types = {"zig", "go", "rust"}, -- Languages that use stderr normally
@@ -421,10 +449,5 @@ vim.api.nvim_create_autocmd("FileType", {
 -- ============================================================================
 
 -- See these files for more information:
---   • COMPLETE_SUMMARY.md    - Complete feature overview
---   • BUILD_COMMANDS.md      - All build commands
---   • COMMAND_PICKER.md      - Interactive picker guide
---   • C_CPP_BUILD_GUIDE.md   - C/C++ build systems
---   • KEYMAP_SETUP.md        - Keymap configuration
---   • FIX_SUMMARY.md         - All fixes and features
 --   • README.md              - User documentation
+--   • doc/zignite.txt        - Vim help file
