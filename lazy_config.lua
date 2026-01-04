@@ -1,6 +1,6 @@
 return {
   {
-    dir = "/home/v470n/Dev/work/zignite.nvim-v0",
+    "valonmulolli/zignite.nvim",
     build = "cd zig && zig build",
     lazy = false,  -- Load on startup, not lazy
     keys = {
@@ -124,6 +124,15 @@ return {
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
           },
+          odin = "odin run $file",
+          fortran = {
+            cmd = {
+              "cd $dir",
+              "gfortran $fileName -o /tmp/$fileNameWithoutExt",
+              "/tmp/$fileNameWithoutExt",
+            },
+            cleanup_command = "rm /tmp/$fileNameWithoutExt",
+          },
         },
         
         -- ====================================================================
@@ -157,6 +166,22 @@ return {
             test = "go test ./...",
             clean = "go clean",
             mod = "go mod tidy",
+          },
+          
+          -- Odin
+          odin = {
+            build = "odin build .",
+            run = "odin run .",
+            test = "odin test .",
+            release = "odin build . -o:speed",
+            check = "odin check .",
+          },
+          
+          -- Fortran
+          fortran = {
+            build = "gfortran *.f90 -o main",
+            run = "gfortran *.f90 -o main && ./main",
+            clean = "rm main",
           },
           
           -- JavaScript/TypeScript
@@ -241,6 +266,9 @@ return {
         spinner = "dots",
         spinner_speed = 80,
         enable_animations = true,
+        
+        -- Execution configuration
+        timeout = nil,  -- Timeout in ms (e.g. 5000). nil = disabled.
         
         -- Output configuration
         show_stderr_prefix = false,
