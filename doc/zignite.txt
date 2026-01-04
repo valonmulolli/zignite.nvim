@@ -1,59 +1,437 @@
-*zignite.txt*    For Zignite.nvim
+*zignite.txt*    Blazing-fast code runner for Neovim with Zig backend
 
 ==============================================================================
-CONTENTS                                                 *zignite-contents*
+CONTENTS                                                    *zignite-contents*
 
-1. Introduction........................................|zignite-introduction|
-2. Usage...............................................|zignite-usage|
-3. Configuration.......................................|zignite-configuration|
+1. Introduction..........................................|zignite-introduction|
+2. Features..............................................|zignite-features|
+3. Commands..............................................|zignite-commands|
+4. Keymaps...............................................|zignite-keymaps|
+5. Configuration.........................................|zignite-configuration|
+6. Build Commands........................................|zignite-build-commands|
+7. Languages.............................................|zignite-languages|
+8. Examples..............................................|zignite-examples|
 
 ==============================================================================
-INTRODUCTION                                           *zignite-introduction*
+INTRODUCTION                                            *zignite-introduction*
 
 Zignite.nvim is a blazingly fast, asynchronous code runner for Neovim,
-powered by a Zig backend.
+powered by a Zig backend for maximum performance.
 
-It allows you to execute code from the current buffer or a visual selection
-without blocking the UI, displaying the output in a clean floating window.
+Features:
+  • Execute code files instantly in Interactive Terminal
+  • Run visual selections
+  • Project-level execution with auto-detection
+  • 50+ build commands across 20+ languages
+  • Interactive command picker
+  • Multiple output modes (float, split, vsplit, tab)
+  • Beautiful animated UI with spinners
+  • Syntax highlighting in output
+  • Safety timeouts for infinite loops
+  • Quickfix integration for errors
+  • Asynchronous, non-blocking execution
 
 ==============================================================================
-USAGE                                                        *zignite-usage*
+FEATURES                                                    *zignite-features*
 
-COMMANDS                                                   *zignite-commands*
+FILE EXECUTION~
+Run any code file with a single keypress. Supports 20+ languages including
+C, C++, Rust, Zig, Go, Python, JavaScript, TypeScript, and more.
 
+PROJECT EXECUTION~
+Auto-detects project type and runs appropriate commands:
+  • package.json → npm start
+  • Cargo.toml → cargo run
+  • go.mod → go run .
+  • build.zig → zig build run
+  • Makefile → make
+
+BUILD COMMANDS~
+Execute language-specific build commands:
+  • Rust: build, run, test, release, check, clean
+  • Zig: build, run, test, release
+  • Go: build, run, test, clean, mod
+  • C/C++: Make, CMake, Meson support (25+ commands)
+  • JavaScript/TypeScript: npm commands
+  • Python: pytest, pip
+
+INTERACTIVE PICKER~
+Visual command picker with:
+  • j/k navigation
+  • Arrow indicator
+  • Highlighted selection
+  • Quick select (1-9)
+  • Bottom-right aligned
+
+INTERACTIVE TERMINAL~
+The floating window is a fully interactive terminal buffer:
+  • Supports user input (stdin)
+  • Renders full ANSI color codes
+  • Real-time output streaming
+
+SAFETY & ERROR HANDLING~
+  • Timeouts: Automatically kills processes (e.g., infinite loops)
+    if they exceed the configured time limit.
+  • Quickfix: Automatically parses errors and populates the Quickfix
+    list, allowing you to jump to the error quickly.
+
+==============================================================================
+COMMANDS                                                    *zignite-commands*
+
+                                                                    *:RunFile*
+:RunFile [mode]
+    Execute the current file.
+    
+    Arguments:
+      [mode]    Optional output mode: float, split, vsplit, tab
+    
+    Examples: >
+        :RunFile
+        :RunFile split
+        :RunFile vsplit
+        :RunFile tab
+<
+
+                                                                    *:RunCode*
 :RunCode
-    Executes the code in the current buffer. If run from visual mode, it
-    will only execute the selected text.
+    Execute code in visual selection or current buffer.
+    
+    Usage:
+      1. Select code in visual mode
+      2. Run :'<,'>RunCode
+    
+    Example: >
+        " Select lines in visual mode
+        V
+        :'<,'>RunCode
+<
 
-:RunFile
-    Executes the current file.
+                                                                 *:RunProject*
+:RunProject [mode]
+    Execute project-level command (auto-detected).
+    
+    Arguments:
+      [mode]    Optional output mode: float, split, vsplit, tab
+    
+    Examples: >
+        :RunProject
+        :RunProject tab
+<
 
+                                                                   *:RunBuild*
+:RunBuild <command> [mode]
+    Execute specific build command for current language.
+    
+    Arguments:
+      <command>  Build command name (use tab completion)
+      [mode]     Optional output mode: float, split, vsplit, tab
+    
+    Examples: >
+        :RunBuild run
+        :RunBuild test
+        :RunBuild release
+        :RunBuild cmake-run
+        :RunBuild test split
+<
+    
+    Tab completion shows available commands for current filetype.
+
+                                                            *:RunBuildSelect*
+:RunBuildSelect [mode]
+    Show interactive picker to select build command.
+    
+    Arguments:
+      [mode]    Optional output mode: float, split, vsplit, tab
+    
+    Navigation:
+      j, ↓      Move down
+      k, ↑      Move up
+      Enter     Select command
+      1-9       Quick select
+      Esc, q    Cancel
+    
+    Examples: >
+        :RunBuildSelect
+        :RunBuildSelect split
+<
+
+                                                                  *:RunClose*
 :RunClose
-    Closes the runner window.
+    Close the output window.
 
-:RunProject
-    Runs the project.
-
+                                                                  *:StopCode*
 :StopCode
-    Stops the currently running code execution.
+    Stop the currently running process.
+
+==============================================================================
+KEYMAPS                                                      *zignite-keymaps*
+
+Default keymaps:
+
+  <leader>r       Run current file                          *<leader>r*
+  <leader>rb      Show build command picker                 *<leader>rb*
+  <leader>rp      Run project                               *<leader>rp*
+  <leader>rq      Close output window                       *<leader>rq*
+  <leader>rt      Run file in new tab                       *<leader>rt*
+  <leader>rv      Run file in vertical split                *<leader>rv*
+  <leader>rh      Run file in horizontal split              *<leader>rh*
+
+All keymaps are customizable via configuration.
 
 ==============================================================================
 CONFIGURATION                                          *zignite-configuration*
 
-Zignite uses a setup function to allow for customization.
-
-Example:
->lua
-    require('zignite.config').setup({
-        runners = {
-            -- Override or add new filetype runners here
-            python = "python3",
-            lua = "lua",
+Basic setup: >lua
+    require("zignite.config").setup({
+        mode = "float",  -- Default output mode
+        timeout = nil,   -- Timeout in ms (e.g. 5000). nil = disabled.
+        
+        keymaps = {
+            { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
+            { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Build picker" } },
         },
     })
 <
-The `runners` table maps a filetype to the command that should be used to
-execute it. If the command contains a `%`, it will be replaced by the path
-to the file being executed.
 
+RUNNERS~
+                                                          *zignite-config-runners*
+Customize file execution commands: >lua
+    runners = {
+        python = "python3 -u $file",
+        javascript = { "cd $dir", "node $fileName" },
+        c = {
+            cmd = {
+                "cd $dir",
+                "gcc $fileName -o /tmp/$fileNameWithoutExt",
+                "/tmp/$fileNameWithoutExt",
+            },
+            cleanup_command = "rm /tmp/$fileNameWithoutExt"
+        },
+    }
+<
+
+Available variables:
+  $file                 Full absolute path
+  $fileName             Filename with extension
+  $fileNameWithoutExt   Filename without extension
+  $dir                  Directory path
+  $fileExt              File extension
+  $dirName              Directory name
+
+BUILD COMMANDS~
+                                                   *zignite-config-build-commands*
+Customize build commands: >lua
+    build_commands = {
+        rust = {
+            build = "cargo build",
+            run = "cargo run",
+            test = "cargo test",
+            bench = "cargo bench",  -- Add custom commands
+        },
+    }
+<
+
+UI CONFIGURATION~
+                                                            *zignite-config-ui*
+Customize floating window: >lua
+    float = {
+        border = "rounded",
+        height = 0.8,
+        width = 0.8,
+        x = 0.5,  -- Center horizontally
+        y = 0.5,  -- Center vertically
+    }
+<
+
+Customize terminal: >lua
+    term = {
+        position = "bot",  -- bot, top, left, right
+        size = 15,
+        focus = true,
+    }
+<
+
+Customize animations: >lua
+    spinner = "dots",  -- dots, line, bar, clock, arrows, etc.
+    spinner_speed = 80,
+    enable_animations = true,
+<
+
+PROJECT DETECTION~
+                                                       *zignite-config-project*
+Custom project patterns: >lua
+    project = {
+        [vim.fn.expand("~/Dev/myapp") .. "/.*"] = {
+            name = "My App",
+            command = "npm run dev",
+        },
+    }
+<
+
+==============================================================================
+BUILD COMMANDS                                        *zignite-build-commands*
+
+RUST (CARGO)~
+  build             cargo build
+  run               cargo run
+  test              cargo test
+  release           cargo build --release
+  release-run       cargo run --release
+  check             cargo check
+  clean             cargo clean
+
+ZIG~
+  build             zig build
+  run               zig build run
+  test              zig build test
+  release           zig build -Doptimize=ReleaseFast
+  release-run       zig build run -Doptimize=ReleaseFast
+
+GO~
+  build             go build
+  run               go run .
+  test              go test ./...
+  clean             go clean
+  mod               go mod tidy
+
+C/C++ (MAKE)~
+  build             make
+  run               make run
+  clean             make clean
+  test              make test
+  install           make install
+  debug             make debug
+
+C/C++ (CMAKE)~
+  cmake-config      cmake -B build
+  cmake-build       cmake --build build
+  cmake-run         cmake --build build && ./build/main
+  cmake-clean       rm -rf build
+  cmake-debug       cmake -B build -DCMAKE_BUILD_TYPE=Debug
+  cmake-release     cmake -B build -DCMAKE_BUILD_TYPE=Release
+  cmake-test        cd build && ctest
+
+C/C++ (MESON)~
+  meson-setup       meson setup build
+  meson-build       meson compile -C build
+  meson-run         meson compile -C build && ./build/main
+  meson-clean       rm -rf build
+  meson-test        meson test -C build
+
+JAVASCRIPT/TYPESCRIPT (NPM)~
+  start             npm start
+  dev               npm run dev
+  build             npm run build
+  test              npm test
+  install           npm install
+
+PYTHON~
+  run               python -m main
+  test              pytest
+  install           pip install -r requirements.txt
+
+==============================================================================
+LANGUAGES                                                  *zignite-languages*
+
+COMPILED LANGUAGES~
+  C, C++, Rust, Zig, Go, Java, Kotlin, Haskell
+
+SCRIPTING LANGUAGES~
+  Python, JavaScript, TypeScript, Lua, Ruby, PHP, Perl, R, Julia
+
+OTHER~
+  Shell (bash, zsh), HTML, Dart, Swift, Elixir
+
+Total: 20+ languages supported
+
+==============================================================================
+EXAMPLES                                                    *zignite-examples*
+
+QUICK FILE EXECUTION~
+>
+    nvim test.py
+    <leader>r  " Runs python3 test.py
+<
+
+BUILD COMMANDS~
+>
+    nvim src/main.rs
+    :RunBuild run      " cargo run
+    :RunBuild test     " cargo test
+    :RunBuild release  " cargo build --release
+<
+
+INTERACTIVE PICKER~
+>
+    nvim src/main.rs
+    <leader>rb         " Show picker
+    " Navigate with j/k
+    " Press Enter to select
+<
+
+PROJECT EXECUTION~
+>
+    nvim src/main.zig  " In a Zig project
+    <leader>rp         " Runs zig build run
+<
+
+DIFFERENT OUTPUT MODES~
+>
+    :RunFile split     " Run in horizontal split
+    :RunFile vsplit    " Run in vertical split
+    :RunFile tab       " Run in new tab
+<
+
+VISUAL SELECTION~
+>
+    " Select code in visual mode
+    V
+    :'<,'>RunCode      " Run selected code
+<
+
+C++ WITH CMAKE~
+>
+    nvim main.cpp
+    <leader>rb         " Show picker
+    " Select 'cmake-run'
+    " Or:
+    :RunBuild cmake-run
+<
+
+==============================================================================
+TROUBLESHOOTING                                      *zignite-troubleshooting*
+
+PLUGIN NOT LOADING~
+Check if commands exist: >
+    :echo exists(':RunFile')
+<
+Should return 2. If not, check your plugin manager configuration.
+
+KEYMAPS NOT WORKING~
+Check keymap: >
+    :nmap <leader>r
+<
+Should show the mapping. If not, check for conflicts.
+
+BUILD COMMANDS NOT AVAILABLE~
+Check if build commands are configured for your filetype: >
+    :lua print(vim.inspect(require("zignite.config").options.build_commands))
+<
+
+ZIG BACKEND NOT FOUND~
+Build the Zig backend: >
+    cd /path/to/zignite.nvim-v0/zig
+    zig build
+<
+
+==============================================================================
+ABOUT                                                          *zignite-about*
+
+Author:  Zignite Contributors
+License: MIT
+Repository: https://github.com/valonmulolli/zignite.nvim
+
+For bug reports and feature requests, please use the GitHub issue tracker.
+
+==============================================================================
 vim:tw=78:ts=8:sw=4:sts=4:et:ft=help:norl:
