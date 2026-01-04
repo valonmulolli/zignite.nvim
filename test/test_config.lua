@@ -12,13 +12,27 @@ _G.vim = {
             local tbl = select(i, ...)
             for k, v in pairs(tbl) do
                 if type(v) == "table" and type(result[k]) == "table" then
-                    result[k] = _G.vim.tbl_deep_extend(behavior, result[k], v)
+                    result[k] = vim.tbl_deep_extend(behavior, result[k], v)
                 else
                     result[k] = v
                 end
             end
         end
         return result
+    end,
+    tbl_contains = function(tbl, value)
+        for _, v in ipairs(tbl) do
+            if v == value then return true end
+        end
+        return false
+    end,
+    log = {
+        levels = {
+            WARN = 1
+        }
+    },
+    notify = function(msg, level)
+        -- Mock notify - do nothing
     end,
     keymap = {
         set = function(mode, lhs, rhs, opts)
