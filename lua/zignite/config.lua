@@ -230,7 +230,7 @@ M.defaults = {
 	},
 
 	-- Spinner configuration
-	spinner = "dots", -- Spinner type: "dots", "line", "bar", "clock", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
+	spinner = "dots", -- Spinner type: "dots", "line", "bar", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
 	spinner_speed = 80, -- Speed in milliseconds
 	enable_animations = true, -- Enable/disable animations and spinners
 	

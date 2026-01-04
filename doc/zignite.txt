@@ -252,7 +252,7 @@ Customize terminal: >lua
 <
 
 Customize animations: >lua
-    spinner = "dots",  -- dots, line, bar, clock, arrows, etc.
+    spinner = "dots",  -- dots, line, bar, arrows, etc.
     spinner_speed = 80,
     enable_animations = true,
 <
