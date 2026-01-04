@@ -35,6 +35,8 @@ local function get_float_config()
 		border = config.border,
 		title = " Zignite Runner ",
 		title_pos = "center",
+		footer = " q: close | i: input ",
+		footer_pos = "right",
 	}
 end
 
@@ -95,23 +97,28 @@ function M.stop_spinner()
 	end
 end
 
--- Update title with exit code (Success/Error)
 function M.set_exit_status(win_id, exit_code)
 	M.stop_spinner()
 	if not vim.api.nvim_win_is_valid(win_id) then return end
-
-	-- Exit code 0 is success, anything else is error
-	local icon = (exit_code == 0) and "✓" or "✗"
+ 
+	local success = (exit_code == 0)
+	local icon = success and "✓" or "✗"
+	local status_text = success and "Success" or "Error"
 	
-	-- Format: " ✓ Finished (Code: 0) "
-	local title = string.format(" %s Finished (Code: %d) ", icon, exit_code)
-	
+	-- Update title
+	local title = string.format(" %s %s (Code: %d) ", icon, status_text, exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { title = title })
-
-	-- Optional: Scroll to bottom one last time
+	
+	-- Update footer to show we are done
+	local footer = string.format(" Process exited with %d ", exit_code)
+	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
+ 
+	-- Optional: Scroll to bottom
 	local buf = vim.api.nvim_win_get_buf(win_id)
 	local line_count = vim.api.nvim_buf_line_count(buf)
-	pcall(vim.api.nvim_win_set_cursor, win_id, { line_count, 0 })
+	if line_count > 0 then
+		pcall(vim.api.nvim_win_set_cursor, win_id, { line_count, 0 })
+	end
 end
 
 -- Main function to run command in interactive float
