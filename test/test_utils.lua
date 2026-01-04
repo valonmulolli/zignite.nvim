@@ -29,6 +29,10 @@ _G.vim = {
         end,
         shellescape = function(str)
             return "'" .. str:gsub("'", "'\"'\"'") .. "'"
+        end,
+        filereadable = function(path)
+            if path:match("package.json$") then return 1 end
+            return 0
         end
     },
     fs = {
@@ -38,6 +42,26 @@ _G.vim = {
     },
     tbl_isempty = function(tbl)
         return next(tbl) == nil
+    end,
+    tbl_extend = function(behavior, ...)
+        local result = {}
+        for i = 1, select('#', ...) do
+            local tbl = select(i, ...)
+            for k, v in pairs(tbl) do
+                if type(v) == "table" and type(result[k]) == "table" then
+                    result[k] = vim.tbl_extend(behavior, result[k], v)
+                else
+                    result[k] = v
+                end
+            end
+        end
+        return result
+    end,
+    tbl_contains = function(tbl, value)
+        for _, v in ipairs(tbl) do
+            if v == value then return true end
+        end
+        return false
     end
 }
 
@@ -95,9 +119,32 @@ local function test_project_detection()
     print("✓ Project detection test passed")
 end
 
+-- Test project marker detection
+local function test_project_marker_detection()
+    -- Mock vim.fn.filereadable
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.filereadable = function(path)
+        if path:match("package.json$") then return 1 end
+        return 0
+    end
+
+    local filepath = "/home/user/project/src/main.js"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Project not detected by marker")
+    assert(project.name == "Node.js Project", "Project name not correct")
+    assert(project.command == "npm start", "Project command not correct")
+
+    -- Restore
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Project marker detection test passed")
+end
+
 -- Run all tests
 test_substitute_variables()
 test_normalize_command()
 test_project_detection()
+test_project_marker_detection()
 
 print("All utils tests passed!")
