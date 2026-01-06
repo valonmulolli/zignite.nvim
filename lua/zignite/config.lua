@@ -265,6 +265,8 @@ M.defaults = {
 		close_key = "<Esc>", -- Key to close the window
 		focus = true, -- Auto-focus the window on open
 		startinsert = false, -- Enter insert mode when the window opens
+		border_hl_success = "DiagnosticOk", -- Highlight group for success border (e.g., "DiagnosticOk", "String", "DiffAdd")
+		border_hl_error = "DiagnosticError", -- Highlight group for error border (e.g., "DiagnosticError", "Error", "DiffDelete")
 	},
 
 	-- Terminal configuration for split/vsplit/tab modes
@@ -274,6 +276,9 @@ M.defaults = {
 		focus = true, -- Focus on terminal after opening
 		startinsert = true, -- Start in insert mode
 	},
+	
+	-- Execution behavior
+	singleton = true, -- If true, only one runner window can be open at a time (previous one is closed)
 }
 
 -- This will hold the merged user and default configuration

@@ -1,9 +1,25 @@
 local M = {}
 
--- Keep track of the last window / buffer to close it if a new run is triggered
-local last_win_id = nil
-local last_buf_id = nil
+-- Keep track of runner windows
+-- If singleton = true, this will only ever have 1 item
+local runners = {} 
 local spinner_timer = nil
+
+-- Helper to track a new runner
+local function track_runner(win_id, buf_id)
+	table.insert(runners, { win_id = win_id, buf_id = buf_id })
+end
+
+-- Helper to remove invalid runners from tracking
+local function clean_tracked_runners()
+	local valid = {}
+	for _, runner in ipairs(runners) do
+		if vim.api.nvim_win_is_valid(runner.win_id) then
+			table.insert(valid, runner)
+		end
+	end
+	runners = valid
+end
 
 -- Spinner frames
 local spinner_frames = {
@@ -39,17 +55,20 @@ local function get_float_config()
 	}
 end
 
--- Close existing runner output
+-- Close existing runner output(s)
 function M.close_output()
 	M.stop_spinner()
-	if last_win_id and vim.api.nvim_win_is_valid(last_win_id) then
-		vim.api.nvim_win_close(last_win_id, true)
+	
+	-- Close all tracked runners
+	for _, runner in ipairs(runners) do
+		if vim.api.nvim_win_is_valid(runner.win_id) then
+			vim.api.nvim_win_close(runner.win_id, true)
+		end
+		if vim.api.nvim_buf_is_valid(runner.buf_id) then
+			vim.api.nvim_buf_delete(runner.buf_id, { force = true })
+		end
 	end
-	if last_buf_id and vim.api.nvim_buf_is_valid(last_buf_id) then
-		vim.api.nvim_buf_delete(last_buf_id, { force = true })
-	end
-	last_win_id = nil
-	last_buf_id = nil
+	runners = {}
 end
 
 -- Start the spinner animation in the window title
@@ -60,7 +79,7 @@ function M.start_title_spinner(win_id, base_title)
 		return
 	end
 
-	M.stop_spinner() -- Stop any existing
+	M.stop_spinner() -- Stop any existing (LIMITATION: only 1 spinner at a time for now)
 
 	local frames = spinner_frames[config.spinner] or spinner_frames.dots
 	local frame_index = 1
@@ -97,7 +116,10 @@ function M.stop_spinner()
 end
 
 function M.set_exit_status(win_id, exit_code)
+	-- Only stop spinner if it belongs to this window (heuristic)
+	-- For now, stopping global spinner is safe enough
 	M.stop_spinner()
+	
 	if not vim.api.nvim_win_is_valid(win_id) then return end
  
 	local success = (exit_code == 0)
@@ -111,6 +133,13 @@ function M.set_exit_status(win_id, exit_code)
 	-- Update footer to show we are done
 	local footer = string.format(" Process exited with %d ", exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
+
+	-- Update border highlight based on status
+	local config = require("zignite.config").options.float
+	local new_border_hl = success and (config.border_hl_success or "DiagnosticOk") or (config.border_hl_error or "DiagnosticError")
+	
+	-- We need to preserve the Normal highlight and only update FloatBorder
+	pcall(vim.api.nvim_win_set_option, win_id, "winhl", "Normal:Normal,FloatBorder:" .. new_border_hl)
  
 	-- Optional: Scroll to bottom
 	local buf = vim.api.nvim_win_get_buf(win_id)
@@ -122,19 +151,27 @@ end
 
 -- Main function to run command in interactive float
 function M.run_in_float_terminal(command, on_exit_cb, title_name)
-	M.close_output()
+	local config = require("zignite.config").options
+	
+	if config.singleton then
+		M.close_output()
+	else
+		-- Clean up invalid runner handles
+		clean_tracked_runners()
+	end
 
 	-- Create buffer
 	local buf = vim.api.nvim_create_buf(false, true)
-	last_buf_id = buf
 
 	-- Create window
 	local opts = get_float_config()
 	opts.title = " Preparing... "
-	local float_config = require("zignite.config").options.float
+	local float_config = config.float
 	
 	local win = vim.api.nvim_open_win(buf, true, opts)
-	last_win_id = win
+	
+	-- Track this new runner
+	track_runner(win, buf)
 
 	-- Set highlights
 	vim.api.nvim_win_set_option(win, "winhl", "Normal:Normal,FloatBorder:" .. float_config.border_hl)
@@ -146,15 +183,15 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name)
 	-- Note: <C-\><C-n> escapes to normal mode
 	vim.api.nvim_buf_set_keymap(buf, "t", close_key, "<C-\\><C-n>:close<CR>", { noremap = true, silent = true })
 
-	-- Start Spinner
+	-- Start Spinner (only animates the focused/latest one)
 	M.start_title_spinner(win, "Running " .. (title_name or "Code"))
 
 	-- Run Terminal
 	local job_id = vim.fn.termopen(command, {
 		on_exit = function(job_id, exit_code, event)
-			-- Update title logic on exit
-			if last_win_id and vim.api.nvim_win_is_valid(last_win_id) then
-				M.set_exit_status(last_win_id, exit_code)
+			-- Update title logic on exit for THIS specific window
+			if vim.api.nvim_win_is_valid(win) then
+				M.set_exit_status(win, exit_code)
 			end
 			
 			-- Populate Quickfix on Error
@@ -191,11 +228,13 @@ end
 
 -- Legacy support for split/tab execution
 function M.run_in_split_terminal(mode, command, on_exit_cb)
-	M.close_output() 
+	local config_opts = require("zignite.config").options
+	if config_opts.singleton then
+		M.close_output()
+	end
 	
-	local config = require("zignite.config").options.term
+	local config = config_opts.term
 	local buf = vim.api.nvim_create_buf(false, true)
-	last_buf_id = buf
 	
 	local win
 	if mode == "tab" then
@@ -214,7 +253,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb)
 		vim.api.nvim_win_set_height(win, config.size)
 	end
 	
-	last_win_id = win
+	track_runner(win, buf)
 
 	local job_id = vim.fn.termopen(command, {
 		on_exit = function(_, exit_code)

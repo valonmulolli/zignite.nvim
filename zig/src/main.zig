@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const TimeoutContext = struct {
     child_ptr: *std.process.Child,
@@ -37,7 +38,9 @@ pub fn main() !void {
     }
 
     // Get the shell to use
-    const shell = std.posix.getenv("SHELL") orelse "/bin/sh";
+    // On Windows, default to cmd.exe if SHELL not set. On POSIX, /bin/sh.
+    const default_shell = if (builtin.os.tag == .windows) "cmd.exe" else "/bin/sh";
+    const shell = std.posix.getenv("SHELL") orelse default_shell;
 
     // Use the remaining argument as the complete command string
     const full_command = args[command_idx];
@@ -88,11 +91,8 @@ pub fn main() !void {
 }
 
 fn timeoutWatcher(ctx: *TimeoutContext) void {
-    const seconds = ctx.duration / 1000;
-    const nanoseconds = (ctx.duration % 1000) * 1_000_000;
-
-    // Zig 0.15 posix.nanosleep takes (seconds, nanoseconds)
-    std.posix.nanosleep(seconds, nanoseconds);
+    // Cross-platform sleep (Zig std.time.sleep takes nanoseconds)
+    std.time.sleep(ctx.duration * 1_000_000);
 
     // If we wake up and process is meant to be killed
     _ = ctx.child_ptr.kill() catch {};
