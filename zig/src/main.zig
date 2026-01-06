@@ -91,8 +91,8 @@ pub fn main() !void {
 }
 
 fn timeoutWatcher(ctx: *TimeoutContext) void {
-    // Cross-platform sleep (Zig std.time.sleep takes nanoseconds)
-    std.time.sleep(ctx.duration * 1_000_000);
+    // Cross-platform sleep (std.Thread.sleep takes nanoseconds)
+    std.Thread.sleep(ctx.duration * 1_000_000);
 
     // If we wake up and process is meant to be killed
     _ = ctx.child_ptr.kill() catch {};
