@@ -33,8 +33,8 @@ local PLUGIN_PATH = get_plugin_path()
 
 -- Helper function to get visual selection
 local function get_visual_selection()
-	local _, start_line, start_col, _ = unpack(vim.fn.getpos("'<"))
-	local _, end_line, end_col, _ = unpack(vim.fn.getpos("'>"))
+	local _, start_line, start_col, _ = table.unpack(vim.fn.getpos("'<"))
+	local _, end_line, end_col, _ = table.unpack(vim.fn.getpos("'>"))
 	if start_line == 0 or end_line == 0 then
 		return ""
 	end
@@ -138,12 +138,12 @@ function M.run_code(range, mode)
 	end
 
 	-- Use the plugin's Zig executable wrapper, or fallback to direct shell
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zig"
+	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
 	local use_zig = vim.fn.executable(zig_executable) == 1
 
 	if not use_zig then
 		vim.notify(
-			"Zig executable not found at " .. zig_executable .. ", falling back to direct shell execution",
+			"Zignite executable not found at " .. zig_executable .. ", falling back to direct shell execution",
 			vim.log.levels.INFO
 		)
 	end
@@ -152,12 +152,12 @@ function M.run_code(range, mode)
 	if use_zig then
 		-- Use a list to avoid double shell escaping issues
 		system_command = { zig_executable }
-		
+
 		-- Add timeout if configured
 		if config.options.timeout and type(config.options.timeout) == "number" then
 			table.insert(system_command, "--timeout=" .. config.options.timeout)
 		end
-		
+
 		table.insert(system_command, final_command)
 	else
 		system_command = final_command
@@ -217,7 +217,7 @@ function M.run_project(mode)
 	-- Substitute variables
 	command = utils.substitute_variables(command, filepath)
 
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zig"
+	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
 	if vim.fn.executable(zig_executable) == 1 then
 		command = zig_executable .. " " .. vim.fn.shellescape(command)
 	end
@@ -272,11 +272,16 @@ function M.run_build_command(command_name, mode)
 		cwd = vim.fn.fnamemodify(filepath, ":h")
 	end
 
+	-- Substitute variables using project root for correct $projectName
+	-- We create a dummy filepath pointing to the project root
+	local project_filepath = cwd .. "/dummy.c"
+	command = utils.substitute_variables(command, project_filepath)
+
 	-- Prepend cd to project root
 	local final_command = "cd " .. vim.fn.shellescape(cwd) .. " && " .. command
 
 	-- Use Zig executable wrapper
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zig"
+	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
 	local system_command
 	if vim.fn.executable(zig_executable) == 1 then
 		system_command = { zig_executable }
@@ -304,13 +309,43 @@ function M.select_build_command(mode)
 		return
 	end
 
+	-- Get project root to detect build system
+	local filepath = vim.fn.expand("%:p")
+	local root = utils.get_project_root(filepath, config.options.project)
+	if not root then
+		root = vim.fn.fnamemodify(filepath, ":h")
+	end
+
+	-- Detect build systems
+	local has_cmake = vim.fn.filereadable(vim.fs.joinpath(root, "CMakeLists.txt")) == 1
+	local has_meson = vim.fn.filereadable(vim.fs.joinpath(root, "meson.build")) == 1
+	local has_makefile = vim.fn.filereadable(vim.fs.joinpath(root, "Makefile")) == 1
+
+	-- Determine strict filtering mode
+	local filtering = has_cmake or has_meson or has_makefile
+
 	-- Create list of commands
 	local commands = {}
 	for cmd_name, cmd_string in pairs(build_cmds) do
-		table.insert(commands, {
-			name = cmd_name,
-			command = cmd_string,
-		})
+		local include = true
+
+		if filtering then
+			if string.match(cmd_name, "^cmake%-") then
+				include = has_cmake
+			elseif string.match(cmd_name, "^meson%-") then
+				include = has_meson
+			else
+				-- Assume standard commands (run, build, test) belong to Makefile / Generic
+				include = has_makefile
+			end
+		end
+
+		if include then
+			table.insert(commands, {
+				name = cmd_name,
+				command = cmd_string,
+			})
+		end
 	end
 
 	-- Sort by name
@@ -324,14 +359,18 @@ function M.select_build_command(mode)
 	-- Prepare lines for display (compact, no empty lines)
 	local lines = {}
 	for _, cmd in ipairs(commands) do
-		table.insert(lines, string.format("  %-18s → %s", cmd.name, cmd.command))
+		local display_cmd = cmd.command
+		if #display_cmd > 50 then
+			display_cmd = string.sub(display_cmd, 1, 47) .. "..."
+		end
+		table.insert(lines, string.format("  %-18s → %s", cmd.name, display_cmd))
 	end
 	table.insert(lines, "j/k: navigate | Enter: select | Esc: cancel")
 
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	vim.api.nvim_buf_set_option(buf, "modifiable", false)
-	vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-	vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
+	vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
 
 	-- Calculate window size based on content (more compact)
 	local max_width = 0
@@ -358,8 +397,8 @@ function M.select_build_command(mode)
 	local win = vim.api.nvim_open_win(buf, true, win_opts)
 
 	-- Enable cursor line highlighting
-	vim.api.nvim_win_set_option(win, "cursorline", true)
-	vim.api.nvim_win_set_option(win, "winhl", "Normal:Normal,FloatBorder:FloatBorder,CursorLine:Visual")
+	vim.api.nvim_set_option_value("cursorline", true, { win = win })
+	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:FloatBorder,CursorLine:Visual", { win = win })
 
 	-- Namespace for virtual text
 	local ns_id = vim.api.nvim_create_namespace("zignite_picker")
