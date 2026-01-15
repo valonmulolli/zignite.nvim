@@ -14,10 +14,18 @@ function M.substitute_variables(command, filepath)
 	local fileExt = vim.fn.fnamemodify(file, ":e")
 
 	-- Additional useful variables
-	local dirName = vim.fn.fnamemodify(dir, ":t") -- Just the directory name
-	local fileDirPath = dir -- Full directory path (same as $dir)
+	local dirName = vim.fn.fnamemodify(dir, ":t")    -- Just the directory name
+	local fileDirPath = dir                          -- Full directory path (same as $dir)
 	local relativeFile = vim.fn.fnamemodify(file, ":.") -- Relative to CWD
 	local relativeDir = vim.fn.fnamemodify(dir, ":.") -- Relative dir to CWD
+
+	-- Project Name detection
+	local projectName = dirName
+	local project_root = M.get_project_root(file)
+	if project_root then
+		projectName = vim.fn.fnamemodify(project_root, ":t")
+	end
+	local projectNameShort = projectName:gsub("%-cli$", ""):gsub("%-tui$", ""):gsub("%-app$", "")
 
 	-- Create substitution map with proper escaping
 	local substitutions = {
@@ -33,12 +41,16 @@ function M.substitute_variables(command, filepath)
 		["$fileDirPath"] = vim.fn.shellescape(fileDirPath),
 		["$relativeFile"] = vim.fn.shellescape(relativeFile),
 		["$relativeDir"] = vim.fn.shellescape(relativeDir),
+		["$projectName"] = vim.fn.shellescape(projectName),
+		["$projectNameShort"] = vim.fn.shellescape(projectNameShort),
 
 		-- Unescaped versions (for cases where we need raw paths)
 		["$DIR"] = dir,
 		["$FILE"] = file,
 		["$FILENAME"] = fileName,
 		["$FILENAMEWITHOUTEXT"] = fileNameWithoutExt,
+		["$PROJECTNAME"] = projectName,
+		["$PROJECTNAMESHORT"] = projectNameShort,
 
 		-- Legacy support for %
 		["%%"] = vim.fn.shellescape(file),
@@ -96,7 +108,8 @@ local default_project_markers = {
 	["build.zig"] = { name = "Zig Project", command = "zig build run" },
 	["pyproject.toml"] = { name = "Python Project", command = "python -m main" },
 	["Makefile"] = { name = "Make Project", command = "make run" },
-	["CMakeLists.txt"] = { name = "CMake Project", command = "cmake --build build && ./build/main" },
+	["CMakeLists.txt"] = { name = "CMake Project", command = "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && { ./build/$fileNameWithoutExt || ./build/$dirName || ./build/main; }" },
+	["meson.build"] = { name = "Meson Project", command = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && { ./build/$fileNameWithoutExt || ./build/$dirName || ./build/main; }" },
 }
 
 -- Detect project by markers
@@ -105,9 +118,21 @@ local function detect_project_by_markers(filepath)
 	-- Check current directory and parent directories
 	local current_dir = dir
 	for _ = 1, 10 do -- Limit search to 10 levels up
-		for marker, project_data in pairs(default_project_markers) do
+		-- Priority order for detection
+		local priority_markers = {
+			"meson.build",
+			"CMakeLists.txt",
+			"build.zig",
+			"Cargo.toml",
+			"go.mod",
+			"package.json",
+			"pyproject.toml",
+			"Makefile",
+		}
+
+		for _, marker in ipairs(priority_markers) do
 			if vim.fn.filereadable(current_dir .. "/" .. marker) == 1 then
-				return vim.tbl_extend("force", project_data, { root = current_dir })
+				return vim.tbl_extend("force", default_project_markers[marker], { root = current_dir })
 			end
 		end
 		local parent = vim.fn.fnamemodify(current_dir, ":h")
@@ -236,4 +261,3 @@ function M.normalize_command(runner)
 end
 
 return M
-
