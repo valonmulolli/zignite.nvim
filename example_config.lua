@@ -6,37 +6,37 @@
 -- ============================================================================
 
 require("zignite.config").setup({
-    
+
     -- ========================================================================
     -- KEYMAPS
     -- ========================================================================
     keymaps = {
         -- File execution
-        { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
-        { "n", "<leader>rf", ":RunFile<CR>", { desc = "Run file" } },
-        
-        -- Build command picker (NEW!)
+        { "n", "<leader>r",  ":RunFile<CR>",        { desc = "Run file" } },
+        { "n", "<leader>rf", ":RunFile<CR>",        { desc = "Run file" } },
+
+        -- Build command picker
         { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
-        
+
         -- Project execution
-        { "n", "<leader>rp", ":RunProject<CR>", { desc = "Run project" } },
-        
+        { "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
+
         -- Output modes
-        { "n", "<leader>rt", ":RunFile tab<CR>", { desc = "Run file in new tab" } },
+        { "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
         { "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
-        { "n", "<leader>rh", ":RunFile split<CR>", { desc = "Run file in horizontal split" } },
-        
+        { "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
+
         -- Control
-        { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
-        { "n", "<leader>rs", ":StopCode<CR>", { desc = "Stop execution" } },
+        { "n", "<leader>rq", ":RunClose<CR>",       { desc = "Close runner" } },
+        { "n", "<leader>rs", ":StopCode<CR>",       { desc = "Stop execution" } },
     },
-    
+
     -- ========================================================================
     -- OUTPUT MODE
     -- ========================================================================
     -- Default mode: "float", "tab", "split", "vsplit"
     mode = "float",
-    
+
     -- ========================================================================
     -- FILETYPE RUNNERS
     -- ========================================================================
@@ -51,7 +51,7 @@ require("zignite.config").setup({
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
         },
-        
+
         cpp = {
             cmd = {
                 "cd $dir",
@@ -60,7 +60,7 @@ require("zignite.config").setup({
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
         },
-        
+
         rust = {
             cmd = {
                 "cd $dir",
@@ -69,10 +69,10 @@ require("zignite.config").setup({
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
         },
-        
+
         go = "go run $file",
         zig = "zig run $file",
-        
+
         -- Interpreted languages
         python = "python3 -u $file",
         javascript = { "cd $dir", "node $fileName" },
@@ -90,11 +90,18 @@ require("zignite.config").setup({
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
         },
     },
-    
+
     -- ========================================================================
-    -- BUILD COMMANDS (NEW!)
+    -- BUILD COMMANDS
     -- ========================================================================
     -- Project-level build commands (cargo build, zig build, etc.)
+    --
+    -- Features:
+    --   • Auto-setup: Build directory is created automatically if missing
+    --   • Auto-discovery: First executable in build/ is run automatically
+    --   • LSP support: CMake generates compile_commands.json
+    --   • Smart filtering: Picker shows only relevant commands for detected build system
+    -- ========================================================================
     build_commands = {
         -- Rust
         rust = {
@@ -105,14 +112,14 @@ require("zignite.config").setup({
             ["release-run"] = "cargo run --release",
             check = "cargo check",
             clean = "cargo clean",
-            
-            -- Add custom commands
+
+            -- Additional commands
             bench = "cargo bench",
             doc = "cargo doc --open",
             clippy = "cargo clippy",
             fmt = "cargo fmt",
         },
-        
+
         -- Zig
         zig = {
             build = "zig build",
@@ -120,12 +127,12 @@ require("zignite.config").setup({
             test = "zig build test",
             release = "zig build -Doptimize=ReleaseFast",
             ["release-run"] = "zig build run -Doptimize=ReleaseFast",
-            
-            -- Add custom commands
+
+            -- Additional commands
             debug = "zig build -Doptimize=Debug",
             small = "zig build -Doptimize=ReleaseSmall",
         },
-        
+
         -- Go
         go = {
             build = "go build",
@@ -133,12 +140,12 @@ require("zignite.config").setup({
             test = "go test ./...",
             clean = "go clean",
             mod = "go mod tidy",
-            
-            -- Add custom commands
+
+            -- Additional commands
             vet = "go vet ./...",
             fmt = "go fmt ./...",
         },
-        
+
         -- Odin
         odin = {
             build = "odin build .",
@@ -147,14 +154,14 @@ require("zignite.config").setup({
             release = "odin build . -o:speed",
             check = "odin check .",
         },
-        
+
         -- Fortran
         fortran = {
             build = "gfortran *.f90 -o main",
             run = "gfortran *.f90 -o main && ./main",
             clean = "rm main",
         },
-        
+
         -- JavaScript/TypeScript
         javascript = {
             start = "npm start",
@@ -162,85 +169,92 @@ require("zignite.config").setup({
             build = "npm run build",
             test = "npm test",
             install = "npm install",
-            
-            -- Or use yarn
-            -- start = "yarn start",
-            -- dev = "yarn dev",
-            -- build = "yarn build",
         },
-        
+
         typescript = {
             start = "npm start",
             dev = "npm run dev",
             build = "npm run build",
             test = "npm test",
         },
-        
+
         -- Python
         python = {
             run = "python -m main",
             test = "pytest",
             install = "pip install -r requirements.txt",
-            
-            -- Or use poetry
-            -- run = "poetry run python -m main",
-            -- test = "poetry run pytest",
-            -- install = "poetry install",
         },
-        
+
+        -- ====================================================================
         -- C/C++ with Make, CMake, and Meson support
+        -- ====================================================================
+        -- These commands include:
+        --   • Auto-setup: Automatically runs cmake/meson setup if build dir is missing
+        --   • Auto-discovery: Finds and runs the first executable in build/
+        --   • LSP support: Generates compile_commands.json for clangd
+        -- ====================================================================
         c = {
-            -- Make commands
+            -- Make commands (for projects with Makefile)
             build = "make",
             run = "make run",
             clean = "make clean",
             test = "make test",
             install = "make install",
             debug = "make debug",
-            
-            -- CMake commands
-            ["cmake-config"] = "cmake -B build",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
+
+            -- CMake commands (auto-setup, auto-discovery, LSP support)
+            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            ["cmake-build"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+            ["cmake-run"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["cmake-clean"] = "rm -rf build",
-            ["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-            ["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
-            
-            -- Meson commands
+            ["cmake-debug"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-release"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+
+            -- Meson commands (auto-setup, auto-discovery)
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+            ["meson-run"] =
+            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["meson-clean"] = "rm -rf build",
             ["meson-test"] = "meson test -C build",
         },
-        
+
         cpp = {
-            -- Make commands
+            -- Make commands (for projects with Makefile)
             build = "make",
             run = "make run",
             clean = "make clean",
             test = "make test",
             install = "make install",
             debug = "make debug",
-            
-            -- CMake commands
-            ["cmake-config"] = "cmake -B build",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
+
+            -- CMake commands (auto-setup, auto-discovery, LSP support)
+            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            ["cmake-build"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+            ["cmake-run"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["cmake-clean"] = "rm -rf build",
-            ["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-            ["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
-            ["cmake-test"] = "cd build && ctest",
-            
-            -- Meson commands
+            ["cmake-debug"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-release"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-test"] = "ctest --test-dir build",
+
+            -- Meson commands (auto-setup, auto-discovery)
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+            ["meson-run"] =
+            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["meson-clean"] = "rm -rf build",
             ["meson-test"] = "meson test -C build",
         },
     },
-    
+
     -- ========================================================================
     -- PROJECT CONFIGURATION
     -- ========================================================================
@@ -251,75 +265,74 @@ require("zignite.config").setup({
             name = "My Zig Project",
             command = "zig build run",
         },
-        
+
         -- Example: Rust project with release mode
         [vim.fn.expand("~/Dev/rustapp") .. "/.*"] = {
             name = "Rust Application",
             command = "cargo run --release",
         },
-        
+
         -- Example: Node.js project
         [vim.fn.expand("~/Dev/webapp") .. "/.*"] = {
             name = "Web Application",
             command = "npm run dev",
         },
-        
-        -- Example: Go project
-        [vim.fn.expand("~/Dev/goapp") .. "/.*"] = {
-            name = "Go Application",
-            command = "go run .",
-        },
     },
-    
+
     -- ========================================================================
     -- UI CONFIGURATION
     -- ========================================================================
-    
+
     -- Floating window settings
     float = {
-        border = "rounded",        -- "none", "single", "double", "rounded", "solid", "shadow"
-        height = 0.8,              -- 0.0 to 1.0 (percentage of editor height)
-        width = 0.8,               -- 0.0 to 1.0 (percentage of editor width)
-        x = 0.5,                   -- 0.0 = left, 0.5 = center, 1.0 = right
-        y = 0.5,                   -- 0.0 = top, 0.5 = center, 1.0 = bottom
-        border_hl = "FloatBorder", -- Highlight group for the border
-        close_key = "<Esc>",       -- Key to close the window
-        focus = true,              -- Auto-focus the window on open
-        startinsert = false,       -- Enter insert mode when the window opens
+        border = "rounded",                  -- "none", "single", "double", "rounded", "solid", "shadow"
+        height = 0.8,                        -- 0.0 to 1.0 (percentage of editor height)
+        width = 0.8,                         -- 0.0 to 1.0 (percentage of editor width)
+        x = 0.5,                             -- 0.0 = left, 0.5 = center, 1.0 = right
+        y = 0.5,                             -- 0.0 = top, 0.5 = center, 1.0 = bottom
+        border_hl = "FloatBorder",           -- Highlight group for the border
+        border_hl_success = "DiagnosticOk",  -- Border color on success (exit 0)
+        border_hl_error = "DiagnosticError", -- Border color on error (exit != 0)
+        close_key = "<Esc>",                 -- Key to close the window
+        focus = true,                        -- Auto-focus the window on open
+        startinsert = false,                 -- Enter insert mode when the window opens
     },
-    
+
     -- Terminal settings (for split/vsplit/tab modes)
     term = {
-        position = "bot",          -- "bot", "top", "left", "right"
-        size = 15,                 -- Size in lines (for horizontal) or columns (for vertical)
-        focus = true,              -- Focus on terminal after opening
-        startinsert = true,        -- Start in insert mode
+        position = "bot",   -- "bot", "top", "left", "right"
+        size = 15,          -- Size in lines (for horizontal) or columns (for vertical)
+        focus = true,       -- Focus on terminal after opening
+        startinsert = true, -- Start in insert mode
     },
-    
+
+    -- Singleton mode: Only allow one runner window at a time
+    singleton = true,
+
     -- ========================================================================
     -- ANIMATIONS & OUTPUT
     -- ========================================================================
-    
+
     -- Spinner configuration
-    spinner = "dots",              -- "dots", "line", "bar", "arrows", "dots2", etc.
-    spinner_speed = 80,            -- Speed in milliseconds
-    enable_animations = true,      -- Enable/disable animations and spinners
-    
+    spinner = "dots",         -- "dots", "line", "bar", "arrows", "triangle", "square", "circle"
+    spinner_speed = 80,       -- Speed in milliseconds
+    enable_animations = true, -- Enable/disable animations and spinners
+
     -- Execution configuration
-    timeout = nil,                 -- Timeout in ms (e.g. 5000). nil = disabled.
-    
+    timeout = nil, -- Timeout in ms (e.g. 5000). nil = disabled.
+
     -- Output configuration
-    show_stderr_prefix = false,    -- Whether to prefix stderr with [STDERR]
-    no_stderr_prefix_types = {"zig", "go", "rust"}, -- Languages that use stderr normally
-    
-    -- Stderr filtering (NEW!)
+    show_stderr_prefix = false,                     -- Whether to prefix stderr with [STDERR]
+    no_stderr_prefix_types = { "zig", "go", "rust" }, -- Languages that use stderr normally
+
+    -- Stderr filtering
     -- Hide common warnings while preserving errors
     stderr_filters = {
-        "MODULE_TYPELESS_PACKAGE_JSON",  -- Node.js module type warnings
-        "ExperimentalWarning",            -- Node.js experimental features
-        "DeprecationWarning",             -- Deprecation warnings
-        "Use `node --trace-warnings",    -- Node.js trace suggestions
-        "To eliminate this warning",     -- Generic warning hints
+        "MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module type warnings
+        "ExperimentalWarning",          -- Node.js experimental features
+        "DeprecationWarning",           -- Deprecation warnings
+        "Use `node --trace-warnings",   -- Node.js trace suggestions
+        "To eliminate this warning",    -- Generic warning hints
     },
 })
 
@@ -333,12 +346,12 @@ require("zignite.config").setup({
 -- Show picker for compiled languages, run directly for scripting languages
 
 vim.api.nvim_create_autocmd("FileType", {
-    pattern = {"rust", "zig", "go", "c", "cpp"},
+    pattern = { "rust", "zig", "go", "c", "cpp" },
     callback = function()
         -- Override <leader>r to show picker for compiled languages
-        vim.keymap.set("n", "<leader>r", ":RunBuildSelect<CR>", { 
-            buffer = true, 
-            desc = "Select build command" 
+        vim.keymap.set("n", "<leader>r", ":RunBuildSelect<CR>", {
+            buffer = true,
+            desc = "Select build command"
         })
     end,
 })
@@ -368,12 +381,13 @@ vim.api.nvim_create_autocmd("FileType", {
 
 -- C/C++: Quick commands
 vim.api.nvim_create_autocmd("FileType", {
-    pattern = {"c", "cpp"},
+    pattern = { "c", "cpp" },
     callback = function()
         vim.keymap.set("n", "<F5>", ":RunBuild run<CR>", { buffer = true, desc = "Make run" })
         vim.keymap.set("n", "<F6>", ":RunBuild build<CR>", { buffer = true, desc = "Make build" })
         vim.keymap.set("n", "<F7>", ":RunBuild test<CR>", { buffer = true, desc = "Make test" })
         vim.keymap.set("n", "<F8>", ":RunBuild cmake-run<CR>", { buffer = true, desc = "CMake run" })
+        vim.keymap.set("n", "<F9>", ":RunBuild meson-run<CR>", { buffer = true, desc = "Meson run" })
     end,
 })
 
@@ -420,9 +434,21 @@ vim.api.nvim_create_autocmd("FileType", {
 -- :RunCode                  - Run visual selection
 -- :RunProject [mode]        - Run project command
 -- :RunBuild <command>       - Run specific build command
--- :RunBuildSelect [mode]    - Show command picker (NEW!)
+-- :RunBuildSelect [mode]    - Show command picker
 -- :RunClose                 - Close output window
 -- :StopCode                 - Stop running process
+
+-- ============================================================================
+-- AVAILABLE VARIABLES
+-- ============================================================================
+
+-- $file              - Full path to the file
+-- $fileName          - Just the filename with extension
+-- $fileNameWithoutExt- Filename without extension
+-- $dir               - Directory containing the file
+-- $fileExt           - File extension
+-- $projectName       - Name of the project root folder
+-- $projectNameShort  - Project name with -cli/-tui/-app stripped
 
 -- ============================================================================
 -- QUICK REFERENCE
