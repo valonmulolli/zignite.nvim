@@ -25,7 +25,7 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 
 ## Requirements
 
-- Neovim >= 0.7
+- Neovim >= 0.10
 - Zig (latest version recommended)
 
 
