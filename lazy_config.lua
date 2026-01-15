@@ -2,16 +2,16 @@ return {
   {
     "valonmulolli/zignite.nvim",
     build = "cd zig && zig build",
-    lazy = false,  -- Load on startup, not lazy
+    lazy = false, -- Load on startup, not lazy
     keys = {
-      { "<leader>r", "<cmd>RunFile<cr>", desc = "Run file" },
+      { "<leader>r",  "<cmd>RunFile<cr>",        desc = "Run file" },
       { "<leader>rb", "<cmd>RunBuildSelect<cr>", desc = "Select build command" },
-      { "<leader>rq", "<cmd>RunClose<cr>", desc = "Close runner" },
-      { "<leader>rt", "<cmd>RunFile tab<cr>", desc = "Run file in tab" },
+      { "<leader>rq", "<cmd>RunClose<cr>",       desc = "Close runner" },
+      { "<leader>rt", "<cmd>RunFile tab<cr>",    desc = "Run file in tab" },
       { "<leader>rv", "<cmd>RunFile vsplit<cr>", desc = "Run file in vsplit" },
-      { "<leader>rh", "<cmd>RunFile split<cr>", desc = "Run file in split" },
-      { "<leader>rp", "<cmd>RunProject<cr>", desc = "Run project" },
-      { "<leader>rs", "<cmd>StopCode<cr>", desc = "Stop running code" },
+      { "<leader>rh", "<cmd>RunFile split<cr>",  desc = "Run file in split" },
+      { "<leader>rp", "<cmd>RunProject<cr>",     desc = "Run project" },
+      { "<leader>rs", "<cmd>StopCode<cr>",       desc = "Stop running code" },
     },
     config = function()
       require("zignite.config").setup({
@@ -19,21 +19,21 @@ return {
         -- KEYMAPS
         -- ====================================================================
         keymaps = {
-          { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
+          { "n", "<leader>r",  ":RunFile<CR>",        { desc = "Run file" } },
           { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } }, -- NEW!
-          { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
-          { "n", "<leader>rt", ":RunFile tab<CR>", { desc = "Run file in new tab" } },
+          { "n", "<leader>rq", ":RunClose<CR>",       { desc = "Close runner" } },
+          { "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
           { "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
-          { "n", "<leader>rh", ":RunFile split<CR>", { desc = "Run file in horizontal split" } },
-          { "n", "<leader>rp", ":RunProject<CR>", { desc = "Run project" } },
-          { "n", "<leader>rs", ":StopCode<CR>", { desc = "Stop running code" } },
+          { "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
+          { "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
+          { "n", "<leader>rs", ":StopCode<CR>",       { desc = "Stop running code" } },
         },
-        
+
         -- ====================================================================
         -- OUTPUT MODE
         -- ====================================================================
         mode = "float",
-        
+
         -- ====================================================================
         -- FILETYPE RUNNERS
         -- ====================================================================
@@ -78,7 +78,7 @@ return {
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt.jar",
           },
-          
+
           -- Interpreted languages
           python = "python3 -u $file",
           javascript = {
@@ -98,7 +98,7 @@ return {
           perl = "perl $file",
           r = "Rscript $file",
           julia = "julia $file",
-          
+
           -- Shell scripts
           sh = {
             "cd $dir",
@@ -108,10 +108,10 @@ return {
             "cd $dir",
             "zsh $fileName",
           },
-          
+
           -- Web and markup
           html = "xdg-open $file",
-          
+
           -- Other languages
           dart = "dart run $file",
           swift = "swift $file",
@@ -134,7 +134,7 @@ return {
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
           },
         },
-        
+
         -- ====================================================================
         -- BUILD COMMANDS (NEW!)
         -- ====================================================================
@@ -149,7 +149,7 @@ return {
             check = "cargo check",
             clean = "cargo clean",
           },
-          
+
           -- Zig
           zig = {
             build = "zig build",
@@ -158,7 +158,7 @@ return {
             release = "zig build -Doptimize=ReleaseFast",
             ["release-run"] = "zig build run -Doptimize=ReleaseFast",
           },
-          
+
           -- Go
           go = {
             build = "go build",
@@ -167,7 +167,7 @@ return {
             clean = "go clean",
             mod = "go mod tidy",
           },
-          
+
           -- Odin
           odin = {
             build = "odin build .",
@@ -176,14 +176,14 @@ return {
             release = "odin build . -o:speed",
             check = "odin check .",
           },
-          
+
           -- Fortran
           fortran = {
             build = "gfortran *.f90 -o main",
             run = "gfortran *.f90 -o main && ./main",
             clean = "rm main",
           },
-          
+
           -- JavaScript/TypeScript
           javascript = {
             start = "npm start",
@@ -192,21 +192,21 @@ return {
             test = "npm test",
             install = "npm install",
           },
-          
+
           typescript = {
             start = "npm start",
             dev = "npm run dev",
             build = "npm run build",
             test = "npm test",
           },
-          
+
           -- Python
           python = {
             run = "python -m main",
             test = "pytest",
             install = "pip install -r requirements.txt",
           },
-          
+
           -- C/C++ with Make, CMake, and Meson
           c = {
             -- Make
@@ -216,23 +216,28 @@ return {
             test = "make test",
             install = "make install",
             debug = "make debug",
-            
+
             -- CMake
-            ["cmake-config"] = "cmake -B build",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
+            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            ["cmake-build"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+            ["cmake-run"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["cmake-clean"] = "rm -rf build",
-            ["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-            ["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
-            
+            ["cmake-debug"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-release"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+
             -- Meson
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+            ["meson-run"] =
+            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["meson-clean"] = "rm -rf build",
             ["meson-test"] = "meson test -C build",
           },
-          
+
           cpp = {
             -- Make
             build = "make",
@@ -241,48 +246,53 @@ return {
             test = "make test",
             install = "make install",
             debug = "make debug",
-            
+
             -- CMake
-            ["cmake-config"] = "cmake -B build",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
+            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            ["cmake-build"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+            ["cmake-run"] =
+            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["cmake-clean"] = "rm -rf build",
-            ["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-            ["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
-            ["cmake-test"] = "cd build && ctest",
-            
+            ["cmake-debug"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-release"] =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            ["cmake-test"] = "ctest --test-dir build",
+
             -- Meson
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+            ["meson-run"] =
+            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
             ["meson-clean"] = "rm -rf build",
             ["meson-test"] = "meson test -C build",
           },
         },
-        
+
         -- ====================================================================
         -- ANIMATIONS & OUTPUT
         -- ====================================================================
         spinner = "dots",
         spinner_speed = 80,
         enable_animations = true,
-        
+
         -- Execution configuration
-        timeout = nil,  -- Timeout in ms (e.g. 5000). nil = disabled.
-        
+        timeout = nil, -- Timeout in ms (e.g. 5000). nil = disabled.
+
         -- Output configuration
         show_stderr_prefix = false,
         no_stderr_prefix_types = { "zig", "go", "rust" },
-        
+
         -- Stderr filtering (NEW!)
         stderr_filters = {
-          "MODULE_TYPELESS_PACKAGE_JSON",  -- Node.js module warnings
-          "ExperimentalWarning",            -- Experimental features
-          "DeprecationWarning",             -- Deprecations
-          "Use `node --trace-warnings",    -- Trace suggestions
-          "To eliminate this warning",     -- Warning hints
+          "MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module warnings
+          "ExperimentalWarning",          -- Experimental features
+          "DeprecationWarning",           -- Deprecations
+          "Use `node --trace-warnings",   -- Trace suggestions
+          "To eliminate this warning",    -- Warning hints
         },
-        
+
         -- ====================================================================
         -- PROJECT CONFIGURATION
         -- ====================================================================
@@ -294,7 +304,7 @@ return {
           --   command = "cargo run --release",
           -- },
         },
-        
+
         -- ====================================================================
         -- UI CONFIGURATION
         -- ====================================================================
@@ -309,7 +319,7 @@ return {
           focus = true,
           startinsert = false,
         },
-        
+
         term = {
           position = "bot",
           size = 5,
@@ -317,7 +327,7 @@ return {
           startinsert = true,
         },
       })
-      
+
       -- No language-specific keymaps
     end,
   },
