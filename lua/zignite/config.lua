@@ -3,12 +3,12 @@ local M = {}
 -- Default configuration
 M.defaults = {
 	keymaps = {
-		{ "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
-		{ "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
-		{ "n", "<leader>rt", ":RunFile tab<CR>", { desc = "Run file in new tab" } },
+		{ "n", "<leader>r",  ":RunFile<CR>",        { desc = "Run file" } },
+		{ "n", "<leader>rq", ":RunClose<CR>",       { desc = "Close runner" } },
+		{ "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
 		{ "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
-		{ "n", "<leader>rh", ":RunFile split<CR>", { desc = "Run file in horizontal split" } },
-		{ "n", "<leader>rp", ":RunProject<CR>", { desc = "Run project" } },
+		{ "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
+		{ "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
 		{ "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
 	},
 
@@ -103,7 +103,7 @@ M.defaults = {
 		dart = "dart run $file",
 		swift = "swift $file",
 		elixir = "elixir $file",
-	haskell = {
+		haskell = {
 			cmd = {
 				"cd $dir",
 				"ghc -o /tmp/$fileNameWithoutExt $fileName",
@@ -141,7 +141,7 @@ M.defaults = {
 			release = "zig build -Doptimize=ReleaseFast",
 			["release-run"] = "zig build run -Doptimize=ReleaseFast",
 		},
-	odin = {
+		odin = {
 			build = "odin build .",
 			run = "odin run .",
 			test = "odin test .",
@@ -188,17 +188,22 @@ M.defaults = {
 			debug = "make debug",
 
 			-- CMake commands
-			["cmake-config"] = "cmake -B build",
-			["cmake-build"] = "cmake --build build",
-			["cmake-run"] = "cmake --build build && ./build/main",
+			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+			["cmake-build"] =
+			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+			["cmake-run"] =
+			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
 			["cmake-clean"] = "rm -rf build",
-			["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-			["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
+			["cmake-debug"] =
+			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+			["cmake-release"] =
+			"cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
 
 			-- Meson commands
 			["meson-setup"] = "meson setup build",
-			["meson-build"] = "meson compile -C build",
-			["meson-run"] = "meson compile -C build && ./build/main",
+			["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+			["meson-run"] =
+			"[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
 			["meson-clean"] = "rm -rf build",
 			["meson-test"] = "meson test -C build",
 		},
@@ -212,40 +217,45 @@ M.defaults = {
 			debug = "make debug",
 
 			-- CMake commands
-			["cmake-config"] = "cmake -B build",
-			["cmake-build"] = "cmake --build build",
-			["cmake-run"] = "cmake --build build && ./build/main",
+			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+			["cmake-build"] =
+			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
+			["cmake-run"] =
+			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
 			["cmake-clean"] = "rm -rf build",
-			["cmake-debug"] = "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
-			["cmake-release"] = "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
-			["cmake-test"] = "cd build && ctest",
+			["cmake-debug"] =
+			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+			["cmake-release"] =
+			"cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+			["cmake-test"] = "ctest --test-dir build",
 
 			-- Meson commands
 			["meson-setup"] = "meson setup build",
-			["meson-build"] = "meson compile -C build",
-			["meson-run"] = "meson compile -C build && ./build/main",
+			["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
+			["meson-run"] =
+			"[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
 			["meson-clean"] = "rm -rf build",
 			["meson-test"] = "meson test -C build",
 		},
 	},
 
 	-- Spinner configuration
-	spinner = "dots", -- Spinner type: "dots", "line", "bar", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
-	spinner_speed = 80, -- Speed in milliseconds
+	spinner = "dots",      -- Spinner type: "dots", "line", "bar", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
+	spinner_speed = 80,    -- Speed in milliseconds
 	enable_animations = true, -- Enable/disable animations and spinners
-	
+
 	-- Execution configuration
 	timeout = nil, -- Timeout in milliseconds (e.g., 10000 for 10s). nil = no timeout. Only works with Zig backend.
 
 	-- Output configuration
-	show_stderr_prefix = false, -- Whether to prefix stderr output with [STDERR] (default: false for better UX)
+	show_stderr_prefix = false,                    -- Whether to prefix stderr output with [STDERR] (default: false for better UX)
 	no_stderr_prefix_types = { "zig", "go", "rust" }, -- Filetypes that commonly output to stderr normally
 
 	-- Filter patterns for stderr (hide these warnings/info messages)
 	stderr_filters = {
 		"MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module type warnings
-		"ExperimentalWarning", -- Node.js experimental feature warnings
-		"DeprecationWarning", -- Deprecation warnings
+		"ExperimentalWarning",    -- Node.js experimental feature warnings
+		"DeprecationWarning",     -- Deprecation warnings
 		"Use `node --trace%-warnings", -- Node.js trace suggestion
 		"To eliminate this warning", -- Generic warning elimination suggestions
 	},
@@ -256,15 +266,15 @@ M.defaults = {
 
 	-- UI configuration for the floating window
 	float = {
-		border = "rounded", -- Border style: "none", "single", "double", "rounded", "solid", "shadow"
-		height = 0.8, -- Window height (0.0 to 1.0 = percentage of editor height)
-		width = 0.8, -- Window width (0.0 to 1.0 = percentage of editor width)
-		x = 0.5, -- Horizontal position (0.0 = left, 0.5 = center, 1.0 = right)
-		y = 0.5, -- Vertical position (0.0 = top, 0.5 = center, 1.0 = bottom)
-		border_hl = "FloatBorder", -- Highlight group for the border
-		close_key = "<Esc>", -- Key to close the window
-		focus = true, -- Auto-focus the window on open
-		startinsert = false, -- Enter insert mode when the window opens
+		border = "rounded",            -- Border style: "none", "single", "double", "rounded", "solid", "shadow"
+		height = 0.8,                  -- Window height (0.0 to 1.0 = percentage of editor height)
+		width = 0.8,                   -- Window width (0.0 to 1.0 = percentage of editor width)
+		x = 0.5,                       -- Horizontal position (0.0 = left, 0.5 = center, 1.0 = right)
+		y = 0.5,                       -- Vertical position (0.0 = top, 0.5 = center, 1.0 = bottom)
+		border_hl = "FloatBorder",     -- Highlight group for the border
+		close_key = "<Esc>",           -- Key to close the window
+		focus = true,                  -- Auto-focus the window on open
+		startinsert = false,           -- Enter insert mode when the window opens
 		border_hl_success = "DiagnosticOk", -- Highlight group for success border (e.g., "DiagnosticOk", "String", "DiffAdd")
 		border_hl_error = "DiagnosticError", -- Highlight group for error border (e.g., "DiagnosticError", "Error", "DiffDelete")
 	},
@@ -272,11 +282,11 @@ M.defaults = {
 	-- Terminal configuration for split/vsplit/tab modes
 	term = {
 		position = "bot", -- Position: "bot", "top", "left", "right"
-		size = 15, -- Size in lines (for horizontal) or columns (for vertical)
+		size = 15,    -- Size in lines (for horizontal) or columns (for vertical)
 		focus = true, -- Focus on terminal after opening
 		startinsert = true, -- Start in insert mode
 	},
-	
+
 	-- Execution behavior
 	singleton = true, -- If true, only one runner window can be open at a time (previous one is closed)
 }
