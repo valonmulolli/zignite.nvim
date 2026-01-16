@@ -22,6 +22,7 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **Build System Support**: First-class support for `cargo`, `zig build`, `npm`, `make`, etc.
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
+- **Cross-Platform**: Works efficiently on Linux, macOS, and Windows.
 
 ## Requirements
 
@@ -127,6 +128,8 @@ You can use these variables in your custom runner commands:
 | `$fileName` | Filename with extension | `main.py` |
 | `$fileNameWithoutExt` | Filename without extension | `main` |
 | `$dir` | Directory path | `/home/user/project` |
+| `$projectName` | Project root folder name | `my-project-cli` |
+| `$projectNameShort` | Project name without suffix | `my-project` |
 
 ## Troubleshooting
 
