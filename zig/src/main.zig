@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const TimeoutContext = struct {
     child_ptr: *std.process.Child,
     duration: u64,
+    finished: *std.atomic.Value(bool),
 };
 
 pub fn main() !void {
@@ -39,14 +40,16 @@ pub fn main() !void {
 
     // Get the shell to use
     // On Windows, default to cmd.exe if SHELL not set. On POSIX, /bin/sh.
-    const default_shell = if (builtin.os.tag == .windows) "cmd.exe" else "/bin/sh";
+    const is_windows = builtin.os.tag == .windows;
+    const default_shell = if (is_windows) "cmd.exe" else "/bin/sh";
     const shell = std.posix.getenv("SHELL") orelse default_shell;
 
     // Use the remaining argument as the complete command string
     const full_command = args[command_idx];
 
-    // Execute through shell with -c flag
-    const shell_args = [_][]const u8{ shell, "-c", full_command };
+    // Execute through shell with correct flag (-c or /c)
+    const shell_flag = if (is_windows) "/C" else "-c";
+    const shell_args = [_][]const u8{ shell, shell_flag, full_command };
 
     // --- Child Process Execution ---
     var child = std.process.Child.init(&shell_args, allocator);
@@ -59,15 +62,24 @@ pub fn main() !void {
     try child.spawn();
 
     // --- Timeout Handling ---
-    if (timeout_ms) |ms| {
-        const context = try allocator.create(TimeoutContext);
-        context.* = .{ .child_ptr = &child, .duration = ms };
+    var finished = std.atomic.Value(bool).init(false);
+    var context: TimeoutContext = undefined;
 
-        const thread = try std.Thread.spawn(.{}, timeoutWatcher, .{context});
+    if (timeout_ms) |ms| {
+        context = .{
+            .child_ptr = &child,
+            .duration = ms,
+            .finished = &finished,
+        };
+
+        const thread = try std.Thread.spawn(.{}, timeoutWatcher, .{&context});
         thread.detach();
     }
 
     const term = try child.wait();
+
+    // Signal that the process finished naturally
+    finished.store(true, .release);
 
     // --- Exit with proper code ---
     const exit_code: u8 = switch (term) {
@@ -94,6 +106,16 @@ fn timeoutWatcher(ctx: *TimeoutContext) void {
     // Cross-platform sleep (std.Thread.sleep takes nanoseconds)
     std.Thread.sleep(ctx.duration * 1_000_000);
 
+    // Check if process finished already to avoid race condition
+    if (ctx.finished.load(.acquire)) {
+        return;
+    }
+
     // If we wake up and process is meant to be killed
-    _ = ctx.child_ptr.kill() catch {};
+    _ = ctx.child_ptr.kill() catch |err| {
+        std.log.err("Failed to kill process on timeout: {}", .{err});
+    };
+
+    // Print explicit timeout message
+    std.debug.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration});
 }
