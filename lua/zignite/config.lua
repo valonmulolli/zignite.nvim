@@ -111,7 +111,7 @@ M.defaults = {
 			},
 			cleanup_command = "rm /tmp/$fileNameWithoutExt",
 		},
-		odin = "odin run $file",
+			odin = "odin run $file -file",
 		fortran = {
 			cmd = {
 				"cd $dir",
@@ -251,6 +251,13 @@ M.defaults = {
 	show_stderr_prefix = false,                    -- Whether to prefix stderr output with [STDERR] (default: false for better UX)
 	no_stderr_prefix_types = { "zig", "go", "rust" }, -- Filetypes that commonly output to stderr normally
 
+	-- Quickfix behavior on command errors
+	quickfix = {
+		enabled = true,      -- Populate quickfix when command exits with non-zero status
+		max_lines = 1000,    -- Tail limit for large outputs (performance guard)
+		strip_ansi = true,   -- Remove ANSI escape codes from quickfix lines
+	},
+
 	-- Filter patterns for stderr (hide these warnings/info messages)
 	stderr_filters = {
 		"MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module type warnings
@@ -330,8 +337,20 @@ function M.setup(opts)
 	opts = opts or {}
 	validate_config(opts)
 	M.options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
+	local ok, utils = pcall(require, "zignite.utils")
+	if ok and utils.clear_project_cache then
+		utils.clear_project_cache()
+	end
 
 	M.setup_keymaps()
+end
+
+-- Ensure defaults are available without applying side effects (e.g. keymaps).
+function M.ensure()
+	if vim.tbl_isempty(M.options) then
+		M.options = vim.tbl_deep_extend("force", {}, M.defaults, {})
+	end
+	return M.options
 end
 
 function M.setup_keymaps()
@@ -342,8 +361,5 @@ function M.setup_keymaps()
 		vim.keymap.set(keymap[1], keymap[2], keymap[3], keymap[4])
 	end
 end
-
--- Initialize with default options
-M.setup()
 
 return M
