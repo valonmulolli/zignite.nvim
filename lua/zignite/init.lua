@@ -30,6 +30,47 @@ local function get_plugin_path()
 end
 
 local PLUGIN_PATH = get_plugin_path()
+local ZIG_EXECUTABLE = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
+
+local zig_backend_available = nil
+local zig_missing_notified = false
+
+local function ensure_config()
+	config.ensure()
+end
+
+local function has_zig_backend()
+	if zig_backend_available == nil then
+		zig_backend_available = vim.fn.executable(ZIG_EXECUTABLE) == 1
+	end
+	return zig_backend_available
+end
+
+local function notify_backend_missing_once()
+	if zig_missing_notified then
+		return
+	end
+
+	zig_missing_notified = true
+	vim.notify(
+		"Zignite executable not found at " .. ZIG_EXECUTABLE .. ", falling back to direct shell execution",
+		vim.log.levels.INFO
+	)
+end
+
+local function build_system_command(final_command)
+	if has_zig_backend() then
+		local system_command = { ZIG_EXECUTABLE }
+		if config.options.timeout and type(config.options.timeout) == "number" then
+			table.insert(system_command, "--timeout=" .. config.options.timeout)
+		end
+		table.insert(system_command, final_command)
+		return system_command
+	end
+
+	notify_backend_missing_once()
+	return final_command
+end
 
 -- Helper function to get visual selection
 local function get_visual_selection()
@@ -44,17 +85,51 @@ end
 -- Get the command to run (from project or filetype)
 -- Returns the runner config and source ("project" or "filetype")
 function M.get_command()
+	ensure_config()
+
 	local filepath = vim.fn.expand("%:p")
 	local filetype = vim.bo.filetype
 
-	-- First check filetype runner (for single-file execution)
-	local runner = config.options.runners[filetype]
-	if runner then
-		return runner, "filetype"
+	-- 1. Detect project
+	local project, _ = utils.detect_project(filepath, config.options.project)
+	local project_root = project and project.root
+
+	-- Calculate distance to project root (manual implementation for compatibility)
+	local distance = 100 -- Default "far"
+	if project_root then
+		local file_dir = vim.fn.fnamemodify(filepath, ":h")
+		-- If they are the same, distance is 0
+		if file_dir == project_root then
+			distance = 0
+		else
+			-- Strip project_root from file_dir
+			local sub = string.sub(file_dir, #project_root + 1)
+			-- Count separators (/) in the remaining path
+			_, distance = string.gsub(sub, "/", "")
+		end
 	end
 
-	-- Fall back to project detection if no filetype runner
-	local project = utils.detect_project(filepath, config.options.project)
+	-- 2. Filetype runner
+	local ft_runner = config.options.runners[filetype]
+
+	-- 3. Priority Logic:
+	-- Zig build-system projects should run through `zig build ...` even when
+	-- editing files in subdirectories (src/, lib/, etc.).
+	if filetype == "zig" and project and project.command then
+		return project, "project"
+	end
+
+	-- A. If the project marker is in the SAME directory, use project command.
+	if project and project.command and distance == 0 then
+		return project, "project"
+	end
+
+	-- B. If we have a standalone runner configured, use it (Standalone mode).
+	if ft_runner then
+		return ft_runner, "filetype"
+	end
+
+	-- C. If no standalone runner, but a project was found elsewhere, fallback to project.
 	if project and project.command then
 		return project, "project"
 	end
@@ -66,6 +141,8 @@ end
 -- @param range: 0 for file execution, >0 for visual selection
 -- @param mode: output mode ("float", "split", etc.)
 function M.run_code(range, mode)
+	ensure_config()
+
 	local filetype = vim.bo.filetype
 	local execution_path
 	local code_to_run
@@ -129,6 +206,16 @@ function M.run_code(range, mode)
 	-- Substitute variables in command
 	local final_command = utils.substitute_variables(command_str, execution_path)
 
+	-- Standalone Zig safeguard: if user configured a build-based runner but no
+	-- build.zig exists, force single-file execution.
+	if filetype == "zig" and source == "filetype" then
+		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(vim.fn.fnamemodify(execution_path, ":h"), "build.zig")) == 1
+		local uses_zig_build = final_command:match("zig%s+build") ~= nil
+		if not has_build_zig and uses_zig_build then
+			final_command = utils.substitute_variables("zig run $file", execution_path)
+		end
+	end
+
 	-- If it's a project command, navigate to project root
 	if source == "project" then
 		local cwd = utils.get_project_root(execution_path, config.options.project)
@@ -137,37 +224,15 @@ function M.run_code(range, mode)
 		end
 	end
 
-	-- Use the plugin's Zig executable wrapper, or fallback to direct shell
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
-	local use_zig = vim.fn.executable(zig_executable) == 1
-
-	if not use_zig then
-		vim.notify(
-			"Zignite executable not found at " .. zig_executable .. ", falling back to direct shell execution",
-			vim.log.levels.INFO
-		)
-	end
-
-	local system_command
-	if use_zig then
-		-- Use a list to avoid double shell escaping issues
-		system_command = { zig_executable }
-
-		-- Add timeout if configured
-		if config.options.timeout and type(config.options.timeout) == "number" then
-			table.insert(system_command, "--timeout=" .. config.options.timeout)
-		end
-
-		table.insert(system_command, final_command)
-	else
-		system_command = final_command
-	end
+	local system_command = build_system_command(final_command)
 
 	M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command)
 end
 
 -- Execute command asynchronously using new UI
 function M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command)
+	ensure_config()
+
 	mode = mode or config.options.mode or "float"
 
 	-- Callback to run cleanup tasks
@@ -194,9 +259,11 @@ end
 
 -- Run current project
 function M.run_project(mode)
-	local runner, source = M.get_command()
+	ensure_config()
 
-	if not runner or source ~= "project" then
+	local filepath = vim.fn.expand("%:p")
+	local runner = utils.detect_project(filepath, config.options.project)
+	if not runner then
 		ui.show_output(ERRORS.PROJECT_NOT_FOUND, mode)
 		return
 	end
@@ -206,7 +273,6 @@ function M.run_project(mode)
 		return
 	end
 
-	local filepath = vim.fn.expand("%:p")
 	local cwd = utils.get_project_root(filepath, config.options.project)
 	local command = runner.command
 
@@ -217,12 +283,8 @@ function M.run_project(mode)
 	-- Substitute variables
 	command = utils.substitute_variables(command, filepath)
 
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
-	if vim.fn.executable(zig_executable) == 1 then
-		command = zig_executable .. " " .. vim.fn.shellescape(command)
-	end
-
-	M.execute_command(command, filepath, 0, mode, runner.name or "Project")
+	local system_command = build_system_command(command)
+	M.execute_command(system_command, filepath, 0, mode, runner.name or "Project")
 end
 
 function M.stop_code()
@@ -235,6 +297,8 @@ end
 -- @param command_name: Name of the command (e.g., "build", "run", "test")
 -- @param mode: Output mode
 function M.run_build_command(command_name, mode)
+	ensure_config()
+
 	local filetype = vim.bo.filetype
 	local filepath = vim.fn.expand("%:p")
 
@@ -272,26 +336,35 @@ function M.run_build_command(command_name, mode)
 		cwd = vim.fn.fnamemodify(filepath, ":h")
 	end
 
-	-- Substitute variables using project root for correct $projectName
-	-- We create a dummy filepath pointing to the project root
-	local project_filepath = cwd .. "/dummy.c"
-	command = utils.substitute_variables(command, project_filepath)
+	-- Zig standalone support:
+	-- `zig build run` requires a build.zig, so for plain single-file scripts
+	-- we fallback to the file runner command (defaults to `zig run $file`).
+	if filetype == "zig" and command_name == "run" then
+		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(cwd, "build.zig")) == 1
+		if not has_build_zig then
+			local zig_runner = utils.normalize_command(config.options.runners.zig)
+			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
+				zig_runner = "zig run $file"
+			end
+			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
+			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
+			local final_standalone = "cd " .. vim.fn.shellescape(standalone_dir) .. " && " .. standalone_cmd
+
+			local system_command = build_system_command(final_standalone)
+
+			local display_name = "zig: run"
+			M.execute_command(system_command, filepath, 0, mode, display_name)
+			return
+		end
+	end
+
+	-- Substitute variables using the current file path.
+	command = utils.substitute_variables(command, filepath)
 
 	-- Prepend cd to project root
 	local final_command = "cd " .. vim.fn.shellescape(cwd) .. " && " .. command
 
-	-- Use Zig executable wrapper
-	local zig_executable = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
-	local system_command
-	if vim.fn.executable(zig_executable) == 1 then
-		system_command = { zig_executable }
-		if config.options.timeout and type(config.options.timeout) == "number" then
-			table.insert(system_command, "--timeout=" .. config.options.timeout)
-		end
-		table.insert(system_command, final_command)
-	else
-		system_command = final_command
-	end
+	local system_command = build_system_command(final_command)
 
 	local display_name = string.format("%s: %s", filetype, command_name)
 	M.execute_command(system_command, filepath, 0, mode, display_name)
@@ -300,6 +373,8 @@ end
 -- Show a picker to select and run a build command
 -- @param mode: Output mode
 function M.select_build_command(mode)
+	ensure_config()
+
 	local filetype = vim.bo.filetype
 
 	-- Get build commands for this filetype
@@ -506,12 +581,10 @@ function M.close_runner()
 end
 
 function M.setup(opts)
+	zig_backend_available = nil
+	zig_missing_notified = false
 	config.setup(opts)
-end
-
--- Initialize with defaults if not already set up
-if vim.tbl_isempty(config.options) then
-	config.setup()
+	utils.clear_project_cache()
 end
 
 return M
