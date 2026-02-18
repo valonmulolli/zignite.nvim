@@ -17,6 +17,7 @@ local ERRORS = {
 	PROJECT_NOT_FOUND = "Error: Current file is not part of any configured project.",
 	PROJECT_NO_COMMAND = "Error: No command configured for project: %s",
 	ZIG_EXT = "Error: Zig files must have .zig extension. Current file: %s",
+	RESERVED_ARGV = "Error: '--argv' is reserved for Zignite internals. Remove it from your runner/build command.",
 }
 
 -- Get the plugin directory path
@@ -207,6 +208,15 @@ local function build_system_command(final_command, argv_command)
 	return final_command
 end
 
+local function is_reserved_argv_command(command)
+	if type(command) ~= "string" then
+		return false
+	end
+
+	local trimmed = command:match("^%s*(.-)%s*$") or ""
+	return trimmed == "--argv" or trimmed:match("^%-%-argv%s+") ~= nil
+end
+
 -- Helper function to get visual selection
 local function get_visual_selection()
 	local _, start_line, start_col, _ = table.unpack(vim.fn.getpos("'<"))
@@ -322,6 +332,11 @@ function M.run_code(range, mode)
 		command_cwd = nil
 	end
 
+	if is_reserved_argv_command(command_str) then
+		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+		return
+	end
+
 	-- Substitute variables in command
 	local final_command = utils.substitute_variables(command_str, execution_path)
 	if source == "filetype" then
@@ -402,6 +417,10 @@ function M.run_project(mode)
 
 	local cwd = utils.get_project_root(filepath, config.options.project)
 	local command = runner.command
+	if is_reserved_argv_command(command) then
+		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+		return
+	end
 
 	-- Substitute variables
 	command = utils.substitute_variables(command, filepath)
@@ -457,6 +476,11 @@ function M.run_build_command(command_name, mode)
 		return
 	end
 
+	if is_reserved_argv_command(command) then
+		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+		return
+	end
+
 	-- Get project root (if in a project)
 	local cwd = utils.get_project_root(filepath, config.options.project)
 	if not cwd then
@@ -472,6 +496,10 @@ function M.run_build_command(command_name, mode)
 			local zig_runner = utils.normalize_command(config.options.runners.zig)
 			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
 				zig_runner = "zig run $file"
+			end
+			if is_reserved_argv_command(zig_runner) then
+				ui.show_output(ERRORS.RESERVED_ARGV, mode)
+				return
 			end
 			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
 			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
