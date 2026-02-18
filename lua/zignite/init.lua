@@ -620,11 +620,12 @@ function M.select_build_command(mode)
 
 	-- Use user's float config style (bottom-aligned, right side)
 	local float_config = config.options.float or {}
+	local picker_config = config.options.picker or {}
 	local preferred_row = math.floor(vim.o.lines * (float_config.y or 0.90)) - height
 	local preferred_col = vim.o.columns - width - 2 -- Right side with 2 char padding
 	local max_row = math.max(0, vim.o.lines - height)
 	local max_col = math.max(0, vim.o.columns - width)
-	local picker_focus = float_config.focus ~= false
+	local picker_focus = picker_config.focus ~= false
 	local win_opts = {
 		relative = "editor",
 		width = width,
