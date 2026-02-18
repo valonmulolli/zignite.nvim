@@ -296,6 +296,11 @@ M.defaults = {
 		startinsert = true, -- Start in insert mode
 	},
 
+	-- Build picker configuration
+	picker = {
+		focus = true, -- Focus the interactive build picker window when opening
+	},
+
 	-- Execution behavior
 	singleton = true, -- If true, only one runner window can be open at a time (previous one is closed)
 }
