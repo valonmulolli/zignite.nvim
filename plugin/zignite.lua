@@ -4,11 +4,13 @@ if vim.g.loaded_zignite then
 end
 vim.g.loaded_zignite = true
 
-local zignite = require("zignite.init")
+local function zignite()
+	return require("zignite.init")
+end
 
 -- Create the :RunCode user command for visual selection
 vim.api.nvim_create_user_command("RunCode", function(opts)
-	zignite.run_code(opts.range)
+	zignite().run_code(opts.range)
 end, { range = true })
 
 -- Create the :RunFile user command with optional mode
@@ -26,12 +28,12 @@ vim.api.nvim_create_user_command("RunFile", function(opts)
 			return
 		end
 	end
-	zignite.run_code(0, mode)
+	zignite().run_code(0, mode)
 end, { nargs = "?" })
 
 -- Create the :RunClose user command
 vim.api.nvim_create_user_command("RunClose", function()
-	zignite.close_runner()
+	zignite().close_runner()
 end, {})
 
 -- Create the :RunProject user command
@@ -49,12 +51,12 @@ vim.api.nvim_create_user_command("RunProject", function(opts)
 			return
 		end
 	end
-	zignite.run_project(mode)
+	zignite().run_project(mode)
 end, { nargs = "?" })
 
 -- Create the :StopCode user command
 vim.api.nvim_create_user_command("StopCode", function()
-	zignite.stop_code()
+	zignite().stop_code()
 end, {})
 
 -- Create the :RunBuild user command for build commands
@@ -76,11 +78,12 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 		return
 	end
 
-	zignite.run_build_command(command_name, mode)
+	zignite().run_build_command(command_name, mode)
 end, {
 	nargs = "+",
 	complete = function(ArgLead, CmdLine, CursorPos)
 		local config = require("zignite.config")
+		config.ensure()
 		local filetype = vim.bo.filetype
 		local build_cmds = config.options.build_commands[filetype]
 
@@ -107,5 +110,5 @@ vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
 		return
 	end
  
-	zignite.select_build_command(mode)
+	zignite().select_build_command(mode)
 end, { nargs = "?" })
