@@ -20,9 +20,16 @@ local function format_key_for_display(key)
 	return text
 end
 
-local function build_float_footer(float_config)
+local function build_float_footer(float_config, should_focus)
 	local close_key = format_key_for_display(float_config.close_key or "<Esc>")
-	local input_hint = float_config.startinsert ~= false and "input ready" or "press i for input"
+	local input_hint
+	if not should_focus then
+		input_hint = "focus disabled"
+	elseif float_config.startinsert ~= false then
+		input_hint = "input ready"
+	else
+		input_hint = "press i for input"
+	end
 	return string.format(" %s: close | %s ", close_key, input_hint)
 end
 
@@ -250,7 +257,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	opts.title = " Preparing... "
 	local float_config = config.float
 	local should_focus = float_config.focus ~= false
-	opts.footer = build_float_footer(float_config)
+	opts.footer = build_float_footer(float_config, should_focus)
 
 	local win = vim.api.nvim_open_win(buf, should_focus, opts)
 
