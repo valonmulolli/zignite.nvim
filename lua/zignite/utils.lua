@@ -1,5 +1,35 @@
 local M = {}
 
+local detect_cache = {}
+local detect_cache_order = {}
+local DETECT_CACHE_MAX = 256
+
+local function make_detect_cache_key(filepath, project_config)
+	local dir = vim.fn.fnamemodify(filepath, ":h")
+	local normalized_dir = vim.fs.normalize(dir)
+	return tostring(project_config) .. "::" .. normalized_dir
+end
+
+local function set_detect_cache(key, project, pattern)
+	if detect_cache[key] == nil then
+		table.insert(detect_cache_order, key)
+		if #detect_cache_order > DETECT_CACHE_MAX then
+			local oldest = table.remove(detect_cache_order, 1)
+			detect_cache[oldest] = nil
+		end
+	end
+
+	detect_cache[key] = {
+		project = project,
+		pattern = pattern,
+	}
+end
+
+function M.clear_project_cache()
+	detect_cache = {}
+	detect_cache_order = {}
+end
+
 -- Substitute variables in command string
 -- This is inspired by code_runner.nvim's variable system
 function M.substitute_variables(command, filepath)
@@ -146,6 +176,16 @@ end
 
 -- Detect if current file belongs to a project
 function M.detect_project(filepath, project_config)
+	if not filepath or filepath == "" then
+		return nil, nil
+	end
+
+	local cache_key = make_detect_cache_key(filepath, project_config)
+	local cached = detect_cache[cache_key]
+	if cached ~= nil then
+		return cached.project, cached.pattern
+	end
+
 	-- First check user-defined projects
 	if project_config and not vim.tbl_isempty(project_config) then
 		local normalized_path = vim.fs.normalize(filepath)
@@ -157,18 +197,22 @@ function M.detect_project(filepath, project_config)
 
 			-- Try matching as Lua pattern (assuming user config keys are patterns)
 			if normalized_path:match(normalized_pattern) then
+				set_detect_cache(cache_key, project_data, pattern)
 				return project_data, pattern
 			end
 
 			-- Also try simple substring matching for literal patterns
 			if normalized_path:find(normalized_pattern, 1, true) then
+				set_detect_cache(cache_key, project_data, pattern)
 				return project_data, pattern
 			end
 		end
 	end
 
 	-- Fallback to marker-based detection
-	return detect_project_by_markers(filepath)
+	local project = detect_project_by_markers(filepath)
+	set_detect_cache(cache_key, project, nil)
+	return project, nil
 end
 
 -- Get project root directory
