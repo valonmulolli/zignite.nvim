@@ -124,7 +124,7 @@ return {
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
           },
-          odin = "odin run $file",
+          odin = "odin run $file -file",
           fortran = {
             cmd = {
               "cd $dir",
