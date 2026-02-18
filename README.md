@@ -39,7 +39,7 @@ The `build` step is required to compile the Zig backend.
 ```lua
 {
     "valonmulolli/zignite.nvim",
-    build = "cd zig && zig build",
+    build = "cd zig && zig build -Doptimize=ReleaseFast",
     config = function()
         require("zignite.config").setup({})
     end,
@@ -51,7 +51,7 @@ The `build` step is required to compile the Zig backend.
 ```lua
 use {
     'valonmulolli/zignite.nvim',
-    run = 'cd zig && zig build',
+    build = "cd zig && zig build -Doptimize=ReleaseFast",
     config = function()
         require("zignite.config").setup({})
     end,
@@ -142,6 +142,34 @@ Add it to your setup:
 runners = {
     my_lang = "my-compiler $file"
 }
+```
+
+### Odin "Redeclaration of 'main'" on `:RunFile`
+Use single-file mode for Odin:
+```lua
+runners = {
+    odin = "odin run $file -file",
+}
+```
+
+## Development
+
+### Run tests
+
+```sh
+lua test/runner.lua
+```
+
+### Run integration tests only
+
+```sh
+lua test/integration.lua
+```
+
+### Run performance benchmark
+
+```sh
+lua test/benchmark.lua 10000
 ```
 
 ## License
