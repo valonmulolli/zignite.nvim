@@ -34,6 +34,9 @@ local ZIG_EXECUTABLE = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
 
 local zig_backend_available = nil
 local zig_missing_notified = false
+local argv_cache = {}
+local argv_cache_order = {}
+local ARGV_CACHE_MAX = 256
 
 local function ensure_config()
 	config.ensure()
@@ -58,17 +61,149 @@ local function notify_backend_missing_once()
 	)
 end
 
-local function build_system_command(final_command)
+local function is_simple_command(command)
+	if type(command) ~= "string" or command == "" then
+		return false
+	end
+
+	if command:find("[%c]") or command:find("[|&;<>`]") then
+		return false
+	end
+
+	if command:find("%$%(") then
+		return false
+	end
+
+	return true
+end
+
+local function tokenize_command(command)
+	local tokens = {}
+	local current = {}
+	local quote = nil
+	local i = 1
+
+	local function push_current()
+		if #current > 0 then
+			table.insert(tokens, table.concat(current))
+			current = {}
+		end
+	end
+
+	while i <= #command do
+		local ch = command:sub(i, i)
+		if quote then
+			if ch == quote then
+				quote = nil
+			elseif ch == "\\" and quote == '"' and i < #command then
+				i = i + 1
+				table.insert(current, command:sub(i, i))
+			else
+				table.insert(current, ch)
+			end
+		else
+			if ch == "'" or ch == '"' then
+				quote = ch
+			elseif ch:match("%s") then
+				push_current()
+			elseif ch == "\\" and i < #command then
+				i = i + 1
+				table.insert(current, command:sub(i, i))
+			else
+				table.insert(current, ch)
+			end
+		end
+
+		i = i + 1
+	end
+
+	if quote then
+		return nil
+	end
+
+	push_current()
+	return tokens
+end
+
+local function argv_cache_key(command_template, filepath)
+	return tostring(command_template) .. "\0" .. tostring(filepath)
+end
+
+local function cache_argv_result(key, value)
+	if argv_cache[key] == nil then
+		table.insert(argv_cache_order, key)
+		if #argv_cache_order > ARGV_CACHE_MAX then
+			local oldest = table.remove(argv_cache_order, 1)
+			argv_cache[oldest] = nil
+		end
+	end
+
+	argv_cache[key] = value
+end
+
+local function copy_list(list)
+	local out = {}
+	for i = 1, #list do
+		out[i] = list[i]
+	end
+	return out
+end
+
+local function command_to_argv(command_template, filepath)
+	local key = argv_cache_key(command_template, filepath)
+	local cached = argv_cache[key]
+	if cached ~= nil then
+		if cached.ok then
+			return copy_list(cached.argv)
+		end
+		return nil
+	end
+
+	if not is_simple_command(command_template) then
+		cache_argv_result(key, { ok = false })
+		return nil
+	end
+
+	local tokens = tokenize_command(command_template)
+	if not tokens or #tokens == 0 then
+		cache_argv_result(key, { ok = false })
+		return nil
+	end
+
+	for idx, token in ipairs(tokens) do
+		local expanded = utils.substitute_variables_raw(token, filepath)
+		if expanded:find("%$[%w_]+") then
+			cache_argv_result(key, { ok = false })
+			return nil
+		end
+		tokens[idx] = expanded
+	end
+
+	cache_argv_result(key, { ok = true, argv = copy_list(tokens) })
+	return tokens
+end
+
+local function build_system_command(final_command, argv_command)
 	if has_zig_backend() then
 		local system_command = { ZIG_EXECUTABLE }
 		if config.options.timeout and type(config.options.timeout) == "number" then
 			table.insert(system_command, "--timeout=" .. config.options.timeout)
 		end
-		table.insert(system_command, final_command)
+		if argv_command and #argv_command > 0 then
+			table.insert(system_command, "--argv")
+			for _, arg in ipairs(argv_command) do
+				table.insert(system_command, arg)
+			end
+		else
+			table.insert(system_command, final_command)
+		end
 		return system_command
 	end
 
 	notify_backend_missing_once()
+	if argv_command and #argv_command > 0 then
+		return argv_command
+	end
 	return final_command
 end
 
@@ -92,22 +227,6 @@ function M.get_command()
 
 	-- 1. Detect project
 	local project, _ = utils.detect_project(filepath, config.options.project)
-	local project_root = project and project.root
-
-	-- Calculate distance to project root (manual implementation for compatibility)
-	local distance = 100 -- Default "far"
-	if project_root then
-		local file_dir = vim.fn.fnamemodify(filepath, ":h")
-		-- If they are the same, distance is 0
-		if file_dir == project_root then
-			distance = 0
-		else
-			-- Strip project_root from file_dir
-			local sub = string.sub(file_dir, #project_root + 1)
-			-- Count separators (/) in the remaining path
-			_, distance = string.gsub(sub, "/", "")
-		end
-	end
 
 	-- 2. Filetype runner
 	local ft_runner = config.options.runners[filetype]
@@ -119,17 +238,13 @@ function M.get_command()
 		return project, "project"
 	end
 
-	-- A. If the project marker is in the SAME directory, use project command.
-	if project and project.command and distance == 0 then
-		return project, "project"
-	end
-
-	-- B. If we have a standalone runner configured, use it (Standalone mode).
+	-- A. RunFile should prioritize the filetype runner when available.
+	-- Users can still run project commands explicitly via :RunProject.
 	if ft_runner then
 		return ft_runner, "filetype"
 	end
 
-	-- C. If no standalone runner, but a project was found elsewhere, fallback to project.
+	-- B. Fallback to project when no filetype runner exists.
 	if project and project.command then
 		return project, "project"
 	end
@@ -191,20 +306,29 @@ function M.run_code(range, mode)
 	local command_str
 	local cleanup_command
 	local display_name
+	local argv_command
+	local command_cwd
 
 	if source == "project" then
 		command_str = runner.command
 		display_name = runner.name
+		command_cwd = utils.get_project_root(execution_path, config.options.project)
 	else
 		command_str = utils.normalize_command(runner)
 		if type(runner) == "table" and runner.cleanup_command then
 			cleanup_command = runner.cleanup_command
 		end
 		display_name = filetype
+		command_cwd = nil
 	end
 
 	-- Substitute variables in command
 	local final_command = utils.substitute_variables(command_str, execution_path)
+	if source == "filetype" then
+		argv_command = command_to_argv(command_str, execution_path)
+	elseif source == "project" then
+		argv_command = command_to_argv(command_str, execution_path)
+	end
 
 	-- Standalone Zig safeguard: if user configured a build-based runner but no
 	-- build.zig exists, force single-file execution.
@@ -213,24 +337,26 @@ function M.run_code(range, mode)
 		local uses_zig_build = final_command:match("zig%s+build") ~= nil
 		if not has_build_zig and uses_zig_build then
 			final_command = utils.substitute_variables("zig run $file", execution_path)
+			argv_command = command_to_argv("zig run $file", execution_path)
 		end
 	end
 
 	-- If it's a project command, navigate to project root
 	if source == "project" then
-		local cwd = utils.get_project_root(execution_path, config.options.project)
-		if cwd then
-			final_command = "cd " .. vim.fn.shellescape(cwd) .. " && " .. final_command
+		if not command_cwd then
+			argv_command = nil
 		end
 	end
 
-	local system_command = build_system_command(final_command)
+	local system_command = build_system_command(final_command, argv_command)
 
-	M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command)
+	M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command, {
+		cwd = command_cwd,
+	})
 end
 
 -- Execute command asynchronously using new UI
-function M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command)
+function M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command, exec_opts)
 	ensure_config()
 
 	mode = mode or config.options.mode or "float"
@@ -245,15 +371,16 @@ function M.execute_command(system_command, execution_path, range, mode, display_
 		if cleanup_command then
 			-- Run cleanup in background quietly
 			vim.fn.jobstart(utils.substitute_variables(cleanup_command, execution_path), {
+				cwd = exec_opts and exec_opts.cwd or nil,
 				on_exit = function() end,
 			})
 		end
 	end
 
 	if mode == "float" then
-		ui.run_in_float_terminal(system_command, on_exit, display_name)
+		ui.run_in_float_terminal(system_command, on_exit, display_name, exec_opts)
 	else
-		ui.run_in_split_terminal(mode, system_command, on_exit)
+		ui.run_in_split_terminal(mode, system_command, on_exit, exec_opts)
 	end
 end
 
@@ -276,15 +403,15 @@ function M.run_project(mode)
 	local cwd = utils.get_project_root(filepath, config.options.project)
 	local command = runner.command
 
-	if cwd then
-		command = "cd " .. vim.fn.shellescape(cwd) .. " && " .. command
-	end
-
 	-- Substitute variables
 	command = utils.substitute_variables(command, filepath)
+	local argv_command = command_to_argv(runner.command, filepath)
+	if not cwd then
+		argv_command = nil
+	end
 
-	local system_command = build_system_command(command)
-	M.execute_command(system_command, filepath, 0, mode, runner.name or "Project")
+	local system_command = build_system_command(command, argv_command)
+	M.execute_command(system_command, filepath, 0, mode, runner.name or "Project", nil, { cwd = cwd })
 end
 
 function M.stop_code()
@@ -348,26 +475,28 @@ function M.run_build_command(command_name, mode)
 			end
 			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
 			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
-			local final_standalone = "cd " .. vim.fn.shellescape(standalone_dir) .. " && " .. standalone_cmd
-
-			local system_command = build_system_command(final_standalone)
+			local standalone_argv = command_to_argv(zig_runner, filepath)
+			local system_command = build_system_command(standalone_cmd, standalone_argv)
 
 			local display_name = "zig: run"
-			M.execute_command(system_command, filepath, 0, mode, display_name)
+			M.execute_command(system_command, filepath, 0, mode, display_name, nil, {
+				cwd = standalone_dir,
+			})
 			return
 		end
 	end
 
 	-- Substitute variables using the current file path.
 	command = utils.substitute_variables(command, filepath)
+	local argv_command = command_to_argv(build_cmds[command_name], filepath)
+	if not cwd then
+		argv_command = nil
+	end
 
-	-- Prepend cd to project root
-	local final_command = "cd " .. vim.fn.shellescape(cwd) .. " && " .. command
-
-	local system_command = build_system_command(final_command)
+	local system_command = build_system_command(command, argv_command)
 
 	local display_name = string.format("%s: %s", filetype, command_name)
-	M.execute_command(system_command, filepath, 0, mode, display_name)
+	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
 end
 
 -- Show a picker to select and run a build command
@@ -421,6 +550,14 @@ function M.select_build_command(mode)
 				command = cmd_string,
 			})
 		end
+	end
+
+	if #commands == 0 then
+		vim.notify(
+			string.format("No build commands available for %s in this project context", filetype),
+			vim.log.levels.WARN
+		)
+		return
 	end
 
 	-- Sort by name
@@ -583,6 +720,8 @@ end
 function M.setup(opts)
 	zig_backend_available = nil
 	zig_missing_notified = false
+	argv_cache = {}
+	argv_cache_order = {}
 	config.setup(opts)
 	utils.clear_project_cache()
 end

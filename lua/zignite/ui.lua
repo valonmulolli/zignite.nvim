@@ -11,6 +11,79 @@ local function get_config()
 	return cfg.options
 end
 
+local function format_key_for_display(key)
+	local text = tostring(key or "")
+	text = text:gsub("^<", ""):gsub(">$", "")
+	if text == "" then
+		return "Esc"
+	end
+	return text
+end
+
+local function build_float_footer(float_config)
+	local close_key = format_key_for_display(float_config.close_key or "<Esc>")
+	local input_hint = float_config.startinsert ~= false and "input ready" or "press i for input"
+	return string.format(" %s: close | %s ", close_key, input_hint)
+end
+
+local function set_quickfix_lines(lines)
+	vim.schedule(function()
+		vim.fn.setqflist({}, " ", {
+			title = "Zignite Output",
+			lines = lines,
+		})
+	end)
+end
+
+local function populate_quickfix_from_buffer(buf, quickfix_opts)
+	if quickfix_opts.enabled == false or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
+	if max_lines < 1 then
+		max_lines = 1
+	end
+
+	local total_lines = vim.api.nvim_buf_line_count(buf)
+	local start_line = math.max(0, total_lines - max_lines)
+	local lines = vim.api.nvim_buf_get_lines(buf, start_line, -1, false)
+	if quickfix_opts.strip_ansi == false then
+		set_quickfix_lines(lines)
+		return
+	end
+
+	local chunk_size = tonumber(quickfix_opts.strip_chunk_size) or 200
+	if chunk_size < 1 then
+		chunk_size = 1
+	end
+
+	local idx = 1
+	local function strip_next_chunk()
+		local upper = math.min(#lines, idx + chunk_size - 1)
+		for i = idx, upper do
+			if lines[i]:find("\27", 1, true) then
+				lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
+			end
+		end
+		idx = upper + 1
+
+		if idx <= #lines and quickfix_opts.async_strip ~= false then
+			vim.schedule(strip_next_chunk)
+			return
+		end
+
+		if idx <= #lines then
+			strip_next_chunk()
+			return
+		end
+
+		set_quickfix_lines(lines)
+	end
+
+	strip_next_chunk()
+end
+
 -- Helper to track a new runner
 local function track_runner(win_id, buf_id)
 	table.insert(runners, { win_id = win_id, buf_id = buf_id })
@@ -56,7 +129,7 @@ local function get_float_config()
 		border = float_config.border,
 		title = " Zignite Runner ",
 		title_pos = "center",
-		footer = " q: close | i: input ",
+		footer = "",
 		footer_pos = "right",
 	}
 end
@@ -159,7 +232,7 @@ function M.set_exit_status(win_id, exit_code)
 end
 
 -- Main function to run command in interactive float
-function M.run_in_float_terminal(command, on_exit_cb, title_name)
+function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local config = get_config()
 
 	if config.singleton then
@@ -176,8 +249,10 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name)
 	local opts = get_float_config()
 	opts.title = " Preparing... "
 	local float_config = config.float
+	local should_focus = float_config.focus ~= false
+	opts.footer = build_float_footer(float_config)
 
-	local win = vim.api.nvim_open_win(buf, true, opts)
+	local win = vim.api.nvim_open_win(buf, should_focus, opts)
 
 	-- Track this new runner
 	track_runner(win, buf)
@@ -198,49 +273,27 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name)
 	-- Run Terminal
 	local job_id = vim.fn.jobstart(command, {
 		term = true,
-		on_exit = function(job_id, exit_code, event)
-			-- Update title logic on exit for THIS specific window
-			if vim.api.nvim_win_is_valid(win) then
-				M.set_exit_status(win, exit_code)
-			end
-
-			-- Populate Quickfix on Error
-			if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
-				local qf = config.quickfix or {}
-				if qf.enabled ~= false then
-					local max_lines = tonumber(qf.max_lines) or 1000
-					if max_lines < 1 then
-						max_lines = 1
-					end
-
-					local total_lines = vim.api.nvim_buf_line_count(buf)
-					local start_line = math.max(0, total_lines - max_lines)
-					local lines = vim.api.nvim_buf_get_lines(buf, start_line, -1, false)
-
-					if qf.strip_ansi ~= false then
-						for i = 1, #lines do
-							lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
-						end
-					end
-
-					vim.schedule(function()
-						-- We set the list but don't open it automatically to avoid annoyance.
-						vim.fn.setqflist({}, " ", {
-							title = "Zignite Output",
-							lines = lines,
-						})
-					end)
+		cwd = job_opts and job_opts.cwd or nil,
+			on_exit = function(job_id, exit_code, event)
+				-- Update title logic on exit for THIS specific window
+				if vim.api.nvim_win_is_valid(win) then
+					M.set_exit_status(win, exit_code)
 				end
-			end
 
-			if on_exit_cb then
-				on_exit_cb(exit_code)
-			end
+				-- Populate Quickfix on Error
+				if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
+					local qf = config.quickfix or {}
+					populate_quickfix_from_buffer(buf, qf)
+				end
+
+				if on_exit_cb then
+					on_exit_cb(exit_code)
+				end
 		end,
 	})
 
 	-- Start Insert Mode if configured (crucial for interactivity)
-	if float_config.startinsert ~= false then
+	if should_focus and float_config.startinsert ~= false then
 		vim.cmd("startinsert")
 	end
 
@@ -248,7 +301,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name)
 end
 
 -- Legacy support for split/tab execution
-function M.run_in_split_terminal(mode, command, on_exit_cb)
+function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local config_opts = get_config()
 	if config_opts.singleton then
 		M.close_output()
@@ -256,6 +309,11 @@ function M.run_in_split_terminal(mode, command, on_exit_cb)
 
 	local config = config_opts.term
 	local buf = vim.api.nvim_create_buf(false, true)
+	local previous_win = vim.api.nvim_get_current_win()
+	local previous_tab = nil
+	if vim.api.nvim_get_current_tabpage then
+		previous_tab = vim.api.nvim_get_current_tabpage()
+	end
 
 	local win
 	if mode == "tab" then
@@ -276,14 +334,33 @@ function M.run_in_split_terminal(mode, command, on_exit_cb)
 
 	track_runner(win, buf)
 
+	if config.focus == false then
+		if mode == "tab" then
+			local restored = false
+			if previous_tab and vim.api.nvim_set_current_tabpage then
+				restored = pcall(vim.api.nvim_set_current_tabpage, previous_tab)
+			end
+			if not restored then
+				pcall(vim.cmd, "tabprevious")
+			end
+		elseif previous_win and vim.api.nvim_win_is_valid(previous_win) then
+			pcall(vim.api.nvim_set_current_win, previous_win)
+		end
+	end
+
 	local job_id = vim.fn.jobstart(command, {
 		term = true,
+		cwd = job_opts and job_opts.cwd or nil,
 		on_exit = function(_, exit_code)
+			if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
+				local qf = config_opts.quickfix or {}
+				populate_quickfix_from_buffer(buf, qf)
+			end
 			if on_exit_cb then on_exit_cb(exit_code) end
 		end
 	})
 
-	if config.startinsert then
+	if config.startinsert and config.focus ~= false then
 		vim.cmd("startinsert")
 	end
 end
