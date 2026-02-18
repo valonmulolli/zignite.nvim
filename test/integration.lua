@@ -27,7 +27,8 @@ vim.fn = vim.fn or {
     end,
     executable = function() return 1 end,
     shellescape = function(str) return str end,
-    filereadable = function() return 0 end
+    filereadable = function() return 0 end,
+    strdisplaywidth = function(str) return #tostring(str) end,
 }
 vim.bo = vim.bo or { filetype = "python" }
 vim.o = vim.o or { columns = 120, lines = 40 }
@@ -427,6 +428,51 @@ local function test_build_picker_empty_state()
     print("✓ Build picker empty-state test passed")
 end
 
+-- Test picker window coordinates are clamped on very small editor sizes.
+local function test_build_picker_window_clamped()
+    local original_expand = vim.fn.expand
+    local original_open_win = vim.api.nvim_open_win
+    local original_columns = vim.o.columns
+    local original_lines = vim.o.lines
+    local captured_opts = nil
+
+    config.setup({
+        build_commands = {
+            tinyft = {
+                run = "echo tiny",
+            },
+        },
+        float = {
+            y = 0,
+        },
+    })
+
+    vim.bo.filetype = "tinyft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+        return original_expand(expr)
+    end
+    vim.o.columns = 2
+    vim.o.lines = 4
+    vim.api.nvim_open_win = function(_, _, opts)
+        captured_opts = opts
+        return 1
+    end
+
+    init.select_build_command("float")
+
+    assert(captured_opts ~= nil, "Picker should open for available commands")
+    assert(captured_opts.row >= 0, "Picker row should be clamped to non-negative values")
+    assert(captured_opts.col >= 0, "Picker col should be clamped to non-negative values")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_open_win = original_open_win
+    vim.o.columns = original_columns
+    vim.o.lines = original_lines
+
+    print("✓ Build picker clamp test passed")
+end
+
 -- Test misconfigured runner command using reserved --argv fails fast with a clear error.
 local function test_reserved_argv_runner_guard()
     config.setup({
@@ -640,6 +686,7 @@ test_build_command_uses_cwd()
 test_quickfix_on_error()
 test_float_focus_behavior()
 test_build_picker_empty_state()
+test_build_picker_window_clamped()
 test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()

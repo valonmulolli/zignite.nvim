@@ -317,13 +317,13 @@ local function validate_config(opts)
 		then
 			vim.notify("Invalid border: " .. float.border, vim.log.levels.WARN)
 		end
-		if float.height and (float.height < 0 or float.height > 1) then
-			vim.notify("Float height should be between 0 and 1", vim.log.levels.WARN)
+			if float.height and (float.height <= 0 or float.height > 1) then
+				vim.notify("Float height should be > 0 and <= 1", vim.log.levels.WARN)
+			end
+			if float.width and (float.width <= 0 or float.width > 1) then
+				vim.notify("Float width should be > 0 and <= 1", vim.log.levels.WARN)
+			end
 		end
-		if float.width and (float.width < 0 or float.width > 1) then
-			vim.notify("Float width should be between 0 and 1", vim.log.levels.WARN)
-		end
-	end
 
 	if opts.term then
 		local term = opts.term

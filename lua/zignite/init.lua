@@ -4,8 +4,6 @@ local utils = require("zignite.utils")
 
 local M = {}
 
-local current_job_id = nil
-
 -- Constants for error messages
 local ERRORS = {
 	NO_FILE = "Error: No file path. Please save the buffer.",
@@ -622,12 +620,16 @@ function M.select_build_command(mode)
 
 	-- Use user's float config style (bottom-aligned, right side)
 	local float_config = config.options.float or {}
+	local preferred_row = math.floor(vim.o.lines * (float_config.y or 0.90)) - height
+	local preferred_col = vim.o.columns - width - 2 -- Right side with 2 char padding
+	local max_row = math.max(0, vim.o.lines - height)
+	local max_col = math.max(0, vim.o.columns - width)
 	local win_opts = {
 		relative = "editor",
 		width = width,
 		height = height,
-		row = math.floor(vim.o.lines * (float_config.y or 0.90)) - height,
-		col = vim.o.columns - width - 2, -- Right side with 2 char padding
+		row = math.max(0, math.min(preferred_row, max_row)),
+		col = math.max(0, math.min(preferred_col, max_col)),
 		style = "minimal",
 		border = float_config.border or "rounded",
 		title = " " .. filetype .. " ",
