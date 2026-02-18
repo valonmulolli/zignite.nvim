@@ -106,14 +106,22 @@ end
 -- Mock vim.fn.jobstart for testing
 local original_jobstart = vim.fn.jobstart
 local job_results = {}
+local quickfix_results = {}
+local notify_results = {}
+local next_exit_code = 0
 
 vim.fn.jobstart = function(cmd, opts)
     table.insert(job_results, {cmd = cmd, opts = opts})
-    -- Simulate successful execution
+    -- Simulate execution with configurable exit code
     if opts.on_exit then
-        vim.defer_fn(function() opts.on_exit(nil, 0) end, 10)
+        local exit_code = next_exit_code
+        vim.defer_fn(function() opts.on_exit(nil, exit_code) end, 10)
     end
     return 123
+end
+
+vim.fn.setqflist = function(_, _, qf_opts)
+    table.insert(quickfix_results, qf_opts)
 end
 
 -- Mock vim.cmd
@@ -126,7 +134,9 @@ vim.schedule = function(func) func() end
 vim.log = { levels = { INFO = 1, WARN = 2, ERROR = 3 } }
 
 -- Mock vim.notify
-vim.notify = function() end
+vim.notify = function(msg, level, opts)
+    table.insert(notify_results, { msg = tostring(msg), level = level, opts = opts })
+end
 
 local config = require('zignite.config')
 local init = require('zignite.init')
@@ -140,6 +150,14 @@ end
 
 local function reset_job_results()
     job_results = {}
+end
+
+local function reset_quickfix_results()
+    quickfix_results = {}
+end
+
+local function reset_notify_results()
+    notify_results = {}
 end
 
 -- Test basic command execution
@@ -161,6 +179,7 @@ local function test_basic_execution()
     assert(#job_results > 0, "Job was not started")
     local last_job = job_results[#job_results]
     local command = command_to_string(last_job.cmd)
+    assert(command:match("%-%-argv"), "Expected argv mode for simple runner command")
     assert(command:match("python3"), "Python command not executed")
 
     -- Restore
@@ -168,6 +187,30 @@ local function test_basic_execution()
     reset_job_results()
 
     print("✓ Basic execution test passed")
+end
+
+-- Test complex runner keeps shell mode (no --argv)
+local function test_complex_runner_uses_shell_mode()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "javascript"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/js/main.js" end
+        return original_expand(expr)
+    end
+
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "JavaScript job was not started")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(not command:match("%-%-argv"), "Complex command should remain shell mode")
+    assert(command:match("&&"), "Expected shell command chain for javascript runner")
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Complex runner shell-mode test passed")
 end
 
 -- Test project detection
@@ -191,12 +234,197 @@ local function test_project_execution()
     local last_job = job_results[#job_results]
     local command = command_to_string(last_job.cmd)
     assert(command:match("echo hello"), "Project command not executed")
+    assert(command:match("%-%-argv"), "Project command should use argv mode for simple commands")
+    assert(not command:match("cd "), "Project command should not rely on shell cd chaining")
+    assert(last_job.opts and last_job.opts.cwd == "/tmp/test", "Project command should execute with project cwd")
 
     -- Restore
     vim.fn.expand = original_expand
     reset_job_results()
 
     print("✓ Project execution test passed")
+end
+
+-- Test build command execution uses cwd and argv mode for simple commands.
+local function test_build_command_uses_cwd()
+    config.setup({
+        build_commands = {
+            python = {
+                run = "python3 $file",
+            },
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/buildproj/main.py" end
+        return original_expand(expr)
+    end
+
+    init.run_build_command("run", "float")
+
+    assert(#job_results > 0, "Build command job was not started")
+    local last_job = job_results[#job_results]
+    local command = command_to_string(last_job.cmd)
+    assert(command:match("%-%-argv"), "Build command should use argv mode for simple commands")
+    assert(command:match("python3"), "Build command should include python3")
+    assert(not command:match("cd "), "Build command should not rely on shell cd chaining")
+    assert(last_job.opts and last_job.opts.cwd == "/tmp/buildproj", "Build command should execute in file directory cwd")
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Build command cwd test passed")
+end
+
+-- Test quickfix generation on non-zero exits strips ANSI and tails lines.
+local function test_quickfix_on_error()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            max_lines = 2,
+            strip_ansi = true,
+            async_strip = true,
+            strip_chunk_size = 1,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(#quickfix_results > 0, "Quickfix should be populated on non-zero exit")
+    local qf = quickfix_results[#quickfix_results]
+    assert(#qf.lines == 2, "Quickfix should be capped to max_lines")
+    assert(not qf.lines[1]:match("\27"), "Quickfix line should be ANSI-stripped")
+    assert(not qf.lines[2]:match("\27"), "Quickfix line should be ANSI-stripped")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix error-path test passed")
+end
+
+-- Test float focus=false keeps cursor in current window and avoids startinsert.
+local function test_float_focus_behavior()
+    local original_expand = vim.fn.expand
+    local original_open_win = vim.api.nvim_open_win
+    local original_cmd = vim.cmd
+    local opened_enter = nil
+    local opened_footer = nil
+    local startinsert_calls = 0
+
+    config.setup({
+        mode = "float",
+        float = {
+            focus = false,
+            startinsert = true,
+            close_key = "<Esc>",
+        },
+    })
+
+    vim.bo.filetype = "python"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/focus/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_open_win = function(_, enter, opts)
+        opened_enter = enter
+        opened_footer = opts and opts.footer or ""
+        return 1
+    end
+    vim.cmd = function(cmd)
+        if cmd == "startinsert" then
+            startinsert_calls = startinsert_calls + 1
+        end
+    end
+
+    init.run_code(0, "float")
+
+    assert(opened_enter == false, "Float runner should respect float.focus=false")
+    assert(startinsert_calls == 0, "Float runner should not startinsert when not focused")
+    assert(opened_footer:match("Esc: close"), "Float footer should show configured close key")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_open_win = original_open_win
+    vim.cmd = original_cmd
+    reset_job_results()
+
+    print("✓ Float focus behavior test passed")
+end
+
+-- Test picker warns and exits when filtering removes all build commands.
+local function test_build_picker_empty_state()
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_open_win = vim.api.nvim_open_win
+    local open_win_calls = 0
+
+    config.setup({
+        build_commands = {
+            testft = {
+                ["meson-build"] = "meson compile -C build",
+            },
+        },
+    })
+
+    vim.bo.filetype = "testft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.testft" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        return path:match("CMakeLists.txt$") and 1 or 0
+    end
+    vim.api.nvim_open_win = function(...)
+        open_win_calls = open_win_calls + 1
+        return original_open_win(...)
+    end
+    reset_notify_results()
+
+    init.select_build_command("float")
+
+    assert(open_win_calls == 0, "Picker should not open when no commands are available")
+    assert(#notify_results > 0, "Picker should notify when command list is empty")
+    assert(
+        notify_results[#notify_results].msg:match("No build commands available"),
+        "Picker empty warning should mention no build commands"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.api.nvim_open_win = original_open_win
+    reset_notify_results()
+
+    print("✓ Build picker empty-state test passed")
 end
 
 -- Test standalone Zig fallback (no build.zig -> zig run $file)
@@ -290,7 +518,35 @@ local function test_runfile_vs_runproject_precedence()
     vim.fn.expand = original_expand
     reset_job_results()
 
-    print("✓ RunFile vs RunProject precedence test passed")
+	print("✓ RunFile vs RunProject precedence test passed")
+end
+
+-- Test Go RunFile in project root prefers filetype runner (single-file), not go run .
+local function test_go_runfile_prefers_file_runner_at_root()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/goapp/main.go" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        return path == "/tmp/goapp/go.mod" and 1 or 0
+    end
+
+    init.run_code(0, "float")
+    assert(#job_results > 0, "Go RunFile job was not started")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("go run /tmp/goapp/main%.go"), "Go RunFile should use single-file runner")
+    assert(not command:match("go run %."), "Go RunFile should not use go run . at root")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ Go RunFile root-priority test passed")
 end
 
 -- Test Odin single-file mode uses -file to avoid package-wide main collisions.
@@ -318,10 +574,16 @@ end
 
 -- Run integration tests
 test_basic_execution()
+test_complex_runner_uses_shell_mode()
 test_project_execution()
+test_build_command_uses_cwd()
+test_quickfix_on_error()
+test_float_focus_behavior()
+test_build_picker_empty_state()
 test_zig_standalone_fallback()
 test_zig_project_runfile()
 test_runfile_vs_runproject_precedence()
+test_go_runfile_prefers_file_runner_at_root()
 test_odin_single_file_mode()
 
 -- Restore original jobstart

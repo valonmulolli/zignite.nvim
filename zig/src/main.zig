@@ -15,25 +15,41 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    // We expect: zignite [--timeout=MS] <full command string>
+    // We expect:
+    //   zignite [--timeout=MS] <full command string>
+    // or
+    //   zignite [--timeout=MS] --argv <program> [args...]
     if (args.len < 2) {
-        std.log.err("Usage: zignite [--timeout=MS] <full command string>", .{});
+        std.log.err(
+            "Usage: zignite [--timeout=MS] <full command string>\n   or: zignite [--timeout=MS] --argv <program> [args...]",
+            .{},
+        );
         std.process.exit(1);
     }
 
     var timeout_ms: ?u64 = null;
     var command_idx: usize = 1;
+    var use_argv = false;
 
-    // Check for optional flags before the command
-    if (std.mem.startsWith(u8, args[1], "--timeout=")) {
-        const value = args[1][10..];
-        timeout_ms = try std.fmt.parseInt(u64, value, 10);
-        command_idx = 2;
-
-        if (args.len < 3) {
-            std.log.err("Error: No command provided after timeout flag", .{});
-            std.process.exit(1);
+    // Parse optional flags before the command payload.
+    while (command_idx < args.len) {
+        const arg = args[command_idx];
+        if (std.mem.startsWith(u8, arg, "--timeout=")) {
+            const value = arg[10..];
+            timeout_ms = try std.fmt.parseInt(u64, value, 10);
+            command_idx += 1;
+        } else if (std.mem.eql(u8, arg, "--argv")) {
+            use_argv = true;
+            command_idx += 1;
+            break;
+        } else {
+            break;
         }
+    }
+
+    if (command_idx >= args.len) {
+        std.log.err("Error: No command provided", .{});
+        std.process.exit(1);
     }
 
     // Use a predictable fast shell for command execution.
@@ -42,15 +58,23 @@ pub fn main() !void {
     const is_windows = builtin.os.tag == .windows;
     const shell = if (is_windows) "cmd.exe" else "/bin/sh";
 
-    // Use the remaining argument as the complete command string
-    const full_command = args[command_idx];
-
-    // Execute through shell with correct flag (-c or /c)
-    const shell_flag = if (is_windows) "/C" else "-c";
-    const shell_args = [_][]const u8{ shell, shell_flag, full_command };
-
     // --- Child Process Execution ---
-    var child = std.process.Child.init(&shell_args, allocator);
+    var child = if (use_argv) blk: {
+        const child_args = args[command_idx..];
+        if (child_args.len == 0) {
+            std.log.err("Error: No argv payload provided after --argv", .{});
+            std.process.exit(1);
+        }
+        break :blk std.process.Child.init(child_args, allocator);
+    } else blk: {
+        // Use the remaining argument as the complete command string
+        const full_command = args[command_idx];
+
+        // Execute through shell with correct flag (-c or /c)
+        const shell_flag = if (is_windows) "/C" else "-c";
+        const shell_args = [_][]const u8{ shell, shell_flag, full_command };
+        break :blk std.process.Child.init(&shell_args, allocator);
+    };
 
     // Inherit stdin/stdout/stderr from parent process
     child.stdin_behavior = .Inherit;

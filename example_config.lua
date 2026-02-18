@@ -341,9 +341,11 @@ require("zignite.config").setup({
 
     -- Quickfix behavior on errors (performance-friendly defaults)
     quickfix = {
-        enabled = true,     -- Populate quickfix on non-zero exit code
-        max_lines = 1000,   -- Limit quickfix to the last N lines
-        strip_ansi = true,  -- Remove ANSI color codes in quickfix lines
+        enabled = true,         -- Populate quickfix on non-zero exit code
+        max_lines = 1000,       -- Limit quickfix to the last N lines
+        strip_ansi = true,      -- Remove ANSI color codes in quickfix lines
+        async_strip = true,     -- Process ANSI stripping in chunks to avoid UI pause
+        strip_chunk_size = 200, -- Lines processed per chunk when async_strip=true
     },
 })
 

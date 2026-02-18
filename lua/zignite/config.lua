@@ -253,9 +253,11 @@ M.defaults = {
 
 	-- Quickfix behavior on command errors
 	quickfix = {
-		enabled = true,      -- Populate quickfix when command exits with non-zero status
-		max_lines = 1000,    -- Tail limit for large outputs (performance guard)
-		strip_ansi = true,   -- Remove ANSI escape codes from quickfix lines
+		enabled = true,         -- Populate quickfix when command exits with non-zero status
+		max_lines = 1000,       -- Tail limit for large outputs (performance guard)
+		strip_ansi = true,      -- Remove ANSI escape codes from quickfix lines
+		async_strip = true,     -- Strip ANSI in scheduled chunks to reduce UI stutter
+		strip_chunk_size = 200, -- Lines processed per chunk when async_strip=true
 	},
 
 	-- Filter patterns for stderr (hide these warnings/info messages)
