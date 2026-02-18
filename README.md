@@ -169,6 +169,9 @@ runners = {
 ### Go `:RunFile` feels slow or hangs
 `go run .` compiles/runs the whole module. For single-file execution use `:RunFile` (runner `go run $file`). Use `:RunProject` only when you want full module execution.
 
+### `zsh: no such option: argv`
+Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
+
 ## Development
 
 ### Run tests
