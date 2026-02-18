@@ -473,6 +473,43 @@ local function test_build_picker_window_clamped()
     print("✓ Build picker clamp test passed")
 end
 
+-- Test build picker respects float.focus=false.
+local function test_build_picker_focus_behavior()
+    local original_expand = vim.fn.expand
+    local original_open_win = vim.api.nvim_open_win
+    local opened_enter = nil
+
+    config.setup({
+        build_commands = {
+            tinyft = {
+                run = "echo tiny",
+            },
+        },
+        float = {
+            focus = false,
+        },
+    })
+
+    vim.bo.filetype = "tinyft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_open_win = function(_, enter, _)
+        opened_enter = enter
+        return 1
+    end
+
+    init.select_build_command("float")
+
+    assert(opened_enter == false, "Build picker should respect float.focus=false")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_open_win = original_open_win
+
+    print("✓ Build picker focus behavior test passed")
+end
+
 -- Test misconfigured runner command using reserved --argv fails fast with a clear error.
 local function test_reserved_argv_runner_guard()
     config.setup({
@@ -687,6 +724,7 @@ test_quickfix_on_error()
 test_float_focus_behavior()
 test_build_picker_empty_state()
 test_build_picker_window_clamped()
+test_build_picker_focus_behavior()
 test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()

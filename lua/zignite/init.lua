@@ -624,6 +624,7 @@ function M.select_build_command(mode)
 	local preferred_col = vim.o.columns - width - 2 -- Right side with 2 char padding
 	local max_row = math.max(0, vim.o.lines - height)
 	local max_col = math.max(0, vim.o.columns - width)
+	local picker_focus = float_config.focus ~= false
 	local win_opts = {
 		relative = "editor",
 		width = width,
@@ -636,7 +637,7 @@ function M.select_build_command(mode)
 		title_pos = "center",
 	}
 
-	local win = vim.api.nvim_open_win(buf, true, win_opts)
+	local win = vim.api.nvim_open_win(buf, picker_focus, win_opts)
 
 	-- Enable cursor line highlighting
 	vim.api.nvim_set_option_value("cursorline", true, { win = win })
