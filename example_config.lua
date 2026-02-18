@@ -5,6 +5,9 @@
 -- Copy and modify sections you need for your setup
 -- ============================================================================
 
+-- Plugin manager build step (recommended):
+-- build = "cd zig && zig build -Doptimize=ReleaseFast",
+
 require("zignite.config").setup({
 
     -- ========================================================================
@@ -80,7 +83,8 @@ require("zignite.config").setup({
         lua = { "cd $dir", "lua $fileName" },
         ruby = "ruby $file",
         php = "php $file",
-        odin = "odin run $file",
+        -- Use Odin single-file mode to avoid package-wide main redeclaration errors.
+        odin = "odin run $file -file",
         fortran = {
             cmd = {
                 "cd $dir",
@@ -334,6 +338,13 @@ require("zignite.config").setup({
         "Use `node --trace-warnings",   -- Node.js trace suggestions
         "To eliminate this warning",    -- Generic warning hints
     },
+
+    -- Quickfix behavior on errors (performance-friendly defaults)
+    quickfix = {
+        enabled = true,     -- Populate quickfix on non-zero exit code
+        max_lines = 1000,   -- Limit quickfix to the last N lines
+        strip_ansi = true,  -- Remove ANSI color codes in quickfix lines
+    },
 })
 
 -- ============================================================================
@@ -415,6 +426,11 @@ vim.api.nvim_create_autocmd("FileType", {
 --   nvim ~/Dev/myzig/src/main.zig
 --   :RunProject           → Runs zig build run (from project root)
 --   <leader>rp            → Same as above
+
+-- Odin single-file execution:
+--   nvim lesson.odin
+--   :RunFile              → Runs odin run lesson.odin -file
+--   :RunProject           → Runs project command (e.g. odin run .)
 
 -- Different output modes:
 --   :RunFile split        → Run in horizontal split
