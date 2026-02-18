@@ -427,6 +427,66 @@ local function test_build_picker_empty_state()
     print("✓ Build picker empty-state test passed")
 end
 
+-- Test misconfigured runner command using reserved --argv fails fast with a clear error.
+local function test_reserved_argv_runner_guard()
+    config.setup({
+        runners = {
+            python = "--argv python3 $file",
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/argv_guard/main.py" end
+        return original_expand(expr)
+    end
+    reset_job_results()
+    reset_notify_results()
+
+    init.run_code(0, "float")
+
+    assert(#job_results == 0, "Reserved --argv runner should not start a job")
+    assert(#notify_results > 0, "Reserved --argv runner should notify")
+    assert(notify_results[#notify_results].msg:match("%-%-argv"), "Reserved --argv error should mention --argv")
+
+    vim.fn.expand = original_expand
+    reset_notify_results()
+
+    print("✓ Reserved argv runner guard test passed")
+end
+
+-- Test misconfigured build command using reserved --argv fails fast with a clear error.
+local function test_reserved_argv_build_guard()
+    config.setup({
+        build_commands = {
+            python = {
+                run = "--argv python3 $file",
+            },
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/argv_guard/main.py" end
+        return original_expand(expr)
+    end
+    reset_job_results()
+    reset_notify_results()
+
+    init.run_build_command("run", "float")
+
+    assert(#job_results == 0, "Reserved --argv build command should not start a job")
+    assert(#notify_results > 0, "Reserved --argv build command should notify")
+    assert(notify_results[#notify_results].msg:match("%-%-argv"), "Reserved --argv build error should mention --argv")
+
+    vim.fn.expand = original_expand
+    reset_notify_results()
+
+    print("✓ Reserved argv build guard test passed")
+end
+
 -- Test standalone Zig fallback (no build.zig -> zig run $file)
 local function test_zig_standalone_fallback()
     config.setup({
@@ -580,6 +640,8 @@ test_build_command_uses_cwd()
 test_quickfix_on_error()
 test_float_focus_behavior()
 test_build_picker_empty_state()
+test_reserved_argv_runner_guard()
+test_reserved_argv_build_guard()
 test_zig_standalone_fallback()
 test_zig_project_runfile()
 test_runfile_vs_runproject_precedence()
