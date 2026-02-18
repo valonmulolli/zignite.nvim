@@ -58,7 +58,7 @@ require("zignite.config").setup({
         cpp = {
             cmd = {
                 "cd $dir",
-                "clang++ $fileName -std=c++23 -o /tmp/$fileNameWithoutExt",
+                "clang++ $fileName -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"

@@ -20,6 +20,24 @@ return {
         -- Keymaps are managed by Lazy above.
         keymaps = {},
         mode = "float",
+        runners = {
+          c = {
+            cmd = {
+              "cd $dir",
+              "gcc $fileName -o /tmp/$fileNameWithoutExt",
+              "/tmp/$fileNameWithoutExt",
+            },
+            cleanup_command = "rm /tmp/$fileNameWithoutExt",
+          },
+          cpp = {
+            cmd = {
+              "cd $dir",
+              "clang++ $fileName -o /tmp/$fileNameWithoutExt",
+              "/tmp/$fileNameWithoutExt",
+            },
+            cleanup_command = "rm /tmp/$fileNameWithoutExt",
+          },
+        },
 
         -- Optional execution behavior.
         timeout = nil,
