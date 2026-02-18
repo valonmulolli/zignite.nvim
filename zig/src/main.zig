@@ -8,10 +8,8 @@ const TimeoutContext = struct {
 };
 
 pub fn main() !void {
-    // Use GeneralPurposeAllocator for better memory management
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    // Short-lived process: avoid GPA bookkeeping overhead.
+    const allocator = std.heap.page_allocator;
 
     // --- Argument Parsing ---
     const args = try std.process.argsAlloc(allocator);
@@ -38,11 +36,11 @@ pub fn main() !void {
         }
     }
 
-    // Get the shell to use
-    // On Windows, default to cmd.exe if SHELL not set. On POSIX, /bin/sh.
+    // Use a predictable fast shell for command execution.
+    // On POSIX, /bin/sh starts faster than interactive user shells.
+    // On Windows, use cmd.exe-compatible invocation.
     const is_windows = builtin.os.tag == .windows;
-    const default_shell = if (is_windows) "cmd.exe" else "/bin/sh";
-    const shell = std.posix.getenv("SHELL") orelse default_shell;
+    const shell = if (is_windows) "cmd.exe" else "/bin/sh";
 
     // Use the remaining argument as the complete command string
     const full_command = args[command_idx];
