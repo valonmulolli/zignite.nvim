@@ -23,7 +23,6 @@ function M.run_tests()
     local test_files = {
         "test_utils",
         "test_config",
-        -- "integration" -- Requires nvim environment
     }
 
     local passed = 0
@@ -41,6 +40,18 @@ function M.run_tests()
             print("✗ " .. test_file .. " failed: " .. err)
             failed = failed + 1
         end
+    end
+
+    -- Run integration tests in a separate Lua process to avoid mock/module
+    -- leakage between unit and integration suites.
+    local integration_cmd = string.format('lua "%s/test/integration.lua" "%s"', project_root, project_root)
+    local integration_ok = os.execute(integration_cmd)
+    if integration_ok == true or integration_ok == 0 then
+        print("✓ integration passed")
+        passed = passed + 1
+    else
+        print("✗ integration failed")
+        failed = failed + 1
     end
 
     print(string.format("\nTest Results: %d passed, %d failed", passed, failed))
