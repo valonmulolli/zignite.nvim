@@ -89,6 +89,14 @@ require('zignite.config').setup({
     
     spinner = "dots",             -- "dots", "line", "bar", "clock", etc.
     enable_animations = true,     -- Show spinner in window title
+
+    quickfix = {
+        enabled = true,           -- Populate quickfix on non-zero exit
+        max_lines = 1000,         -- Keep only last N lines from terminal output
+        strip_ansi = true,        -- Remove color escape codes in quickfix lines
+        async_strip = true,       -- Strip ANSI in chunks to reduce UI stutter
+        strip_chunk_size = 200,   -- Lines per chunk when async_strip=true
+    },
 })
 ```
 
@@ -96,9 +104,9 @@ require('zignite.config').setup({
 
 ### Commands
 
-- `:RunFile`: Run the current file in a floating terminal.
+- `:RunFile`: Run the current file using the filetype runner (single-file flow).
 - `:RunCode`: Run the current visual selection.
-- `:RunProject`: Run the default project command (e.g., `npm start`, `cargo run`).
+- `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunClose`: Close the runner window.
 - `:StopCode`: Terminate the currently running process.
@@ -117,6 +125,12 @@ Press `<leader>rb` (default) to open the Command Picker:
 ```
 
 Use `j`/`k` to navigate and `Enter` to select.
+
+### RunFile vs RunProject
+
+- Use `:RunFile` for fast single-file feedback.
+- Use `:RunProject` when you explicitly want project-wide startup/build behavior.
+- For Zig, `:RunFile` prefers project build execution (`zig build ...`) when `build.zig` exists.
 
 ### Variable Substitution
 
@@ -151,6 +165,9 @@ runners = {
     odin = "odin run $file -file",
 }
 ```
+
+### Go `:RunFile` feels slow or hangs
+`go run .` compiles/runs the whole module. For single-file execution use `:RunFile` (runner `go run $file`). Use `:RunProject` only when you want full module execution.
 
 ## Development
 
