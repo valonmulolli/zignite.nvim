@@ -5,6 +5,12 @@ local M = {}
 local runners = {}
 local spinner_timer = nil
 
+local function get_config()
+	local cfg = require("zignite.config")
+	cfg.ensure()
+	return cfg.options
+end
+
 -- Helper to track a new runner
 local function track_runner(win_id, buf_id)
 	table.insert(runners, { win_id = win_id, buf_id = buf_id })
@@ -34,11 +40,11 @@ local spinner_frames = {
 
 -- Private: Get window config
 local function get_float_config()
-	local config = require("zignite.config").options.float
-	local width = math.floor(vim.o.columns * config.width)
-	local height = math.floor(vim.o.lines * config.height)
-	local col = math.floor((vim.o.columns - width) * config.x)
-	local row = math.floor((vim.o.lines - height) * config.y)
+	local float_config = get_config().float
+	local width = math.floor(vim.o.columns * float_config.width)
+	local height = math.floor(vim.o.lines * float_config.height)
+	local col = math.floor((vim.o.columns - width) * float_config.x)
+	local row = math.floor((vim.o.lines - height) * float_config.y)
 
 	return {
 		relative = "editor",
@@ -47,7 +53,7 @@ local function get_float_config()
 		height = height,
 		col = col,
 		row = row,
-		border = config.border,
+		border = float_config.border,
 		title = " Zignite Runner ",
 		title_pos = "center",
 		footer = " q: close | i: input ",
@@ -73,7 +79,7 @@ end
 
 -- Start the spinner animation in the window title
 function M.start_title_spinner(win_id, base_title)
-	local config = require("zignite.config").options
+	local config = get_config()
 	if not config.enable_animations then
 		pcall(vim.api.nvim_win_set_config, win_id, { title = " " .. base_title .. " " })
 		return
@@ -137,9 +143,9 @@ function M.set_exit_status(win_id, exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
 
 	-- Update border highlight based on status
-	local config = require("zignite.config").options.float
-	local new_border_hl = success and (config.border_hl_success or "DiagnosticOk") or
-		(config.border_hl_error or "DiagnosticError")
+	local float_config = get_config().float
+	local new_border_hl = success and (float_config.border_hl_success or "DiagnosticOk") or
+		(float_config.border_hl_error or "DiagnosticError")
 
 	-- We need to preserve the Normal highlight and only update FloatBorder
 	pcall(vim.api.nvim_set_option_value, "winhl", "Normal:Normal,FloatBorder:" .. new_border_hl, { win = win_id })
@@ -154,7 +160,7 @@ end
 
 -- Main function to run command in interactive float
 function M.run_in_float_terminal(command, on_exit_cb, title_name)
-	local config = require("zignite.config").options
+	local config = get_config()
 
 	if config.singleton then
 		M.close_output()
@@ -200,20 +206,31 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name)
 
 			-- Populate Quickfix on Error
 			if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
-				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-				-- Strip ANSI codes for quickfix readability
-				local clean_lines = {}
-				for _, line in ipairs(lines) do
-					table.insert(clean_lines, (line:gsub("\27%[[0-9;]*m", "")))
-				end
+				local qf = config.quickfix or {}
+				if qf.enabled ~= false then
+					local max_lines = tonumber(qf.max_lines) or 1000
+					if max_lines < 1 then
+						max_lines = 1
+					end
 
-				vim.schedule(function()
-					-- We set the list but don't open it automatically to avoid annoyance
-					vim.fn.setqflist({}, " ", {
-						title = "Zignite Output",
-						lines = clean_lines,
-					})
-				end)
+					local total_lines = vim.api.nvim_buf_line_count(buf)
+					local start_line = math.max(0, total_lines - max_lines)
+					local lines = vim.api.nvim_buf_get_lines(buf, start_line, -1, false)
+
+					if qf.strip_ansi ~= false then
+						for i = 1, #lines do
+							lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
+						end
+					end
+
+					vim.schedule(function()
+						-- We set the list but don't open it automatically to avoid annoyance.
+						vim.fn.setqflist({}, " ", {
+							title = "Zignite Output",
+							lines = lines,
+						})
+					end)
+				end
 			end
 
 			if on_exit_cb then
@@ -232,7 +249,7 @@ end
 
 -- Legacy support for split/tab execution
 function M.run_in_split_terminal(mode, command, on_exit_cb)
-	local config_opts = require("zignite.config").options
+	local config_opts = get_config()
 	if config_opts.singleton then
 		M.close_output()
 	end
@@ -274,7 +291,11 @@ end
 -- Stub for compatibility if needed
 function M.show_spinner() end
 
-function M.show_output() end
+function M.show_output(message)
+	local text = type(message) == "string" and message or tostring(message)
+	local level = text:match("^Error:") and vim.log.levels.ERROR or vim.log.levels.WARN
+	vim.notify(text, level, { title = "Zignite" })
+end
 
 function M.update_output() end
 
