@@ -10,6 +10,7 @@ M.defaults = {
 		{ "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
 		{ "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
 		{ "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
+		{ "n", "<leader>rl", ":RunLive<CR>",        { desc = "Run live/watch command" } },
 	},
 
 	-- Default output mode: "float", "tab", "split", "vsplit"

@@ -97,6 +97,7 @@ require('zignite.config').setup({
     keymaps = {
         { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
         { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
+        { "n", "<leader>rl", ":RunLive<CR>", { desc = "Run live/watch command" } },
         { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
         { "n", "<leader>rp", ":RunProject<CR>", { desc = "Run project" } },
     },
@@ -148,6 +149,7 @@ require('zignite.config').setup({
 - `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunBuildLast`: Repeat the most recent `:RunBuild`/picker command for the current filetype.
+- `:RunLive`: Run the best live/watch command for current filetype (`live`, `dev`, `watch`, `serve`, `start`, `preview`).
 - `:RunClose`: Close runner output (`close_behavior="stop"` stops jobs, `"hide"` only closes output).
 - `:StopCode`: Terminate the currently running process.
 

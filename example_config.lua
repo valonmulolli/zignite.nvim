@@ -20,6 +20,7 @@ require("zignite.config").setup({
 
         -- Build command picker
         { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
+        { "n", "<leader>rl", ":RunLive<CR>",        { desc = "Run live/watch command" } },
 
         -- Project execution
         { "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
@@ -422,6 +423,7 @@ vim.api.nvim_create_autocmd("FileType", {
 -- Build command (picker):
 --   nvim src/main.rs
 --   <leader>rb            → Shows picker with all cargo commands
+--   <leader>rl            → Runs live/dev/watch command for current filetype
 --   Select and run!
 
 -- Project execution:

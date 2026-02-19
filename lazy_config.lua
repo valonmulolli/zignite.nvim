@@ -6,6 +6,7 @@ local keys = {
   { "<leader>rv", "<cmd>RunFile vsplit<cr>", desc = "Run file in vsplit" },
   { "<leader>rh", "<cmd>RunFile split<cr>", desc = "Run file in split" },
   { "<leader>rp", "<cmd>RunProject<cr>", desc = "Run project" },
+  { "<leader>rl", "<cmd>RunLive<cr>", desc = "Run live/watch command" },
   { "<leader>rs", "<cmd>StopCode<cr>", desc = "Stop running code" },
 }
 

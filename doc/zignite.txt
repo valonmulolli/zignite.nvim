@@ -172,6 +172,19 @@ COMMANDS                                                    *zignite-commands*
         :RunBuildLast
 <
 
+                                                                   *:RunLive*
+:RunLive [mode]
+    Run the first matching live/watch command for current filetype.
+    Priority:
+      live, dev, watch, serve, start, preview
+
+    Arguments:
+      [mode]    Optional output mode: float, split, vsplit, tab
+
+    Example: >
+        :RunLive
+<
+
                                                                   *:RunClose*
 :RunClose
     Close runner output.
@@ -190,6 +203,7 @@ Default keymaps:
 
   <leader>r       Run current file                          *<leader>r*
   <leader>rb      Show build command picker                 *<leader>rb*
+  <leader>rl      Run live/watch command                    *<leader>rl*
   <leader>rp      Run project                               *<leader>rp*
   <leader>rq      Close output window                       *<leader>rq*
   <leader>rt      Run file in new tab                       *<leader>rt*
