@@ -115,6 +115,7 @@ local next_exit_code = 0
 local next_quickfix_backend_exit_code = 0
 local next_job_id = 123
 local mock_jobs = {}
+local quickfix_backend_invocations = 0
 
 local function split_lines(text)
     local lines = {}
@@ -214,16 +215,75 @@ local function simulate_quickfix_backend(input, cmd)
     return lines
 end
 
+local function is_quickfix_daemon_cmd(cmd)
+    if type(cmd) ~= "table" then
+        return false
+    end
+    for _, arg in ipairs(cmd) do
+        if arg == "--quickfix-daemon" then
+            return true
+        end
+    end
+    return false
+end
+
 local function is_quickfix_backend_cmd(cmd)
     if type(cmd) ~= "table" then
         return false
     end
     for _, arg in ipairs(cmd) do
-        if arg == "--quickfix" then
+        if arg == "--quickfix" or arg == "--quickfix-daemon" then
             return true
         end
     end
     return false
+end
+
+local function parse_daemon_request(request_text)
+    local req_lines = split_lines(request_text or "")
+    if #req_lines < 2 then
+        return nil
+    end
+
+    local begin_line = req_lines[1]
+    local request_id, max_lines, max_bytes, strip_ansi, strip_max_lines, parse_diagnostics =
+        begin_line:match("^@@ZQF_BEGIN%s+(%d+)%s+(%d+)%s+(%d+)%s+([01])%s+(%d+)%s+([01])$")
+    if not request_id then
+        return nil
+    end
+
+    local end_line = req_lines[#req_lines]
+    local end_id = end_line:match("^@@ZQF_END%s+(%d+)$")
+    if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+        return nil
+    end
+
+    local payload_lines = {}
+    for i = 2, #req_lines - 1 do
+        local line = req_lines[i]
+        if line:sub(1, 1) == "\t" then
+            payload_lines[#payload_lines + 1] = line:sub(2)
+        else
+            payload_lines[#payload_lines + 1] = line
+        end
+    end
+
+    local cmd = {
+        "--quickfix",
+        "--max-lines=" .. max_lines,
+        "--max-bytes=" .. max_bytes,
+        "--strip-ansi=" .. strip_ansi,
+        "--strip-max-lines=" .. strip_max_lines,
+        "--parse-diagnostics=" .. parse_diagnostics,
+    }
+
+    local backend_lines = simulate_quickfix_backend(table.concat(payload_lines, "\n"), cmd)
+    local response = { "@@ZQF_RES_BEGIN " .. request_id }
+    for _, line in ipairs(backend_lines) do
+        response[#response + 1] = "\t" .. line
+    end
+    response[#response + 1] = "@@ZQF_RES_END " .. request_id
+    return response
 end
 
 vim.fn.jobstart = function(cmd, opts)
@@ -247,6 +307,25 @@ vim.fn.chansend = function(job_id, data)
     local job = mock_jobs[job_id]
     if not job then
         return 0
+    end
+
+    if is_quickfix_daemon_cmd(job.cmd) then
+        if next_quickfix_backend_exit_code ~= 0 then
+            local exit_code = next_quickfix_backend_exit_code
+            next_quickfix_backend_exit_code = 0
+            if job.opts and job.opts.on_exit then
+                vim.defer_fn(function() job.opts.on_exit(job_id, exit_code) end, 10)
+            end
+            return 1
+        end
+
+        local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+        local response = parse_daemon_request(text)
+        if response and job.opts and job.opts.on_stdout then
+            quickfix_backend_invocations = quickfix_backend_invocations + 1
+            vim.defer_fn(function() job.opts.on_stdout(job_id, response) end, 10)
+        end
+        return 1
     end
 
     if type(data) == "table" then
@@ -276,6 +355,7 @@ vim.fn.chanclose = function(job_id, stream)
 
     local lines = simulate_quickfix_backend(job.input, job.cmd)
     if job.opts and job.opts.on_stdout then
+        quickfix_backend_invocations = quickfix_backend_invocations + 1
         vim.defer_fn(function() job.opts.on_stdout(job_id, lines) end, 10)
     end
     if job.opts and job.opts.on_exit then
@@ -314,7 +394,7 @@ end
 
 local function reset_job_results()
     job_results = {}
-    mock_jobs = {}
+    quickfix_backend_invocations = 0
 end
 
 local function reset_quickfix_results()
@@ -326,9 +406,13 @@ local function reset_notify_results()
 end
 
 local function count_quickfix_backend_jobs()
+    return quickfix_backend_invocations
+end
+
+local function count_quickfix_daemon_jobs()
     local count = 0
     for _, job in ipairs(job_results) do
-        if is_quickfix_backend_cmd(job.cmd) then
+        if is_quickfix_daemon_cmd(job.cmd) then
             count = count + 1
         end
     end
@@ -565,6 +649,7 @@ local function test_quickfix_zig_processor()
     next_exit_code = 1
     init.run_code(0, "float")
 
+    assert(count_quickfix_daemon_jobs() > 0, "Zig processor should start quickfix daemon worker")
     assert(count_quickfix_backend_jobs() > 0, "Zig processor should spawn quickfix backend")
     assert(#quickfix_results > 0, "Quickfix should be populated on zig processor path")
     local qf = quickfix_results[#quickfix_results]

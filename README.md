@@ -123,6 +123,7 @@ require('zignite.config').setup({
         strip_ansi = true,          -- Remove color escape codes in quickfix lines
         strip_ansi_max_lines = 400, -- Strip ANSI on most recent N lines
         parse_diagnostics = true,   -- Canonicalize parseable diagnostics in zig mode
+        zig_worker = true,          -- Keep a persistent zig quickfix worker process
         async_strip = true,         -- Lua fallback: strip ANSI in chunks
         strip_chunk_size = 200,     -- Lua fallback chunk size
     },
