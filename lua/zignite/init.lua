@@ -18,6 +18,8 @@ local ERRORS = {
 	RESERVED_ARGV = "Error: '--argv' is reserved for Zignite internals. Remove it from your runner/build command.",
 }
 
+local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "preview" }
+
 -- Get the plugin directory path
 local function get_plugin_path()
 	local source = debug.getinfo(1, "S").source
@@ -245,6 +247,15 @@ local function is_reserved_argv_command(command)
 
 	local trimmed = command:match("^%s*(.-)%s*$") or ""
 	return trimmed == "--argv" or trimmed:match("^%-%-argv%s+") ~= nil
+end
+
+local function select_live_command_name(build_cmds)
+	for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
+		if build_cmds[candidate] then
+			return candidate
+		end
+	end
+	return nil
 end
 
 -- Helper function to get visual selection
@@ -556,6 +567,33 @@ function M.run_build_command(command_name, mode)
 	local display_name = string.format("%s: %s", filetype, command_name)
 	last_build_command_by_filetype[filetype] = command_name
 	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
+end
+
+-- Run a long-lived live/watch/dev command for the current filetype.
+function M.run_live(mode)
+	ensure_config()
+
+	local filetype = vim.bo.filetype
+	local build_cmds = config.options.build_commands[filetype]
+	if not build_cmds then
+		ui.show_output(string.format("No build commands configured for filetype: %s", filetype), mode)
+		return
+	end
+
+	local command_name = select_live_command_name(build_cmds)
+	if not command_name then
+		ui.show_output(
+			string.format(
+				"No live/watch command found for %s. Add one of: %s",
+				filetype,
+				table.concat(LIVE_COMMAND_PRIORITY, ", ")
+			),
+			mode
+		)
+		return
+	end
+
+	M.run_build_command(command_name, mode)
 end
 
 -- Show a picker to select and run a build command
