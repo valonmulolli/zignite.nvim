@@ -42,6 +42,7 @@ local normalized_runner_cache = {}
 local normalized_runner_order = {}
 local NORMALIZED_RUNNER_CACHE_MAX = 128
 local last_build_command_by_filetype = {}
+local tool_command_cache = {}
 
 local function ensure_config()
 	config.ensure()
@@ -256,6 +257,94 @@ local function select_live_command_name(build_cmds)
 		end
 	end
 	return nil
+end
+
+local function copy_string_map(tbl)
+	local out = {}
+	if type(tbl) ~= "table" then
+		return out
+	end
+	for key, value in pairs(tbl) do
+		if type(key) == "string" and type(value) == "string" then
+			out[key] = value
+		end
+	end
+	return out
+end
+
+local function parse_zig_help_commands(lines)
+	local commands = {}
+	local in_commands_section = false
+
+	for _, raw_line in ipairs(lines or {}) do
+		local line = tostring(raw_line or "")
+		if not in_commands_section then
+			if line:match("^Commands:%s*$") then
+				in_commands_section = true
+			end
+		else
+			if line:match("^General Options:%s*$") then
+				break
+			end
+
+			local cmd = line:match("^%s+([%w%+%-]+)%s+")
+			if cmd then
+				commands[cmd] = "zig " .. cmd
+			end
+		end
+	end
+
+	return commands
+end
+
+local function detect_zig_tool_commands()
+	local cache_key = "zig"
+	local cached = tool_command_cache[cache_key]
+	if cached ~= nil then
+		return copy_string_map(cached)
+	end
+
+	if vim.fn.executable("zig") ~= 1 then
+		tool_command_cache[cache_key] = {}
+		return {}
+	end
+
+	if type(vim.fn.systemlist) ~= "function" then
+		tool_command_cache[cache_key] = {}
+		return {}
+	end
+
+	local help_lines = vim.fn.systemlist({ "zig", "--help" })
+	local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+	if type(help_lines) ~= "table" or shell_error ~= 0 then
+		tool_command_cache[cache_key] = {}
+		return {}
+	end
+
+	local detected = parse_zig_help_commands(help_lines)
+	tool_command_cache[cache_key] = detected
+	return copy_string_map(detected)
+end
+
+local function detect_tool_commands_for_filetype(filetype)
+	if filetype == "zig" then
+		return detect_zig_tool_commands()
+	end
+	return {}
+end
+
+local function get_build_commands_for_filetype(filetype)
+	local configured = config.options.build_commands[filetype] or {}
+	local detected = detect_tool_commands_for_filetype(filetype)
+	local merged = copy_string_map(detected)
+
+	for key, value in pairs(configured) do
+		if type(key) == "string" and type(value) == "string" then
+			merged[key] = value
+		end
+	end
+
+	return merged
 end
 
 -- Helper function to get visual selection
@@ -489,16 +578,15 @@ function M.run_build_command(command_name, mode)
 	local filetype = vim.bo.filetype
 	local filepath = vim.fn.expand("%:p")
 
-	-- Get build commands for this filetype
-	local build_cmds = config.options.build_commands[filetype]
-	if not build_cmds then
-		ui.show_output(string.format("No build commands configured for filetype: %s", filetype), mode)
+	local build_cmds = get_build_commands_for_filetype(filetype)
+	if vim.tbl_isempty(build_cmds) then
+		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
 		return
 	end
 
 	-- Get the specific command
-	local command = build_cmds[command_name]
-	if not command then
+	local command_template = build_cmds[command_name]
+	if not command_template then
 		-- Show available commands
 		local available = {}
 		for cmd_name, _ in pairs(build_cmds) do
@@ -517,6 +605,7 @@ function M.run_build_command(command_name, mode)
 		return
 	end
 
+	local command = command_template
 	if is_reserved_argv_command(command) then
 		ui.show_output(ERRORS.RESERVED_ARGV, mode)
 		return
@@ -557,7 +646,7 @@ function M.run_build_command(command_name, mode)
 
 	-- Substitute variables using the current file path.
 	command = utils.substitute_variables(command, filepath)
-	local argv_command = command_to_argv(build_cmds[command_name], filepath)
+	local argv_command = command_to_argv(command_template, filepath)
 	if not cwd then
 		argv_command = nil
 	end
@@ -574,9 +663,9 @@ function M.run_live(mode)
 	ensure_config()
 
 	local filetype = vim.bo.filetype
-	local build_cmds = config.options.build_commands[filetype]
-	if not build_cmds then
-		ui.show_output(string.format("No build commands configured for filetype: %s", filetype), mode)
+	local build_cmds = get_build_commands_for_filetype(filetype)
+	if vim.tbl_isempty(build_cmds) then
+		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
 		return
 	end
 
@@ -603,10 +692,9 @@ function M.select_build_command(mode)
 
 	local filetype = vim.bo.filetype
 
-	-- Get build commands for this filetype
-	local build_cmds = config.options.build_commands[filetype]
-	if not build_cmds then
-		vim.notify(string.format("No build commands configured for filetype: %s", filetype), vim.log.levels.WARN)
+	local build_cmds = get_build_commands_for_filetype(filetype)
+	if vim.tbl_isempty(build_cmds) then
+		vim.notify(string.format("No build commands available for filetype: %s", filetype), vim.log.levels.WARN)
 		return
 	end
 
@@ -937,6 +1025,12 @@ function M.run_last_build_command(mode)
 	M.run_build_command(command_name, mode)
 end
 
+function M.get_build_commands_for_filetype(filetype)
+	ensure_config()
+	local ft = filetype or vim.bo.filetype
+	return get_build_commands_for_filetype(ft)
+end
+
 function M.close_runner()
 	ensure_config()
 	local close_behavior = tostring(config.options.close_behavior or "stop"):lower()
@@ -953,6 +1047,7 @@ function M.setup(opts)
 	argv_cache = {}
 	argv_cache_order = {}
 	last_build_command_by_filetype = {}
+	tool_command_cache = {}
 	config.setup(opts)
 	utils.clear_project_cache()
 end
