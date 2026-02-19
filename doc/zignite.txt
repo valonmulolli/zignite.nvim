@@ -141,6 +141,10 @@ COMMANDS                                                    *zignite-commands*
                                                             *:RunBuildSelect*
 :RunBuildSelect [mode]
     Show interactive picker to select build command.
+    For filetype `zig`, commands are merged from:
+      • configured `build_commands.zig`
+      • auto-detected Zig subcommands from `zig --help`
+    (configured names take precedence)
     
     Arguments:
       [mode]    Optional output mode: float, split, vsplit, tab
@@ -211,6 +215,12 @@ Default keymaps:
   <leader>rh      Run file in horizontal split              *<leader>rh*
 
 All keymaps are customizable via configuration.
+
+NOTE for Lazy.nvim users:
+  In plugin spec `keys = { ... }`, use Lazy key format:
+    { "<leader>rl", "<cmd>RunLive<cr>", mode = "n", desc = "Run live/watch command" }
+  The table format with leading mode (e.g. { "n", "<leader>rl", ... }) is for
+  `require("zignite.config").setup({ keymaps = { ... } })`.
 
 ==============================================================================
 CONFIGURATION                                          *zignite-configuration*

@@ -82,12 +82,10 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 end, {
 	nargs = "+",
 	complete = function(ArgLead, CmdLine, CursorPos)
-		local config = require("zignite.config")
-		config.ensure()
 		local filetype = vim.bo.filetype
-		local build_cmds = config.options.build_commands[filetype]
+		local build_cmds = zignite().get_build_commands_for_filetype(filetype)
 
-		if not build_cmds then
+		if not build_cmds or vim.tbl_isempty(build_cmds) then
 			return {}
 		end
 
