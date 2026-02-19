@@ -93,7 +93,9 @@ end
 
 -- Helper to track a new runner
 local function track_runner(win_id, buf_id)
-	table.insert(runners, { win_id = win_id, buf_id = buf_id })
+	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil }
+	table.insert(runners, runner)
+	return runner
 end
 
 -- Helper to remove invalid runners from tracking
@@ -105,6 +107,19 @@ local function clean_tracked_runners()
 		end
 	end
 	runners = valid
+end
+
+local function stop_tracked_jobs()
+	if type(vim.fn.jobstop) ~= "function" then
+		return
+	end
+
+	for _, runner in ipairs(runners) do
+		local job_id = runner.job_id
+		if type(job_id) == "number" and job_id > 0 then
+			pcall(vim.fn.jobstop, job_id)
+		end
+	end
 end
 
 -- Spinner frames
@@ -142,8 +157,12 @@ local function get_float_config()
 end
 
 -- Close existing runner output(s)
-function M.close_output()
+function M.close_output(stop_jobs)
 	M.stop_spinner()
+
+	if stop_jobs then
+		stop_tracked_jobs()
+	end
 
 	-- Close all tracked runners
 	for _, runner in ipairs(runners) do
@@ -243,7 +262,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local config = get_config()
 
 	if config.singleton then
-		M.close_output()
+		M.close_output(true)
 	else
 		-- Clean up invalid runner handles
 		clean_tracked_runners()
@@ -262,7 +281,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local win = vim.api.nvim_open_win(buf, should_focus, opts)
 
 	-- Track this new runner
-	track_runner(win, buf)
+	local runner = track_runner(win, buf)
 
 	-- Set highlights
 	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. float_config.border_hl, { win = win })
@@ -298,6 +317,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 				end
 		end,
 	})
+	runner.job_id = job_id
 
 	-- Start Insert Mode if configured (crucial for interactivity)
 	if should_focus and float_config.startinsert ~= false then
@@ -311,7 +331,7 @@ end
 function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local config_opts = get_config()
 	if config_opts.singleton then
-		M.close_output()
+		M.close_output(true)
 	end
 
 	local config = config_opts.term
@@ -339,7 +359,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 		vim.api.nvim_win_set_height(win, config.size)
 	end
 
-	track_runner(win, buf)
+	local runner = track_runner(win, buf)
 
 	if config.focus == false then
 		if mode == "tab" then
@@ -366,6 +386,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 			if on_exit_cb then on_exit_cb(exit_code) end
 		end
 	})
+	runner.job_id = job_id
 
 	if config.startinsert and config.focus ~= false then
 		vim.cmd("startinsert")
