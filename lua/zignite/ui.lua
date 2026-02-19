@@ -5,6 +5,7 @@ local M = {}
 local runners = {}
 local spinner_timer = nil
 local quickfix_backend_available = nil
+local quickfix_worker = nil
 
 local function get_config()
 	local cfg = require("zignite.config")
@@ -210,7 +211,30 @@ local function bool_to_flag(value, default)
 	return resolved and "1" or "0"
 end
 
-local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
+local function quickfix_flag_values(quickfix_opts)
+	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
+	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
+	local strip_max_lines = tonumber(quickfix_opts.strip_ansi_max_lines) or 400
+	if max_lines < 1 then
+		max_lines = 1
+	end
+	if max_bytes < 1 then
+		max_bytes = 1
+	end
+	if strip_max_lines < 1 then
+		strip_max_lines = 1
+	end
+
+	return {
+		max_lines = max_lines,
+		max_bytes = max_bytes,
+		strip_ansi = bool_to_flag(quickfix_opts.strip_ansi, true),
+		strip_max_lines = strip_max_lines,
+		parse_diagnostics = bool_to_flag(quickfix_opts.parse_diagnostics, true),
+	}
+end
+
+local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 	if not has_quickfix_backend() then
 		on_fallback()
 		return
@@ -221,18 +245,16 @@ local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, 
 		return
 	end
 
-	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
-	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
-	local strip_max_lines = tonumber(quickfix_opts.strip_ansi_max_lines) or 400
+	local flags = quickfix_flag_values(quickfix_opts)
 
 	local cmd = {
 		QUICKFIX_BACKEND,
 		"--quickfix",
-		"--max-lines=" .. max_lines,
-		"--max-bytes=" .. max_bytes,
-		"--strip-ansi=" .. bool_to_flag(quickfix_opts.strip_ansi, true),
-		"--strip-max-lines=" .. strip_max_lines,
-		"--parse-diagnostics=" .. bool_to_flag(quickfix_opts.parse_diagnostics, true),
+		"--max-lines=" .. flags.max_lines,
+		"--max-bytes=" .. flags.max_bytes,
+		"--strip-ansi=" .. flags.strip_ansi,
+		"--strip-max-lines=" .. flags.strip_max_lines,
+		"--parse-diagnostics=" .. flags.parse_diagnostics,
 	}
 
 	local output_lines = {}
@@ -285,6 +307,169 @@ local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, 
 		failed = true
 		on_fallback()
 	end
+end
+
+local function flush_quickfix_worker_fallbacks(worker)
+	if not worker or not worker.pending then
+		return
+	end
+
+	for _, request in pairs(worker.pending) do
+		if request and request.on_fallback then
+			request.on_fallback()
+		end
+	end
+
+	worker.pending = {}
+	worker.active_id = nil
+	worker.active_lines = {}
+end
+
+local function handle_quickfix_worker_stdout(worker, data)
+	if type(data) ~= "table" then
+		return
+	end
+
+	for _, line in ipairs(data) do
+		if type(line) ~= "string" or line == "" then
+			goto continue
+		end
+
+		local begin_id = line:match("^@@ZQF_RES_BEGIN%s+(%d+)$")
+		if begin_id then
+			worker.active_id = tonumber(begin_id)
+			worker.active_lines = {}
+			goto continue
+		end
+
+		if worker.active_id then
+			local end_id = line:match("^@@ZQF_RES_END%s+(%d+)$")
+			if end_id and tonumber(end_id) == worker.active_id then
+				local request = worker.pending[worker.active_id]
+				worker.pending[worker.active_id] = nil
+				local completed_lines = worker.active_lines
+				worker.active_id = nil
+				worker.active_lines = {}
+				if request and request.on_success then
+					if request.force_truncated and completed_lines[1] ~= "[zignite] quickfix output truncated" then
+						table.insert(completed_lines, 1, "[zignite] quickfix output truncated")
+					end
+					request.on_success(completed_lines)
+				end
+				goto continue
+			end
+
+			if line:sub(1, 1) == "\t" then
+				worker.active_lines[#worker.active_lines + 1] = line:sub(2)
+			else
+				worker.active_lines[#worker.active_lines + 1] = line
+			end
+		end
+
+		::continue::
+	end
+end
+
+local function ensure_quickfix_worker()
+	if not has_quickfix_backend() then
+		return nil
+	end
+
+	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" then
+		return nil
+	end
+
+	if quickfix_worker and type(quickfix_worker.job_id) == "number" and quickfix_worker.job_id > 0 then
+		return quickfix_worker
+	end
+
+	local worker = {
+		job_id = nil,
+		next_request_id = 0,
+		pending = {},
+		active_id = nil,
+		active_lines = {},
+	}
+
+	local job_id = vim.fn.jobstart({ QUICKFIX_BACKEND, "--quickfix-daemon" }, {
+		stdout_buffered = false,
+		stderr_buffered = true,
+		on_stdout = function(_, data)
+			handle_quickfix_worker_stdout(worker, data)
+		end,
+		on_exit = function()
+			if quickfix_worker == worker then
+				quickfix_worker = nil
+			end
+			flush_quickfix_worker_fallbacks(worker)
+		end,
+	})
+
+	if type(job_id) ~= "number" or job_id <= 0 then
+		return nil
+	end
+
+	worker.job_id = job_id
+	quickfix_worker = worker
+	return worker
+end
+
+local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
+	local worker = ensure_quickfix_worker()
+	if not worker then
+		return false
+	end
+
+	local flags = quickfix_flag_values(quickfix_opts)
+	worker.next_request_id = worker.next_request_id + 1
+	local request_id = worker.next_request_id
+
+	worker.pending[request_id] = {
+		on_success = on_success,
+		on_fallback = on_fallback,
+		force_truncated = force_truncated,
+	}
+
+	local payload = {
+		string.format(
+			"@@ZQF_BEGIN %d %d %d %s %d %s",
+			request_id,
+			flags.max_lines,
+			flags.max_bytes,
+			flags.strip_ansi,
+			flags.strip_max_lines,
+			flags.parse_diagnostics
+		),
+	}
+	for _, line in ipairs(raw_lines) do
+		payload[#payload + 1] = "\t" .. line
+	end
+	payload[#payload + 1] = string.format("@@ZQF_END %d", request_id)
+
+	local ok_send = pcall(vim.fn.chansend, worker.job_id, table.concat(payload, "\n") .. "\n")
+	if not ok_send then
+		worker.pending[request_id] = nil
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if quickfix_worker == worker then
+			quickfix_worker = nil
+		end
+		return false
+	end
+
+	return true
+end
+
+local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
+	if quickfix_opts.zig_worker ~= false then
+		local ok = run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
+		if ok then
+			return
+		end
+	end
+
+	run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 end
 
 local function populate_quickfix_from_buffer(buf, quickfix_opts)

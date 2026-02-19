@@ -246,6 +246,7 @@ M.defaults = {
 		strip_ansi = true,           -- Remove ANSI escape codes from quickfix lines
 		strip_ansi_max_lines = 400,  -- Strip ANSI only on the most recent N lines
 		parse_diagnostics = true,    -- Canonicalize parseable diagnostics in zig processor mode
+		zig_worker = true,           -- Reuse a persistent zig quickfix worker to reduce process spawn overhead
 		async_strip = true,          -- Strip ANSI in scheduled chunks to reduce UI stutter
 		strip_chunk_size = 200,      -- Lines processed per chunk when async_strip=true
 	},
