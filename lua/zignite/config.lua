@@ -68,18 +68,9 @@ M.defaults = {
 
 		-- Interpreted languages
 		python = "python3 -u $file",
-		javascript = {
-			"cd $dir",
-			"node $fileName",
-		},
-		typescript = {
-			"cd $dir",
-			"bun $fileName",
-		},
-		lua = {
-			"cd $dir",
-			"lua $fileName",
-		},
+		javascript = "node $file",
+		typescript = "bun $file",
+		lua = "lua $file",
 		ruby = "ruby $file",
 		php = "php $file",
 		perl = "perl $file",
@@ -87,14 +78,8 @@ M.defaults = {
 		julia = "julia $file",
 
 		-- Shell scripts
-		sh = {
-			"cd $dir",
-			"bash $fileName",
-		},
-		zsh = {
-			"cd $dir",
-			"zsh $fileName",
-		},
+		sh = "bash $file",
+		zsh = "zsh $file",
 
 		-- Web and markup
 		html = "xdg-open $file",
@@ -253,11 +238,16 @@ M.defaults = {
 
 	-- Quickfix behavior on command errors
 	quickfix = {
-		enabled = true,         -- Populate quickfix when command exits with non-zero status
-		max_lines = 1000,       -- Tail limit for large outputs (performance guard)
-		strip_ansi = true,      -- Remove ANSI escape codes from quickfix lines
-		async_strip = true,     -- Strip ANSI in scheduled chunks to reduce UI stutter
-		strip_chunk_size = 200, -- Lines processed per chunk when async_strip=true
+		enabled = true,              -- Populate quickfix when command exits with non-zero status
+		processor = "auto",          -- "auto", "lua", or "zig"
+		zig_min_lines = 300,         -- In auto mode, switch to zig processor when output reaches this line count
+		max_lines = 1000,            -- Tail limit for large outputs (performance guard)
+		max_bytes = 262144,          -- Byte cap for quickfix payload
+		strip_ansi = true,           -- Remove ANSI escape codes from quickfix lines
+		strip_ansi_max_lines = 400,  -- Strip ANSI only on the most recent N lines
+		parse_diagnostics = true,    -- Canonicalize parseable diagnostics in zig processor mode
+		async_strip = true,          -- Strip ANSI in scheduled chunks to reduce UI stutter
+		strip_chunk_size = 200,      -- Lines processed per chunk when async_strip=true
 	},
 
 	-- Filter patterns for stderr (hide these warnings/info messages)
