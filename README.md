@@ -1,7 +1,7 @@
 # zignite.nvim
 
 <p align="center">
-  <img src="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"/>
+  <img src="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml/badge.svg?branch=master&event=push" alt="CI"/>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/>
   <img src="https://img.shields.io/badge/Made%20with-Lua-blueviolet.svg" alt="Made with Lua"/>
   <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
