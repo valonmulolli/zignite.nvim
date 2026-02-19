@@ -777,7 +777,13 @@ function M.select_build_command(mode)
 end
 
 function M.close_runner()
-	ui.close_output()
+	ensure_config()
+	local close_behavior = tostring(config.options.close_behavior or "stop"):lower()
+	local should_stop = close_behavior ~= "hide"
+	ui.close_output(should_stop)
+	if not should_stop then
+		vim.notify("Runner closed (hide mode). Use :StopCode to terminate active jobs.", vim.log.levels.INFO)
+	end
 end
 
 function M.setup(opts)

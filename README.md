@@ -115,6 +115,13 @@ require('zignite.config').setup({
     
     spinner = "dots",             -- "dots", "line", "bar", "clock", etc.
     enable_animations = true,     -- Show spinner in window title
+    close_behavior = "stop",      -- "stop" (default) or "hide" for :RunClose / float close key
+
+    term = {
+        position = "bot",         -- split: top|bot, vsplit: left|right
+        focus = true,
+        startinsert = true,
+    },
 
     quickfix = {
         enabled = true,             -- Populate quickfix on non-zero exit
@@ -140,7 +147,7 @@ require('zignite.config').setup({
 - `:RunCode`: Run the current visual selection.
 - `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
-- `:RunClose`: Close the runner window.
+- `:RunClose`: Close runner output (`close_behavior="stop"` stops jobs, `"hide"` only closes output).
 - `:StopCode`: Terminate the currently running process.
 
 ### Build Command Picker

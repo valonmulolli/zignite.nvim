@@ -159,7 +159,10 @@ COMMANDS                                                    *zignite-commands*
 
                                                                   *:RunClose*
 :RunClose
-    Close the output window.
+    Close runner output.
+    Behavior follows config.close_behavior:
+      • "stop" (default): close + stop active runner jobs
+      • "hide": close output without explicit job stop
 
                                                                   *:StopCode*
 :StopCode
@@ -187,6 +190,7 @@ Basic setup: >lua
     require("zignite.config").setup({
         mode = "float",  -- Default output mode
         timeout = nil,   -- Timeout in ms (e.g. 5000). nil = disabled.
+        close_behavior = "stop", -- stop|hide for :RunClose and float close key
         
         keymaps = {
             { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
@@ -247,7 +251,7 @@ Customize floating window: >lua
 
 Customize terminal: >lua
     term = {
-        position = "bot",  -- bot, top, left, right
+        position = "bot",  -- split: top|bot, vsplit: left|right
         size = 15,
         focus = true,
     }

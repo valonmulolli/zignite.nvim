@@ -384,6 +384,7 @@ end
 
 local config = require('zignite.config')
 local init = require('zignite.init')
+local ui = require('zignite.ui')
 
 local function command_to_string(cmd)
     if type(cmd) == "table" then
@@ -1062,6 +1063,71 @@ local function test_build_picker_focus_override()
     print("✓ Build picker focus override test passed")
 end
 
+-- Test show_output respects split mode and renders in-window (not notify fallback).
+local function test_show_output_respects_mode()
+    config.setup({
+        mode = "split",
+        term = {
+            position = "top",
+            focus = true,
+        },
+    })
+
+    local original_cmd = vim.cmd
+    local issued_cmds = {}
+    vim.cmd = function(cmd)
+        table.insert(issued_cmds, cmd)
+    end
+    reset_notify_results()
+
+    ui.show_output("Error: split mode output", "split")
+
+    assert(#issued_cmds > 0, "show_output(split) should open a split window")
+    assert(issued_cmds[1] == "topleft split", "show_output(split) should honor top split position")
+    assert(#notify_results == 0, "show_output(split) should not fallback to notify")
+
+    vim.cmd = original_cmd
+    reset_notify_results()
+
+    print("✓ show_output mode behavior test passed")
+end
+
+-- Test vsplit mode honors term.position=left.
+local function test_vsplit_respects_left_position()
+    config.setup({
+        mode = "vsplit",
+        term = {
+            position = "left",
+            focus = true,
+            startinsert = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_cmd = vim.cmd
+    local issued_cmds = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/vsplit/main.py" end
+        return original_expand(expr)
+    end
+    vim.cmd = function(cmd)
+        table.insert(issued_cmds, cmd)
+    end
+
+    init.run_code(0, "vsplit")
+
+    assert(#issued_cmds > 0, "vsplit run should issue split command")
+    assert(issued_cmds[1] == "topleft vsplit", "vsplit should honor term.position=left")
+
+    vim.fn.expand = original_expand
+    vim.cmd = original_cmd
+    reset_job_results()
+
+    print("✓ vsplit left-position test passed")
+end
+
 -- Test misconfigured runner command using reserved --argv fails fast with a clear error.
 local function test_reserved_argv_runner_guard()
     config.setup({
@@ -1072,9 +1138,19 @@ local function test_reserved_argv_runner_guard()
 
     vim.bo.filetype = "python"
     local original_expand = vim.fn.expand
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/argv_guard/main.py" end
         return original_expand(expr)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
     end
     reset_job_results()
     reset_notify_results()
@@ -1082,10 +1158,12 @@ local function test_reserved_argv_runner_guard()
     init.run_code(0, "float")
 
     assert(#job_results == 0, "Reserved --argv runner should not start a job")
-    assert(#notify_results > 0, "Reserved --argv runner should notify")
-    assert(notify_results[#notify_results].msg:match("%-%-argv"), "Reserved --argv error should mention --argv")
+    assert(#notify_results > 0 or #output_messages > 0, "Reserved --argv runner should surface an error")
+    local msg = (#notify_results > 0 and notify_results[#notify_results].msg) or output_messages[#output_messages] or ""
+    assert(msg:match("%-%-argv"), "Reserved --argv error should mention --argv")
 
     vim.fn.expand = original_expand
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
     reset_notify_results()
 
     print("✓ Reserved argv runner guard test passed")
@@ -1103,9 +1181,19 @@ local function test_reserved_argv_build_guard()
 
     vim.bo.filetype = "python"
     local original_expand = vim.fn.expand
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/argv_guard/main.py" end
         return original_expand(expr)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
     end
     reset_job_results()
     reset_notify_results()
@@ -1113,10 +1201,12 @@ local function test_reserved_argv_build_guard()
     init.run_build_command("run", "float")
 
     assert(#job_results == 0, "Reserved --argv build command should not start a job")
-    assert(#notify_results > 0, "Reserved --argv build command should notify")
-    assert(notify_results[#notify_results].msg:match("%-%-argv"), "Reserved --argv build error should mention --argv")
+    assert(#notify_results > 0 or #output_messages > 0, "Reserved --argv build command should surface an error")
+    local msg = (#notify_results > 0 and notify_results[#notify_results].msg) or output_messages[#output_messages] or ""
+    assert(msg:match("%-%-argv"), "Reserved --argv build error should mention --argv")
 
     vim.fn.expand = original_expand
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
     reset_notify_results()
 
     print("✓ Reserved argv build guard test passed")
@@ -1282,6 +1372,8 @@ test_build_picker_empty_state()
 test_build_picker_window_clamped()
 test_build_picker_focus_behavior()
 test_build_picker_focus_override()
+test_show_output_respects_mode()
+test_vsplit_respects_left_position()
 test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()
