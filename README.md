@@ -58,6 +58,30 @@ use {
 }
 ```
 
+**Nix / NixOS (flake)**
+
+This repo now exposes a flake package that builds the Zig backend during packaging.
+
+`flake.nix` input:
+
+```nix
+zignite = {
+  url = "github:valonmulolli/zignite.nvim";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Home Manager Neovim plugins:
+
+```nix
+programs.neovim = {
+  enable = true;
+  plugins = [
+    inputs.zignite.packages.${pkgs.system}.default
+  ];
+};
+```
+
 ## Configuration
 
 Zignite works out of the box for 20+ languages. Here is the default configuration structure:
