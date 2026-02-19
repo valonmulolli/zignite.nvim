@@ -36,6 +36,9 @@ local zig_missing_notified = false
 local argv_cache = {}
 local argv_cache_order = {}
 local ARGV_CACHE_MAX = 256
+local normalized_runner_cache = {}
+local normalized_runner_order = {}
+local NORMALIZED_RUNNER_CACHE_MAX = 128
 
 local function ensure_config()
 	config.ensure()
@@ -138,6 +141,34 @@ local function cache_argv_result(key, value)
 	end
 
 	argv_cache[key] = value
+end
+
+local function normalized_runner_cache_key(filetype, runner)
+	return tostring(filetype) .. "\0" .. tostring(runner)
+end
+
+local function cache_normalized_runner(key, value)
+	if normalized_runner_cache[key] == nil then
+		table.insert(normalized_runner_order, key)
+		if #normalized_runner_order > NORMALIZED_RUNNER_CACHE_MAX then
+			local oldest = table.remove(normalized_runner_order, 1)
+			normalized_runner_cache[oldest] = nil
+		end
+	end
+
+	normalized_runner_cache[key] = value
+end
+
+local function get_normalized_runner_command(filetype, runner)
+	local key = normalized_runner_cache_key(filetype, runner)
+	local cached = normalized_runner_cache[key]
+	if cached ~= nil then
+		return cached
+	end
+
+	local normalized = utils.normalize_command(runner)
+	cache_normalized_runner(key, normalized)
+	return normalized
 end
 
 local function copy_list(list)
@@ -322,7 +353,7 @@ function M.run_code(range, mode)
 		display_name = runner.name
 		command_cwd = utils.get_project_root(execution_path, config.options.project)
 	else
-		command_str = utils.normalize_command(runner)
+		command_str = get_normalized_runner_command(filetype, runner)
 		if type(runner) == "table" and runner.cleanup_command then
 			cleanup_command = runner.cleanup_command
 		end
