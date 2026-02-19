@@ -74,6 +74,8 @@ SAFETY & ERROR HANDLING~
     if they exceed the configured time limit.
   • Quickfix: Automatically parses errors and populates the Quickfix
     list, allowing you to jump to the error quickly.
+  • Persistent worker: Reuses a Zig quickfix daemon to reduce repeated
+    quickfix processing latency on failed runs.
 
 ==============================================================================
 COMMANDS                                                    *zignite-commands*
@@ -275,6 +277,14 @@ Configure quickfix generation on failed runs: >lua
     }
 <
 
+Quickfix processor behavior:
+  • processor = "auto": Lua for small outputs, Zig for larger outputs
+    based on zig_min_lines.
+  • processor = "zig": always use Zig quickfix processing (with Lua
+    fallback on backend failure).
+  • zig_worker = true: keep a persistent Zig daemon process to reduce
+    per-run spawn overhead.
+
 PROJECT DETECTION~
                                                        *zignite-config-project*
 Custom project patterns: >lua
@@ -441,6 +451,18 @@ Build the Zig backend: >
     cd /path/to/zignite.nvim-v0/zig
     zig build
 <
+
+QUICKFIX LATENCY IS HIGH~
+Tune quickfix limits to reduce processing cost: >
+    quickfix = {
+      processor = "auto",
+      zig_worker = true,
+      max_lines = 800,
+      max_bytes = 196608,
+      strip_ansi_max_lines = 300,
+    }
+<
+You can disable worker reuse with `zig_worker = false` for debugging.
 
 ==============================================================================
 ABOUT                                                          *zignite-about*

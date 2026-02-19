@@ -19,6 +19,7 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **High-Performance Backend**: Core process management logic is written in Zig.
 - **Safety Timeouts**: Automatically kill processes that run too long (infinite loops) via the Zig backend.
 - **Quickfix Integration**: Automatically populates the Quickfix list on error, allowing you to jump straight to the correct line.
+- **Persistent Quickfix Worker**: Reuses a Zig daemon for quickfix processing to reduce repeat-run latency.
 - **Build System Support**: First-class support for `cargo`, `zig build`, `npm`, `make`, etc.
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
@@ -162,6 +163,25 @@ Use `j`/`k` to navigate and `Enter` to select.
 - Use `:RunProject` when you explicitly want project-wide startup/build behavior.
 - For Zig, `:RunFile` prefers project build execution (`zig build ...`) when `build.zig` exists.
 
+### Quickfix Pipeline
+
+- `quickfix.processor = "auto"`: uses Lua for small outputs, Zig for large outputs (`zig_min_lines` threshold).
+- `quickfix.processor = "zig"`: always uses Zig processing with immediate Lua fallback on backend errors.
+- `quickfix.zig_worker = true`: keeps a persistent Zig worker (`--quickfix-daemon`) to avoid per-run process spawn cost.
+- `quickfix.zig_worker = false`: disables worker reuse and uses one-shot Zig quickfix jobs.
+
+Recommended low-latency setup:
+
+```lua
+quickfix = {
+    processor = "auto",
+    zig_min_lines = 200,
+    zig_worker = true,
+    max_lines = 1000,
+    max_bytes = 262144,
+}
+```
+
 ### Variable Substitution
 
 You can use these variables in your custom runner commands:
@@ -202,6 +222,18 @@ runners = {
 ### `zsh: no such option: argv`
 Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
 
+### Quickfix feels slow on huge error logs
+Tune these options first:
+```lua
+quickfix = {
+    processor = "auto",
+    zig_worker = true,
+    max_lines = 800,          -- lower tail size
+    max_bytes = 196608,       -- lower byte cap
+    strip_ansi_max_lines = 300,
+}
+```
+
 ## Development
 
 ### Run tests
@@ -227,6 +259,7 @@ The benchmark prints:
 - Zig quickfix simulation time.
 - Zig quickfix + diagnostics parse simulation time.
 - Real Zig backend quickfix timings when `zig/zig-out/bin/zignite` is available (includes process spawn overhead).
+- Real Zig backend per-run averages (`avg/run`) for easier comparison.
 - Speedup percentage (`zig` vs `lua`) for large-output quickfix.
 
 Soft guardrail:
