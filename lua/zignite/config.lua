@@ -294,6 +294,7 @@ M.defaults = {
 
 	-- Execution behavior
 	singleton = true, -- If true, only one runner window can be open at a time (previous one is closed)
+	close_behavior = "stop", -- Behavior for :RunClose and float close key: "stop" or "hide"
 }
 
 -- This will hold the merged user and default configuration
@@ -326,6 +327,10 @@ local function validate_config(opts)
 		if term.position and not vim.tbl_contains({ "bot", "top", "left", "right" }, term.position) then
 			vim.notify("Invalid terminal position: " .. term.position, vim.log.levels.WARN)
 		end
+	end
+
+	if opts.close_behavior and not vim.tbl_contains({ "stop", "hide" }, opts.close_behavior) then
+		vim.notify("Invalid close_behavior: " .. opts.close_behavior .. ". Valid values: stop, hide", vim.log.levels.WARN)
 	end
 end
 

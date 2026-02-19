@@ -32,6 +32,29 @@ local function format_key_for_display(key)
 	return text
 end
 
+local function normalize_mode(mode)
+	local resolved = mode or get_config().mode or "float"
+	if not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, resolved) then
+		return "float"
+	end
+	return resolved
+end
+
+local function normalize_close_behavior()
+	local behavior = tostring(get_config().close_behavior or "stop"):lower()
+	if behavior ~= "hide" and behavior ~= "stop" then
+		return "stop"
+	end
+	return behavior
+end
+
+local function should_stop_on_close(stop_jobs)
+	if stop_jobs == nil then
+		return normalize_close_behavior() == "stop"
+	end
+	return stop_jobs == true
+end
+
 local function build_float_footer(float_config, should_focus)
 	local close_key = format_key_for_display(float_config.close_key or "<Esc>")
 	local input_hint
@@ -43,6 +66,19 @@ local function build_float_footer(float_config, should_focus)
 		input_hint = "press i for input"
 	end
 	return string.format(" %s: close | %s ", close_key, input_hint)
+end
+
+local function split_text_lines(text)
+	local input = tostring(text or "")
+	if input == "" then
+		return { "" }
+	end
+
+	local lines = {}
+	for line in (input .. "\n"):gmatch("([^\n]*)\n") do
+		lines[#lines + 1] = line
+	end
+	return lines
 end
 
 local function set_quickfix_lines(lines)
@@ -506,6 +542,43 @@ local function track_runner(win_id, buf_id)
 	return runner
 end
 
+local function remove_runner(index)
+	table.remove(runners, index)
+end
+
+local function close_runner_at_index(index, stop_job)
+	local runner = runners[index]
+	if not runner then
+		return
+	end
+
+	if stop_job and type(vim.fn.jobstop) == "function" then
+		local job_id = runner.job_id
+		if type(job_id) == "number" and job_id > 0 then
+			pcall(vim.fn.jobstop, job_id)
+		end
+	end
+
+	if vim.api.nvim_win_is_valid(runner.win_id) then
+		pcall(vim.api.nvim_win_close, runner.win_id, true)
+	end
+	if vim.api.nvim_buf_is_valid(runner.buf_id) then
+		pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
+	end
+
+	remove_runner(index)
+end
+
+local function close_runner_by_win_id(win_id, stop_job)
+	for idx, runner in ipairs(runners) do
+		if runner.win_id == win_id then
+			close_runner_at_index(idx, stop_job)
+			return true
+		end
+	end
+	return false
+end
+
 -- Helper to remove invalid runners from tracking
 local function clean_tracked_runners()
 	local valid = {}
@@ -515,19 +588,6 @@ local function clean_tracked_runners()
 		end
 	end
 	runners = valid
-end
-
-local function stop_tracked_jobs()
-	if type(vim.fn.jobstop) ~= "function" then
-		return
-	end
-
-	for _, runner in ipairs(runners) do
-		local job_id = runner.job_id
-		if type(job_id) == "number" and job_id > 0 then
-			pcall(vim.fn.jobstop, job_id)
-		end
-	end
 end
 
 -- Spinner frames
@@ -544,8 +604,12 @@ local spinner_frames = {
 -- Private: Get window config
 local function get_float_config()
 	local float_config = get_config().float
+	local max_width = math.max(20, vim.o.columns - 2)
+	local max_height = math.max(5, vim.o.lines - 2)
 	local width = math.floor(vim.o.columns * float_config.width)
 	local height = math.floor(vim.o.lines * float_config.height)
+	width = math.max(20, math.min(width, max_width))
+	height = math.max(5, math.min(height, max_height))
 	local col = math.floor((vim.o.columns - width) * float_config.x)
 	local row = math.floor((vim.o.lines - height) * float_config.y)
 
@@ -564,24 +628,77 @@ local function get_float_config()
 	}
 end
 
+local function open_mode_window(mode, buf, term_config)
+	local previous_win = vim.api.nvim_get_current_win()
+	local previous_tab = nil
+	if vim.api.nvim_get_current_tabpage then
+		previous_tab = vim.api.nvim_get_current_tabpage()
+	end
+
+	local win
+	if mode == "tab" then
+		vim.cmd("tabnew")
+		win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, buf)
+	elseif mode == "vsplit" then
+		local side = term_config.position == "left" and "topleft" or "botright"
+		vim.cmd(side .. " vsplit")
+		win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, buf)
+	elseif mode == "split" then
+		local row_side = term_config.position == "top" and "topleft" or "botright"
+		vim.cmd(row_side .. " split")
+		win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, buf)
+		vim.api.nvim_win_set_height(win, term_config.size)
+	end
+
+	return win, previous_win, previous_tab
+end
+
+local function restore_focus_if_disabled(mode, term_config, previous_win, previous_tab)
+	if term_config.focus ~= false then
+		return
+	end
+
+	if mode == "tab" then
+		local restored = false
+		if previous_tab and vim.api.nvim_set_current_tabpage then
+			restored = pcall(vim.api.nvim_set_current_tabpage, previous_tab)
+		end
+		if not restored then
+			pcall(vim.cmd, "tabprevious")
+		end
+		return
+	end
+
+	if previous_win and vim.api.nvim_win_is_valid(previous_win) then
+		pcall(vim.api.nvim_set_current_win, previous_win)
+	end
+end
+
 -- Close existing runner output(s)
 function M.close_output(stop_jobs)
 	M.stop_spinner()
-
-	if stop_jobs then
-		stop_tracked_jobs()
-	end
+	local should_stop = should_stop_on_close(stop_jobs)
 
 	-- Close all tracked runners
-	for _, runner in ipairs(runners) do
-		if vim.api.nvim_win_is_valid(runner.win_id) then
-			vim.api.nvim_win_close(runner.win_id, true)
-		end
-		if vim.api.nvim_buf_is_valid(runner.buf_id) then
-			vim.api.nvim_buf_delete(runner.buf_id, { force = true })
-		end
+	for idx = #runners, 1, -1 do
+		close_runner_at_index(idx, should_stop)
 	end
 	runners = {}
+end
+
+function M.close_current_runner(stop_jobs)
+	local should_stop = should_stop_on_close(stop_jobs)
+	local current_win = vim.api.nvim_get_current_win()
+	if close_runner_by_win_id(current_win, should_stop) then
+		return
+	end
+
+	if vim.api.nvim_win_is_valid(current_win) then
+		pcall(vim.api.nvim_win_close, current_win, true)
+	end
 end
 
 -- Start the spinner animation in the window title
@@ -696,10 +813,15 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 
 	-- Keymaps to close
 	local close_key = float_config.close_key or "<Esc>"
-	vim.api.nvim_buf_set_keymap(buf, "n", close_key, ":close<CR>", { noremap = true, silent = true })
-	-- Also allow closing from terminal mode
-	-- Note: <C-\><C-n> escapes to normal mode
-	vim.api.nvim_buf_set_keymap(buf, "t", close_key, "<C-\\><C-n>:close<CR>", { noremap = true, silent = true })
+	local function close_float_runner()
+		local should_stop = should_stop_on_close(nil)
+		close_runner_by_win_id(win, should_stop)
+	end
+	vim.keymap.set("n", close_key, close_float_runner, { buffer = buf, silent = true, nowait = true })
+	vim.keymap.set("t", close_key, function()
+		pcall(vim.cmd, "stopinsert")
+		close_float_runner()
+	end, { buffer = buf, silent = true, nowait = true })
 
 	-- Start Spinner (only animates the focused/latest one)
 	M.start_title_spinner(win, "Running " .. (title_name or "Code"))
@@ -708,21 +830,23 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local job_id = vim.fn.jobstart(command, {
 		term = true,
 		cwd = job_opts and job_opts.cwd or nil,
-			on_exit = function(job_id, exit_code, event)
-				-- Update title logic on exit for THIS specific window
-				if vim.api.nvim_win_is_valid(win) then
-					M.set_exit_status(win, exit_code)
-				end
+		on_exit = function(_, exit_code)
+			runner.job_id = nil
 
-				-- Populate Quickfix on Error
-				if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
-					local qf = config.quickfix or {}
-					populate_quickfix_from_buffer(buf, qf)
-				end
+			-- Update title logic on exit for THIS specific window
+			if vim.api.nvim_win_is_valid(win) then
+				M.set_exit_status(win, exit_code)
+			end
 
-				if on_exit_cb then
-					on_exit_cb(exit_code)
-				end
+			-- Populate Quickfix on Error
+			if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
+				local qf = config.quickfix or {}
+				populate_quickfix_from_buffer(buf, qf)
+			end
+
+			if on_exit_cb then
+				on_exit_cb(exit_code)
+			end
 		end,
 	})
 	runner.job_id = job_id
@@ -743,50 +867,23 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	end
 
 	local config = config_opts.term
+	mode = normalize_mode(mode)
 	local buf = vim.api.nvim_create_buf(false, true)
-	local previous_win = vim.api.nvim_get_current_win()
-	local previous_tab = nil
-	if vim.api.nvim_get_current_tabpage then
-		previous_tab = vim.api.nvim_get_current_tabpage()
-	end
-
-	local win
-	if mode == "tab" then
-		vim.cmd("tabnew")
-		win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, buf)
-	elseif mode == "vsplit" then
-		vim.cmd("vsplit")
-		win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, buf)
-	elseif mode == "split" then
-		local position_cmd = config.position == "top" and "topleft" or "botright"
-		vim.cmd(position_cmd .. " split")
-		win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, buf)
-		vim.api.nvim_win_set_height(win, config.size)
+	local win, previous_win, previous_tab = open_mode_window(mode, buf, config)
+	if not win then
+		return
 	end
 
 	local runner = track_runner(win, buf)
 
-	if config.focus == false then
-		if mode == "tab" then
-			local restored = false
-			if previous_tab and vim.api.nvim_set_current_tabpage then
-				restored = pcall(vim.api.nvim_set_current_tabpage, previous_tab)
-			end
-			if not restored then
-				pcall(vim.cmd, "tabprevious")
-			end
-		elseif previous_win and vim.api.nvim_win_is_valid(previous_win) then
-			pcall(vim.api.nvim_set_current_win, previous_win)
-		end
-	end
+	restore_focus_if_disabled(mode, config, previous_win, previous_tab)
 
 	local job_id = vim.fn.jobstart(command, {
 		term = true,
 		cwd = job_opts and job_opts.cwd or nil,
 		on_exit = function(_, exit_code)
+			runner.job_id = nil
+
 			if exit_code ~= 0 and vim.api.nvim_buf_is_valid(buf) then
 				local qf = config_opts.quickfix or {}
 				populate_quickfix_from_buffer(buf, qf)
@@ -804,10 +901,65 @@ end
 -- Stub for compatibility if needed
 function M.show_spinner() end
 
-function M.show_output(message)
+function M.show_output(message, mode)
 	local text = type(message) == "string" and message or tostring(message)
 	local level = text:match("^Error:") and vim.log.levels.ERROR or vim.log.levels.WARN
-	vim.notify(text, level, { title = "Zignite" })
+	local config = get_config()
+	local resolved_mode = normalize_mode(mode)
+	local lines = split_text_lines(text)
+
+	local function set_message_buffer(buf)
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+		vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+		vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
+		vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
+	end
+
+	local function close_message_runner(win_id)
+		close_runner_by_win_id(win_id, false)
+	end
+
+	if resolved_mode == "float" then
+		local buf = vim.api.nvim_create_buf(false, true)
+		set_message_buffer(buf)
+
+		local opts = get_float_config()
+		local float_config = config.float
+		local should_focus = float_config.focus ~= false
+		opts.title = level == vim.log.levels.ERROR and " Zignite Error " or " Zignite Message "
+		opts.footer = string.format(" %s: close ", format_key_for_display(float_config.close_key or "<Esc>"))
+		local win = vim.api.nvim_open_win(buf, should_focus, opts)
+		local border_hl = level == vim.log.levels.ERROR and (float_config.border_hl_error or "DiagnosticError")
+			or (float_config.border_hl or "FloatBorder")
+		vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. border_hl, { win = win })
+		track_runner(win, buf)
+
+		local close_key = float_config.close_key or "<Esc>"
+		vim.keymap.set("n", close_key, function()
+			close_message_runner(win)
+		end, { buffer = buf, silent = true, nowait = true })
+		vim.keymap.set("n", "q", function()
+			close_message_runner(win)
+		end, { buffer = buf, silent = true, nowait = true })
+		return
+	end
+
+	local term_config = config.term
+	local buf = vim.api.nvim_create_buf(false, true)
+	set_message_buffer(buf)
+	local win, previous_win, previous_tab = open_mode_window(resolved_mode, buf, term_config)
+	if not win then
+		vim.notify(text, level, { title = "Zignite" })
+		return
+	end
+	track_runner(win, buf)
+	restore_focus_if_disabled(resolved_mode, term_config, previous_win, previous_tab)
+	vim.keymap.set("n", "<Esc>", function()
+		close_message_runner(win)
+	end, { buffer = buf, silent = true, nowait = true })
+	vim.keymap.set("n", "q", function()
+		close_message_runner(win)
+	end, { buffer = buf, silent = true, nowait = true })
 end
 
 function M.update_output() end
