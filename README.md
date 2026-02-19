@@ -147,6 +147,7 @@ require('zignite.config').setup({
 - `:RunCode`: Run the current visual selection.
 - `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
+- `:RunBuildLast`: Repeat the most recent `:RunBuild`/picker command for the current filetype.
 - `:RunClose`: Close runner output (`close_behavior="stop"` stops jobs, `"hide"` only closes output).
 - `:StopCode`: Terminate the currently running process.
 
@@ -163,7 +164,12 @@ Press `<leader>rb` (default) to open the Command Picker:
   clean              → cargo clean
 ```
 
-Use `j`/`k` to navigate and `Enter` to select.
+Use:
+- `j`/`k` (or arrow keys) to navigate
+- `Enter` to select
+- `/` to filter by command name/text
+- `c` to clear filter
+- `r` to run the previous build command for current filetype
 
 ### RunFile vs RunProject
 

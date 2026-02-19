@@ -1063,6 +1063,112 @@ local function test_build_picker_focus_override()
     print("✓ Build picker focus override test passed")
 end
 
+-- Test build picker supports filter prompt and full command preview line.
+local function test_build_picker_filter_and_preview()
+    local original_expand = vim.fn.expand
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local original_keymap = vim.keymap
+    local original_input = vim.fn.input
+    local mapped = {}
+    local latest_lines = {}
+    local next_input = "run"
+
+    config.setup({
+        build_commands = {
+            tinyft = {
+                ["aaa-long"] = "echo very-long-command-preview-segment-end",
+                run = "echo run",
+            },
+        },
+    })
+
+    vim.bo.filetype = "tinyft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+        return original_expand(expr)
+    end
+    vim.fn.input = function(_, default)
+        return next_input or default
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        latest_lines = lines or {}
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+    vim.keymap = {
+        set = function(_, lhs, rhs, _opts)
+            mapped[lhs] = rhs
+        end,
+    }
+
+    init.select_build_command("float")
+
+    assert(type(mapped["/"]) == "function", "Picker should map '/' for filtering")
+    assert(#latest_lines > 0, "Picker should render lines")
+    assert(latest_lines[#latest_lines]:match("segment%-end"), "Picker preview should include full command text")
+
+    mapped["/"]()
+    assert(latest_lines[1]:match("Filter:%s+run"), "Picker should update filter header after '/' input")
+
+    vim.fn.expand = original_expand
+    vim.fn.input = original_input
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.keymap = original_keymap
+
+    print("✓ Build picker filter/preview test passed")
+end
+
+-- Test :RunBuildLast behavior (warn before first run, then repeat latest command).
+local function test_run_build_last_behavior()
+    config.setup({
+        build_commands = {
+            lastft = {
+                run = "echo run-last",
+                test = "pytest -q",
+            },
+        },
+    })
+
+    vim.bo.filetype = "lastft"
+    local original_expand = vim.fn.expand
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/last/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.run_last_build_command("float")
+    assert(#job_results == 0, "RunBuildLast should not start job before any build command")
+    assert(#output_messages > 0, "RunBuildLast should surface guidance before first selection")
+
+    reset_job_results()
+    init.run_build_command("test", "float")
+    assert(#job_results > 0, "run_build_command(test) should start a job")
+
+    reset_job_results()
+    init.run_last_build_command("float")
+    assert(#job_results > 0, "RunBuildLast should repeat previous build command")
+    local repeated = command_to_string(job_results[#job_results].cmd)
+    assert(repeated:match("pytest"), "RunBuildLast should repeat the latest command for filetype")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    reset_job_results()
+
+    print("✓ RunBuildLast behavior test passed")
+end
+
 -- Test show_output respects split mode and renders in-window (not notify fallback).
 local function test_show_output_respects_mode()
     config.setup({
@@ -1372,6 +1478,8 @@ test_build_picker_empty_state()
 test_build_picker_window_clamped()
 test_build_picker_focus_behavior()
 test_build_picker_focus_override()
+test_build_picker_filter_and_preview()
+test_run_build_last_behavior()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
 test_reserved_argv_runner_guard()
