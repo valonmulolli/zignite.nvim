@@ -104,11 +104,22 @@ end, {
 
 vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
 	local mode = opts.fargs[1]
- 
+	 
 	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
 		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
 		return
 	end
- 
+	 
 	zignite().select_build_command(mode)
+end, { nargs = "?" })
+
+vim.api.nvim_create_user_command("RunBuildLast", function(opts)
+	local mode = opts.fargs[1]
+
+	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
+		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
+		return
+	end
+
+	zignite().run_last_build_command(mode)
 end, { nargs = "?" })

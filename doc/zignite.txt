@@ -149,12 +149,27 @@ COMMANDS                                                    *zignite-commands*
       j, ↓      Move down
       k, ↑      Move up
       Enter     Select command
+      /         Filter commands
+      c         Clear filter
+      r         Run previous build command for current filetype
       1-9       Quick select
       Esc, q    Cancel
     
     Examples: >
         :RunBuildSelect
         :RunBuildSelect split
+<
+
+                                                              *:RunBuildLast*
+:RunBuildLast [mode]
+    Repeat the most recent build command selected/executed for the current
+    filetype.
+
+    Arguments:
+      [mode]    Optional output mode: float, split, vsplit, tab
+
+    Example: >
+        :RunBuildLast
 <
 
                                                                   *:RunClose*

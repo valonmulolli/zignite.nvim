@@ -39,6 +39,7 @@ local ARGV_CACHE_MAX = 256
 local normalized_runner_cache = {}
 local normalized_runner_order = {}
 local NORMALIZED_RUNNER_CACHE_MAX = 128
+local last_build_command_by_filetype = {}
 
 local function ensure_config()
 	config.ensure()
@@ -553,6 +554,7 @@ function M.run_build_command(command_name, mode)
 	local system_command = build_system_command(command, argv_command)
 
 	local display_name = string.format("%s: %s", filetype, command_name)
+	last_build_command_by_filetype[filetype] = command_name
 	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
 end
 
@@ -586,7 +588,7 @@ function M.select_build_command(mode)
 	local filtering = has_cmake or has_meson or has_makefile
 
 	-- Create list of commands
-	local commands = {}
+	local all_commands = {}
 	for cmd_name, cmd_string in pairs(build_cmds) do
 		local include = true
 
@@ -602,14 +604,14 @@ function M.select_build_command(mode)
 		end
 
 		if include then
-			table.insert(commands, {
+			table.insert(all_commands, {
 				name = cmd_name,
 				command = cmd_string,
 			})
 		end
 	end
 
-	if #commands == 0 then
+	if #all_commands == 0 then
 		vim.notify(
 			string.format("No build commands available for %s in this project context", filetype),
 			vim.log.levels.WARN
@@ -618,36 +620,104 @@ function M.select_build_command(mode)
 	end
 
 	-- Sort by name
-	table.sort(commands, function(a, b)
+	table.sort(all_commands, function(a, b)
 		return a.name < b.name
 	end)
 
 	-- Create custom bottom-aligned picker with visual selection
 	local buf = vim.api.nvim_create_buf(false, true)
+	local ns_id = vim.api.nvim_create_namespace("zignite_picker")
+	local filter_query = ""
+	local filtered_commands = {}
+	local selected_index = 1
+	local command_line_start = 2
 
-	-- Prepare lines for display (compact, no empty lines)
-	local lines = {}
-	for _, cmd in ipairs(commands) do
-		local display_cmd = cmd.command
-		if #display_cmd > 50 then
-			display_cmd = string.sub(display_cmd, 1, 47) .. "..."
+	local function find_command_index(commands, command_name)
+		for idx, cmd in ipairs(commands) do
+			if cmd.name == command_name then
+				return idx
+			end
 		end
-		table.insert(lines, string.format("  %-18s → %s", cmd.name, display_cmd))
+		return nil
 	end
-	table.insert(lines, "j/k: navigate | Enter: select | Esc: cancel")
 
+	local function apply_filter()
+		local query = filter_query:lower()
+		filtered_commands = {}
+
+		for _, cmd in ipairs(all_commands) do
+			local name_match = cmd.name:lower():find(query, 1, true) ~= nil
+			local command_match = cmd.command:lower():find(query, 1, true) ~= nil
+			if query == "" or name_match or command_match then
+				filtered_commands[#filtered_commands + 1] = cmd
+			end
+		end
+
+		if #filtered_commands == 0 then
+			selected_index = 0
+		elseif selected_index < 1 then
+			selected_index = 1
+		elseif selected_index > #filtered_commands then
+			selected_index = #filtered_commands
+		end
+	end
+
+	local function format_command_preview(text)
+		if #text <= 52 then
+			return text
+		end
+		return string.sub(text, 1, 49) .. "..."
+	end
+
+	local function build_lines()
+		local lines = {
+			string.format(" Filter: %s ", filter_query ~= "" and filter_query or "(none)"),
+		}
+
+		if #filtered_commands == 0 then
+			lines[#lines + 1] = "  (no commands match current filter)"
+		else
+			for _, cmd in ipairs(filtered_commands) do
+				lines[#lines + 1] = string.format("  %-18s → %s", cmd.name, format_command_preview(cmd.command))
+			end
+		end
+
+		lines[#lines + 1] = "j/k: navigate | Enter: select | /: filter | c: clear | r: repeat | Esc: cancel"
+		local preview_text = "(none)"
+		if #filtered_commands > 0 and selected_index >= 1 then
+			preview_text = filtered_commands[selected_index].command
+		end
+		lines[#lines + 1] = " cmd: " .. preview_text
+		return lines
+	end
+
+	apply_filter()
+
+	local last_selected_name = last_build_command_by_filetype[filetype]
+	if last_selected_name then
+		local default_idx = find_command_index(filtered_commands, last_selected_name)
+		if default_idx then
+			selected_index = default_idx
+		end
+	end
+
+	local lines = build_lines()
+
+	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
 	vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
 
-	-- Calculate window size based on content (more compact)
+	-- Calculate window size based on content and clamp to viewport
 	local max_width = 0
 	for _, line in ipairs(lines) do
 		max_width = math.max(max_width, vim.fn.strdisplaywidth(line))
 	end
-	local width = math.min(max_width + 4, math.floor(vim.o.columns * 0.5))
-	local height = #lines + 1 -- Reduced padding
+	local width_cap = math.max(40, math.floor(vim.o.columns * 0.75))
+	local width = math.min(max_width + 4, width_cap)
+	local height_cap = math.max(8, math.floor(vim.o.lines * 0.65))
+	local height = math.min(#lines + 1, height_cap)
 
 	-- Use user's float config style (bottom-aligned, right side)
 	local float_config = config.options.float or {}
@@ -675,24 +745,71 @@ function M.select_build_command(mode)
 	vim.api.nvim_set_option_value("cursorline", true, { win = win })
 	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:FloatBorder,CursorLine:Visual", { win = win })
 
-	-- Namespace for virtual text
-	local ns_id = vim.api.nvim_create_namespace("zignite_picker")
-
 	-- Function to update selection indicator
-	local function update_selection()
-		-- Clear previous virtual text
-		vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
-
-		local cursor_line = vim.api.nvim_win_get_cursor(win)[1]
-
-		-- Commands start at line 1 now (no header)
-		if cursor_line >= 1 and cursor_line <= #commands then
-			-- Add arrow indicator to current line
-			vim.api.nvim_buf_set_extmark(buf, ns_id, cursor_line - 1, 0, {
-				virt_text = { { "▶ ", "Special" } },
-				virt_text_pos = "overlay",
-			})
+	local function render_picker()
+		if not vim.api.nvim_win_is_valid(win) then
+			return
 		end
+
+		local updated_lines = build_lines()
+		vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, updated_lines)
+		vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+
+		vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
+		if #filtered_commands == 0 or selected_index < 1 then
+			return
+		end
+
+		local cursor_line = command_line_start + selected_index - 1
+		vim.api.nvim_win_set_cursor(win, { cursor_line, 0 })
+		vim.api.nvim_buf_set_extmark(buf, ns_id, cursor_line - 1, 0, {
+			virt_text = { { "▶ ", "Special" } },
+			virt_text_pos = "overlay",
+		})
+	end
+
+	local function move_selection(delta)
+		if #filtered_commands == 0 then
+			return
+		end
+
+		local new_index = selected_index + delta
+		if new_index < 1 then
+			new_index = 1
+		elseif new_index > #filtered_commands then
+			new_index = #filtered_commands
+		end
+		if new_index ~= selected_index then
+			selected_index = new_index
+		end
+		render_picker()
+	end
+
+	local function open_filter_prompt()
+		local function apply_input(input)
+			if input == nil then
+				return
+			end
+			filter_query = input
+			apply_filter()
+			render_picker()
+		end
+
+		if vim.ui and type(vim.ui.input) == "function" then
+			vim.ui.input({
+				prompt = "Build filter: ",
+				default = filter_query,
+			}, apply_input)
+			return
+		end
+
+		if type(vim.fn.input) ~= "function" then
+			vim.notify("Build filter prompt is unavailable in this environment", vim.log.levels.WARN)
+			return
+		end
+		local entered = vim.fn.input("Build filter: ", filter_query)
+		apply_input(entered)
 	end
 
 	-- Key mappings
@@ -703,77 +820,83 @@ function M.select_build_command(mode)
 	end
 
 	local function select_command(index)
-		close_picker()
-		if commands[index] then
-			M.run_build_command(commands[index].name, mode)
+		local selected = filtered_commands[index]
+		if not selected then
+			return
 		end
+		close_picker()
+		M.run_build_command(selected.name, mode)
+	end
+
+	local function run_last_selected()
+		local command_name = last_build_command_by_filetype[filetype]
+		if not command_name then
+			vim.notify(string.format("No previous build command for filetype: %s", filetype), vim.log.levels.WARN)
+			return
+		end
+		close_picker()
+		M.run_build_command(command_name, mode)
 	end
 
 	-- Enhanced j/k navigation with boundary checking
 	vim.keymap.set("n", "j", function()
-		local cursor = vim.api.nvim_win_get_cursor(win)
-		local line = cursor[1]
-		local max_line = #commands -- Last command line
-		if line < max_line then
-			vim.api.nvim_win_set_cursor(win, { line + 1, 0 })
-			update_selection()
-		end
+		move_selection(1)
 	end, { buffer = buf, nowait = true })
 
 	vim.keymap.set("n", "k", function()
-		local cursor = vim.api.nvim_win_get_cursor(win)
-		local line = cursor[1]
-		local min_line = 1 -- First command line
-		if line > min_line then
-			vim.api.nvim_win_set_cursor(win, { line - 1, 0 })
-			update_selection()
-		end
+		move_selection(-1)
 	end, { buffer = buf, nowait = true })
 
 	-- Arrow keys support
 	vim.keymap.set("n", "<Down>", function()
-		local cursor = vim.api.nvim_win_get_cursor(win)
-		local line = cursor[1]
-		local max_line = #commands
-		if line < max_line then
-			vim.api.nvim_win_set_cursor(win, { line + 1, 0 })
-			update_selection()
-		end
+		move_selection(1)
 	end, { buffer = buf, nowait = true })
 
 	vim.keymap.set("n", "<Up>", function()
-		local cursor = vim.api.nvim_win_get_cursor(win)
-		local line = cursor[1]
-		local min_line = 1
-		if line > min_line then
-			vim.api.nvim_win_set_cursor(win, { line - 1, 0 })
-			update_selection()
-		end
+		move_selection(-1)
 	end, { buffer = buf, nowait = true })
 
 	-- Enter to select
 	vim.keymap.set("n", "<CR>", function()
-		local line = vim.api.nvim_win_get_cursor(win)[1]
-		-- Line number is now the command index directly
-		if line >= 1 and line <= #commands then
-			select_command(line)
+		if selected_index >= 1 and selected_index <= #filtered_commands then
+			select_command(selected_index)
 		end
 	end, { buffer = buf, nowait = true })
 
 	-- Map number keys (still works!)
-	for i = 1, math.min(#commands, 9) do
+	for i = 1, 9 do
 		vim.keymap.set("n", tostring(i), function()
 			select_command(i)
 		end, { buffer = buf, nowait = true })
 	end
 
+	vim.keymap.set("n", "/", open_filter_prompt, { buffer = buf, nowait = true })
+	vim.keymap.set("n", "c", function()
+		filter_query = ""
+		apply_filter()
+		render_picker()
+	end, { buffer = buf, nowait = true })
+	vim.keymap.set("n", "r", run_last_selected, { buffer = buf, nowait = true })
+
 	-- Map escape and q to close
 	vim.keymap.set("n", "<Esc>", close_picker, { buffer = buf, nowait = true })
 	vim.keymap.set("n", "q", close_picker, { buffer = buf, nowait = true })
 
-	-- Start on first command and show initial selection
-	vim.api.nvim_win_set_cursor(win, { 1, 0 })
-	update_selection()
+	-- Show initial selection and preview
+	render_picker()
+end
+
+function M.run_last_build_command(mode)
+	ensure_config()
+
+	local filetype = vim.bo.filetype
+	local command_name = last_build_command_by_filetype[filetype]
+	if not command_name then
+		ui.show_output(string.format("No previous build command for filetype: %s", filetype), mode)
+		return
+	end
+
+	M.run_build_command(command_name, mode)
 end
 
 function M.close_runner()
@@ -791,6 +914,7 @@ function M.setup(opts)
 	zig_missing_notified = false
 	argv_cache = {}
 	argv_cache_order = {}
+	last_build_command_by_filetype = {}
 	config.setup(opts)
 	utils.clear_project_cache()
 end
