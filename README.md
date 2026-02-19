@@ -115,11 +115,16 @@ require('zignite.config').setup({
     enable_animations = true,     -- Show spinner in window title
 
     quickfix = {
-        enabled = true,           -- Populate quickfix on non-zero exit
-        max_lines = 1000,         -- Keep only last N lines from terminal output
-        strip_ansi = true,        -- Remove color escape codes in quickfix lines
-        async_strip = true,       -- Strip ANSI in chunks to reduce UI stutter
-        strip_chunk_size = 200,   -- Lines per chunk when async_strip=true
+        enabled = true,             -- Populate quickfix on non-zero exit
+        processor = "auto",         -- "auto" | "lua" | "zig"
+        zig_min_lines = 300,        -- Auto-switch to zig quickfix processor
+        max_lines = 1000,           -- Keep only last N lines from terminal output
+        max_bytes = 262144,         -- Byte cap for quickfix processing
+        strip_ansi = true,          -- Remove color escape codes in quickfix lines
+        strip_ansi_max_lines = 400, -- Strip ANSI on most recent N lines
+        parse_diagnostics = true,   -- Canonicalize parseable diagnostics in zig mode
+        async_strip = true,         -- Lua fallback: strip ANSI in chunks
+        strip_chunk_size = 200,     -- Lua fallback chunk size
     },
 })
 ```
@@ -214,6 +219,21 @@ lua test/integration.lua
 
 ```sh
 lua test/benchmark.lua 10000
+```
+
+The benchmark prints:
+- Lua quickfix path time.
+- Zig quickfix simulation time.
+- Zig quickfix + diagnostics parse simulation time.
+- Real Zig backend quickfix timings when `zig/zig-out/bin/zignite` is available (includes process spawn overhead).
+- Speedup percentage (`zig` vs `lua`) for large-output quickfix.
+
+Soft guardrail:
+- Warn when zig speedup is below `30%`.
+
+Optional hard guardrail:
+```sh
+ZIGNITE_BENCH_HARD_FAIL=1 lua test/benchmark.lua 10000
 ```
 
 ## License

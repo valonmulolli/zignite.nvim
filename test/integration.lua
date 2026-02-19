@@ -106,19 +106,182 @@ end
 
 -- Mock vim.fn.jobstart for testing
 local original_jobstart = vim.fn.jobstart
+local original_chansend = vim.fn.chansend
+local original_chanclose = vim.fn.chanclose
 local job_results = {}
 local quickfix_results = {}
 local notify_results = {}
 local next_exit_code = 0
+local next_quickfix_backend_exit_code = 0
+local next_job_id = 123
+local mock_jobs = {}
+
+local function split_lines(text)
+    local lines = {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        if line ~= "" then
+            table.insert(lines, line)
+        end
+    end
+    return lines
+end
+
+local function parse_backend_flag(cmd, prefix, default)
+    if type(cmd) ~= "table" then
+        return default
+    end
+    for _, arg in ipairs(cmd) do
+        if type(arg) == "string" and arg:sub(1, #prefix) == prefix then
+            return arg:sub(#prefix + 1)
+        end
+    end
+    return default
+end
+
+local function parse_backend_bool(cmd, prefix, default)
+    local value = parse_backend_flag(cmd, prefix, nil)
+    if value == nil then
+        return default
+    end
+    return value == "1" or value == "true"
+end
+
+local function canonicalize_diag(line)
+    local trimmed = line:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^%-%->%s*", "")
+    local path, row, col, msg = trimmed:match("^([^:]+):(%d+):(%d+):%s*(.+)$")
+    if path and row and col then
+        return string.format("%s:%d:%d: %s", path, tonumber(row), tonumber(col), msg ~= "" and msg or "diagnostic")
+    end
+
+    local path0, row0, col0 = trimmed:match("^([^:]+):(%d+):(%d+)$")
+    if path0 and row0 and col0 then
+        return string.format("%s:%d:%d: diagnostic", path0, tonumber(row0), tonumber(col0))
+    end
+
+    local path2, row2, msg2 = trimmed:match("^([^:]+):(%d+):%s*(.+)$")
+    if path2 and row2 then
+        return string.format("%s:%d:%d: %s", path2, tonumber(row2), 1, msg2 ~= "" and msg2 or "diagnostic")
+    end
+
+    local path3, row3, col3, msg3 = trimmed:match("^(.+)%((%d+):(%d+)%)%s*(.*)$")
+    if path3 and row3 and col3 then
+        local normalized = msg3 ~= "" and msg3 or "diagnostic"
+        return string.format("%s:%d:%d: %s", path3, tonumber(row3), tonumber(col3), normalized)
+    end
+
+    return nil
+end
+
+local function simulate_quickfix_backend(input, cmd)
+    local lines = split_lines(input or "")
+    local max_lines = tonumber(parse_backend_flag(cmd, "--max-lines=", "1000")) or 1000
+    local strip_ansi = parse_backend_bool(cmd, "--strip-ansi=", true)
+    local strip_max_lines = tonumber(parse_backend_flag(cmd, "--strip-max-lines=", "400")) or 400
+    local parse_diagnostics = parse_backend_bool(cmd, "--parse-diagnostics=", true)
+
+    local truncated = #lines > max_lines
+    if max_lines < 1 then
+        max_lines = 1
+    end
+    if #lines > max_lines then
+        local sliced = {}
+        for i = #lines - max_lines + 1, #lines do
+            table.insert(sliced, lines[i])
+        end
+        lines = sliced
+    end
+
+    if strip_ansi and strip_max_lines > 0 then
+        local start_idx = math.max(1, #lines - strip_max_lines + 1)
+        for i = start_idx, #lines do
+            lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
+        end
+    end
+
+    if parse_diagnostics then
+        for i = 1, #lines do
+            local normalized = canonicalize_diag(lines[i])
+            if normalized then
+                lines[i] = normalized
+            end
+        end
+    end
+
+    if truncated then
+        table.insert(lines, 1, "[zignite] quickfix output truncated")
+    end
+
+    return lines
+end
+
+local function is_quickfix_backend_cmd(cmd)
+    if type(cmd) ~= "table" then
+        return false
+    end
+    for _, arg in ipairs(cmd) do
+        if arg == "--quickfix" then
+            return true
+        end
+    end
+    return false
+end
 
 vim.fn.jobstart = function(cmd, opts)
-    table.insert(job_results, {cmd = cmd, opts = opts})
-    -- Simulate execution with configurable exit code
+    local job_id = next_job_id
+    next_job_id = next_job_id + 1
+    table.insert(job_results, {cmd = cmd, opts = opts, job_id = job_id})
+    mock_jobs[job_id] = { cmd = cmd, opts = opts, input = "" }
+
+    if is_quickfix_backend_cmd(cmd) then
+        return job_id
+    end
+
     if opts.on_exit then
         local exit_code = next_exit_code
-        vim.defer_fn(function() opts.on_exit(nil, exit_code) end, 10)
+        vim.defer_fn(function() opts.on_exit(job_id, exit_code) end, 10)
     end
-    return 123
+    return job_id
+end
+
+vim.fn.chansend = function(job_id, data)
+    local job = mock_jobs[job_id]
+    if not job then
+        return 0
+    end
+
+    if type(data) == "table" then
+        for _, part in ipairs(data) do
+            job.input = job.input .. tostring(part)
+        end
+    else
+        job.input = job.input .. tostring(data or "")
+    end
+    return 1
+end
+
+vim.fn.chanclose = function(job_id, stream)
+    local job = mock_jobs[job_id]
+    if not job or stream ~= "stdin" or not is_quickfix_backend_cmd(job.cmd) then
+        return 0
+    end
+
+    if next_quickfix_backend_exit_code ~= 0 then
+        local exit_code = next_quickfix_backend_exit_code
+        next_quickfix_backend_exit_code = 0
+        if job.opts and job.opts.on_exit then
+            vim.defer_fn(function() job.opts.on_exit(job_id, exit_code) end, 10)
+        end
+        return 1
+    end
+
+    local lines = simulate_quickfix_backend(job.input, job.cmd)
+    if job.opts and job.opts.on_stdout then
+        vim.defer_fn(function() job.opts.on_stdout(job_id, lines) end, 10)
+    end
+    if job.opts and job.opts.on_exit then
+        vim.defer_fn(function() job.opts.on_exit(job_id, 0) end, 10)
+    end
+    return 1
 end
 
 vim.fn.setqflist = function(_, _, qf_opts)
@@ -151,6 +314,7 @@ end
 
 local function reset_job_results()
     job_results = {}
+    mock_jobs = {}
 end
 
 local function reset_quickfix_results()
@@ -159,6 +323,16 @@ end
 
 local function reset_notify_results()
     notify_results = {}
+end
+
+local function count_quickfix_backend_jobs()
+    local count = 0
+    for _, job in ipairs(job_results) do
+        if is_quickfix_backend_cmd(job.cmd) then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 -- Test basic command execution
@@ -190,28 +364,39 @@ local function test_basic_execution()
     print("✓ Basic execution test passed")
 end
 
--- Test complex runner keeps shell mode (no --argv)
-local function test_complex_runner_uses_shell_mode()
+-- Test interpreted default runner uses argv mode (no shell chaining).
+local function test_interpreted_runner_uses_argv_mode()
     config.setup({ mode = "float" })
 
-    vim.bo.filetype = "javascript"
     local original_expand = vim.fn.expand
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/js/main.js" end
-        return original_expand(expr)
+    local cases = {
+        { filetype = "javascript", path = "/tmp/js/main.js", token = "node" },
+        { filetype = "typescript", path = "/tmp/ts/main.ts", token = "bun" },
+        { filetype = "lua", path = "/tmp/lua/main.lua", token = "lua" },
+        { filetype = "sh", path = "/tmp/sh/main.sh", token = "bash" },
+        { filetype = "zsh", path = "/tmp/zsh/main.zsh", token = "zsh" },
+    }
+
+    for _, case in ipairs(cases) do
+        vim.bo.filetype = case.filetype
+        vim.fn.expand = function(expr)
+            if expr == "%:p" then return case.path end
+            return original_expand(expr)
+        end
+
+        init.run_code(0, "float")
+
+        assert(#job_results > 0, case.filetype .. " job was not started")
+        local command = command_to_string(job_results[#job_results].cmd)
+        assert(command:match("%-%-argv"), case.filetype .. " default runner should use argv mode")
+        assert(command:match(case.token), "Expected " .. case.token .. " in " .. case.filetype .. " runner command")
+        assert(not command:match("&&"), case.filetype .. " runner should not use shell command chains by default")
+        reset_job_results()
     end
 
-    init.run_code(0, "float")
-
-    assert(#job_results > 0, "JavaScript job was not started")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(not command:match("%-%-argv"), "Complex command should remain shell mode")
-    assert(command:match("&&"), "Expected shell command chain for javascript runner")
-
     vim.fn.expand = original_expand
-    reset_job_results()
 
-    print("✓ Complex runner shell-mode test passed")
+    print("✓ Interpreted runner argv-mode test passed")
 end
 
 -- Test project detection
@@ -279,14 +464,17 @@ local function test_build_command_uses_cwd()
     print("✓ Build command cwd test passed")
 end
 
--- Test quickfix generation on non-zero exits strips ANSI and tails lines.
-local function test_quickfix_on_error()
+-- Test Lua quickfix generation on non-zero exits strips ANSI and tails lines.
+local function test_quickfix_on_error_lua_processor()
     config.setup({
         mode = "float",
         quickfix = {
             enabled = true,
+            processor = "lua",
             max_lines = 2,
+            max_bytes = 1024,
             strip_ansi = true,
+            strip_ansi_max_lines = 2,
             async_strip = true,
             strip_chunk_size = 1,
         },
@@ -320,9 +508,11 @@ local function test_quickfix_on_error()
 
     assert(#quickfix_results > 0, "Quickfix should be populated on non-zero exit")
     local qf = quickfix_results[#quickfix_results]
-    assert(#qf.lines == 2, "Quickfix should be capped to max_lines")
-    assert(not qf.lines[1]:match("\27"), "Quickfix line should be ANSI-stripped")
+    assert(#qf.lines == 3, "Quickfix should include truncation notice plus tailed lines")
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Quickfix should include truncation notice")
     assert(not qf.lines[2]:match("\27"), "Quickfix line should be ANSI-stripped")
+    assert(not qf.lines[3]:match("\27"), "Quickfix line should be ANSI-stripped")
+    assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn zig quickfix backend")
 
     next_exit_code = 0
     vim.fn.expand = original_expand
@@ -331,7 +521,247 @@ local function test_quickfix_on_error()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix error-path test passed")
+    print("✓ Quickfix Lua processor test passed")
+end
+
+-- Test explicit zig processor path is used for quickfix generation.
+local function test_quickfix_zig_processor()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 2,
+            max_bytes = 1024,
+            strip_ansi = true,
+            strip_ansi_max_lines = 2,
+            parse_diagnostics = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(count_quickfix_backend_jobs() > 0, "Zig processor should spawn quickfix backend")
+    assert(#quickfix_results > 0, "Quickfix should be populated on zig processor path")
+    local qf = quickfix_results[#quickfix_results]
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Zig quickfix should include truncation notice")
+    assert(qf.lines[2] == "error-2", "Zig processor should strip ANSI from retained lines")
+    assert(qf.lines[3] == "error-3", "Zig processor should strip ANSI from retained lines")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig processor test passed")
+end
+
+-- Test auto processor routes to Lua below threshold and Zig above threshold.
+local function test_quickfix_auto_threshold_behavior()
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+
+    vim.bo.filetype = "python"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "auto",
+            zig_min_lines = 5,
+            max_lines = 5,
+            strip_ansi = true,
+            strip_ansi_max_lines = 5,
+            parse_diagnostics = false,
+        },
+    })
+
+    local small_lines = {
+        "line-1",
+        "\27[31mline-2\27[0m",
+        "line-3",
+    }
+    vim.api.nvim_buf_line_count = function() return #small_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #small_lines do
+            table.insert(out, small_lines[i])
+        end
+        return out
+    end
+
+    next_exit_code = 1
+    init.run_code(0, "float")
+    assert(count_quickfix_backend_jobs() == 0, "Auto mode should use Lua processor below threshold")
+
+    reset_job_results()
+    reset_quickfix_results()
+
+    local large_lines = {}
+    for i = 1, 8 do
+        large_lines[i] = string.format("\27[31mline-%d\27[0m", i)
+    end
+    vim.api.nvim_buf_line_count = function() return #large_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #large_lines do
+            table.insert(out, large_lines[i])
+        end
+        return out
+    end
+
+    init.run_code(0, "float")
+    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use zig processor above threshold")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix auto threshold test passed")
+end
+
+-- Test zig quickfix processor falls back to Lua when zig backend fails.
+local function test_quickfix_zig_fallback()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 2,
+            strip_ansi = true,
+            strip_ansi_max_lines = 2,
+            parse_diagnostics = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    next_quickfix_backend_exit_code = 1
+    next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(#quickfix_results > 0, "Lua fallback should populate quickfix after zig failure")
+    local qf = quickfix_results[#quickfix_results]
+    assert(not qf.lines[1]:match("\27"), "Lua fallback should still strip ANSI codes")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig fallback test passed")
+end
+
+-- Test zig diagnostic parser canonicalizes common compiler formats.
+local function test_quickfix_zig_diagnostic_parser()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 5,
+            strip_ansi = false,
+            parse_diagnostics = true,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "src/main.c:10:5: error: expected ';' after expression",
+        " --> src/lib.rs:7:3",
+        "/tmp/sample.odin(8:1) Error: Redeclaration of 'main'",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(#quickfix_results > 0, "Zig diagnostic parser should populate quickfix lines")
+    local qf = quickfix_results[#quickfix_results]
+    assert(qf.lines[1]:match("^src/main%.c:10:5:"), "GCC/Clang diagnostic should be canonicalized")
+    assert(qf.lines[2]:match("^src/lib%.rs:7:3:"), "Rust arrow diagnostic should be canonicalized")
+    assert(qf.lines[3]:match("^/tmp/sample%.odin:8:1:"), "Paren diagnostics should be canonicalized")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig diagnostic parser test passed")
 end
 
 -- Test float focus=false keeps cursor in current window and avoids startinsert.
@@ -754,10 +1184,14 @@ end
 
 -- Run integration tests
 test_basic_execution()
-test_complex_runner_uses_shell_mode()
+test_interpreted_runner_uses_argv_mode()
 test_project_execution()
 test_build_command_uses_cwd()
-test_quickfix_on_error()
+test_quickfix_on_error_lua_processor()
+test_quickfix_zig_processor()
+test_quickfix_auto_threshold_behavior()
+test_quickfix_zig_fallback()
+test_quickfix_zig_diagnostic_parser()
 test_float_focus_behavior()
 test_build_picker_empty_state()
 test_build_picker_window_clamped()
@@ -773,5 +1207,7 @@ test_odin_single_file_mode()
 
 -- Restore original jobstart
 vim.fn.jobstart = original_jobstart
+vim.fn.chansend = original_chansend
+vim.fn.chanclose = original_chanclose
 
 print("All integration tests passed!")
