@@ -269,6 +269,7 @@ Configure quickfix generation on failed runs: >lua
         strip_ansi = true,
         strip_ansi_max_lines = 400,
         parse_diagnostics = true,   -- zig processor canonicalization
+        zig_worker = true,          -- persistent zig worker for lower latency
         async_strip = true,         -- lua processor fallback
         strip_chunk_size = 200,
     }
