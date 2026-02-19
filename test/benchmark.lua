@@ -95,7 +95,19 @@ config.setup({
 	enable_animations = false,
 })
 
+local time_source = "os.clock"
 local function now_ms()
+	if vim and vim.loop and type(vim.loop.hrtime) == "function" then
+		time_source = "vim.loop.hrtime"
+		return vim.loop.hrtime() / 1e6
+	end
+
+	local ok_socket, socket = pcall(require, "socket")
+	if ok_socket and socket and type(socket.gettime) == "function" then
+		time_source = "socket.gettime"
+		return socket.gettime() * 1000
+	end
+
 	return os.clock() * 1000
 end
 
@@ -106,20 +118,106 @@ local function bench(name, fn)
 	print(string.format("%-34s %10.2f ms", name .. ":", elapsed))
 end
 
-local function quickfix_simulation(lines, max_lines, strip_ansi)
+local function bench_ms(fn)
+	local start_ms = now_ms()
+	fn()
+	return now_ms() - start_ms
+end
+
+local function tail_lines(lines, max_lines)
 	local start_line = math.max(1, #lines - max_lines + 1)
 	local out = {}
 	for i = start_line, #lines do
-		local line = lines[i]
-		if strip_ansi then
-			line = line:gsub("\27%[[0-9;]*m", "")
+		out[#out + 1] = lines[i]
+	end
+	return out, start_line > 1
+end
+
+local function quickfix_lua_path(lines, opts)
+	local out, truncated = tail_lines(lines, opts.max_lines)
+	if opts.strip_ansi then
+		for i = 1, #out do
+			out[i] = out[i]:gsub("\27%[[0-9;]*m", "")
 		end
-		out[#out + 1] = line
+	end
+	if truncated then
+		table.insert(out, 1, "[zignite] quickfix output truncated")
 	end
 	return out
 end
 
+local function canonicalize_diag(line)
+	local trimmed = line:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^%-%->%s*", "")
+	local path, row, col, msg = trimmed:match("^([^:]+):(%d+):(%d+):%s*(.+)$")
+	if path then
+		return string.format("%s:%d:%d: %s", path, tonumber(row), tonumber(col), msg ~= "" and msg or "diagnostic")
+	end
+	local path2, row2, msg2 = trimmed:match("^([^:]+):(%d+):%s*(.+)$")
+	if path2 then
+		return string.format("%s:%d:%d: %s", path2, tonumber(row2), 1, msg2 ~= "" and msg2 or "diagnostic")
+	end
+	local path3, row3, col3, msg3 = trimmed:match("^(.+)%((%d+):(%d+)%)%s*(.*)$")
+	if path3 then
+		return string.format("%s:%d:%d: %s", path3, tonumber(row3), tonumber(col3), msg3 ~= "" and msg3 or "diagnostic")
+	end
+	return line
+end
+
+local function quickfix_zig_path_sim(lines, opts)
+	local out, truncated = tail_lines(lines, opts.max_lines)
+	local strip_from = math.max(1, #out - opts.strip_ansi_max_lines + 1)
+	for i = strip_from, #out do
+		if opts.strip_ansi then
+			out[i] = out[i]:gsub("\27%[[0-9;]*m", "")
+		end
+		if opts.parse_diagnostics then
+			out[i] = canonicalize_diag(out[i])
+		end
+	end
+	if truncated then
+		table.insert(out, 1, "[zignite] quickfix output truncated")
+	end
+	return out
+end
+
+local function shell_quote(value)
+	local s = tostring(value or "")
+	if package.config:sub(1, 1) == "\\" then
+		return '"' .. s:gsub('"', '\\"') .. '"'
+	end
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+local function command_ok(ok, _, code)
+	if type(ok) == "number" then
+		return ok == 0
+	end
+	if ok == true then
+		return code == nil or code == 0
+	end
+	return false
+end
+
+local function file_exists(path)
+	local f = io.open(path, "rb")
+	if f then
+		f:close()
+		return true
+	end
+	return false
+end
+
+local function write_tempfile(text)
+	local path = os.tmpname()
+	local f = assert(io.open(path, "wb"))
+	f:write(text)
+	f:close()
+	return path
+end
+
+now_ms() -- prime timer source detection
 print(string.format("Zignite benchmark (iterations=%d)", iterations))
+print(string.format("Timer source: %s", time_source))
 print(string.rep("-", 52))
 
 bench("detect_project (cold-ish)", function()
@@ -152,9 +250,115 @@ for i = 1, 20000 do
 	large_lines[i] = string.format("\27[31merror line %d\27[0m", i)
 end
 
-bench("quickfix tail+strip (20k -> 1k)", function()
+local diag_lines = {}
+for i = 1, 20000 do
+	if i % 3 == 0 then
+		diag_lines[i] = string.format("src/main.c:%d:5: error: failed", i)
+	elseif i % 3 == 1 then
+		diag_lines[i] = string.format(" --> src/lib.rs:%d:3", i)
+	else
+		diag_lines[i] = string.format("/tmp/sample.odin(%d:1) Error: redeclaration", i)
+	end
+end
+
+local quickfix_iters = math.max(1, math.floor(iterations / 20))
+local quickfix_opts = {
+	max_lines = 1000,
+	strip_ansi = true,
+	strip_ansi_max_lines = 400,
+	parse_diagnostics = false,
+}
+
+local lua_ms = bench_ms(function()
 	for _ = 1, math.max(1, math.floor(iterations / 20)) do
-		quickfix_simulation(large_lines, 1000, true)
+		quickfix_lua_path(large_lines, quickfix_opts)
 	end
 end)
+print(string.format("%-34s %10.2f ms", "quickfix lua (20k -> 1k):", lua_ms))
 
+local zig_ms = bench_ms(function()
+	for _ = 1, quickfix_iters do
+		quickfix_zig_path_sim(large_lines, quickfix_opts)
+	end
+end)
+print(string.format("%-34s %10.2f ms", "quickfix zig-sim (20k -> 1k):", zig_ms))
+
+local zig_diag_ms = bench_ms(function()
+	for _ = 1, quickfix_iters do
+		quickfix_zig_path_sim(diag_lines, {
+			max_lines = 1000,
+			strip_ansi = true,
+			strip_ansi_max_lines = 400,
+			parse_diagnostics = true,
+		})
+	end
+end)
+print(string.format("%-34s %10.2f ms", "quickfix zig-sim + parser:", zig_diag_ms))
+
+if lua_ms > 0 then
+	local improvement = ((lua_ms - zig_ms) / lua_ms) * 100
+	print(string.format("%-34s %9.2f%%", "quickfix zig speedup vs lua:", improvement))
+	if improvement < 30 then
+		print(string.format("WARN: quickfix zig speedup below target (30%%): %.2f%%", improvement))
+		if os.getenv("ZIGNITE_BENCH_HARD_FAIL") == "1" then
+			error(string.format("quickfix zig regression: speedup %.2f%% < 30%%", improvement))
+		end
+	end
+end
+
+local backend_path = project_root .. "/zig/zig-out/bin/zignite"
+if file_exists(backend_path) then
+	local large_input = write_tempfile(table.concat(large_lines, "\n") .. "\n")
+	local diag_input = write_tempfile(table.concat(diag_lines, "\n") .. "\n")
+	local null_sink = package.config:sub(1, 1) == "\\" and "NUL" or "/dev/null"
+	local backend_iters = math.max(1, math.floor(quickfix_iters / 10))
+
+	local backend_cmd = string.format(
+		"%s --quickfix --max-lines=1000 --max-bytes=262144 --strip-ansi=1 --strip-max-lines=400 --parse-diagnostics=0 < %s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(large_input),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+
+	local backend_diag_cmd = string.format(
+		"%s --quickfix --max-lines=1000 --max-bytes=262144 --strip-ansi=1 --strip-max-lines=400 --parse-diagnostics=1 < %s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(diag_input),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+
+	local probe_cmd = string.format(
+		"%s --quickfix < %s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(diag_input),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+	local first_ok = command_ok(os.execute(probe_cmd))
+	if first_ok then
+		local zig_real_ms = bench_ms(function()
+			for _ = 1, backend_iters do
+				assert(command_ok(os.execute(backend_cmd)), "zig backend quickfix command failed")
+			end
+		end)
+		print(string.format("%-34s %10.2f ms", "quickfix zig-backend (real):", zig_real_ms))
+		print(string.format("%-34s %10.2f ms", "quickfix zig-backend avg/run:", zig_real_ms / backend_iters))
+
+		local zig_real_diag_ms = bench_ms(function()
+			for _ = 1, backend_iters do
+				assert(command_ok(os.execute(backend_diag_cmd)), "zig backend diagnostics command failed")
+			end
+		end)
+		print(string.format("%-34s %10.2f ms", "quickfix zig-backend + parser:", zig_real_diag_ms))
+		print(string.format("%-34s %10.2f ms", "quickfix zig-backend+parser avg:", zig_real_diag_ms / backend_iters))
+	else
+		print("WARN: zig backend binary exists but quickfix command failed; skipping real backend benchmark")
+	end
+
+	os.remove(large_input)
+	os.remove(diag_input)
+else
+	print("NOTE: zig backend binary not found; skipping real backend benchmark")
+end

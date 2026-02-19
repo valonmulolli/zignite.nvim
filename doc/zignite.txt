@@ -198,7 +198,7 @@ RUNNERS~
 Customize file execution commands: >lua
     runners = {
         python = "python3 -u $file",
-        javascript = { "cd $dir", "node $fileName" },
+        javascript = "node $file",
         c = {
             cmd = {
                 "cd $dir",
@@ -255,6 +255,23 @@ Customize animations: >lua
     spinner = "dots",  -- dots, line, bar, arrows, etc.
     spinner_speed = 80,
     enable_animations = true,
+<
+
+QUICKFIX CONFIGURATION~
+                                                      *zignite-config-quickfix*
+Configure quickfix generation on failed runs: >lua
+    quickfix = {
+        enabled = true,
+        processor = "auto",         -- auto | lua | zig
+        zig_min_lines = 300,        -- auto threshold for zig processor
+        max_lines = 1000,
+        max_bytes = 262144,
+        strip_ansi = true,
+        strip_ansi_max_lines = 400,
+        parse_diagnostics = true,   -- zig processor canonicalization
+        async_strip = true,         -- lua processor fallback
+        strip_chunk_size = 200,
+    }
 <
 
 PROJECT DETECTION~
