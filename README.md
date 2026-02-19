@@ -264,7 +264,7 @@ The benchmark prints:
 - Speedup percentage (`zig` vs `lua`) for large-output quickfix.
 
 Soft guardrail:
-- Warn when zig speedup is below `30%`.
+- Warn when zig speedup is below 30%.
 
 Optional hard guardrail:
 ```sh
