@@ -433,7 +433,7 @@ end
 
 function M.stop_code()
 	-- Since UI handles process via terminal buffers, we delegate closing to UI
-	ui.close_output()
+	ui.close_output(true)
 	vim.notify("Runner stopped.", vim.log.levels.INFO)
 end
 
