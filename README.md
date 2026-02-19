@@ -48,6 +48,24 @@ The `build` step is required to compile the Zig backend.
 }
 ```
 
+If you manage keymaps through Lazy's `keys` field, use Lazy's key format:
+
+```lua
+{
+    "valonmulolli/zignite.nvim",
+    keys = {
+        { "<leader>r", "<cmd>RunFile<cr>", mode = "n", desc = "Run file" },
+        { "<leader>rb", "<cmd>RunBuildSelect<cr>", mode = "n", desc = "Build picker" },
+        { "<leader>rl", "<cmd>RunLive<cr>", mode = "n", desc = "Run live/watch command" },
+    },
+    config = function()
+        require("zignite.config").setup({
+            keymaps = {}, -- avoid duplicate mappings when Lazy keys are used
+        })
+    end,
+}
+```
+
 **Packer**
 
 ```lua
@@ -173,6 +191,12 @@ Use:
 - `c` to clear filter
 - `r` to run the previous build command for current filetype
 
+For `zig` files, picker commands are merged from:
+- `build_commands.zig` (your config)
+- auto-detected Zig subcommands parsed from `zig --help`
+
+Configured commands take priority when names overlap.
+
 ### RunFile vs RunProject
 
 - Use `:RunFile` for fast single-file feedback.
@@ -237,6 +261,10 @@ runners = {
 
 ### `zsh: no such option: argv`
 Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
+
+### `<leader>` mapping does not trigger
+If you define mappings via Lazy.nvim `keys`, use `{ "<lhs>", "<rhs>", mode = "n", ... }` format.  
+The `{ "n", "<lhs>", "<rhs>", ... }` format is for `zignite.config.setup({ keymaps = { ... } })`.
 
 ### Quickfix feels slow on huge error logs
 Tune these options first:

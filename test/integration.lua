@@ -29,7 +29,9 @@ vim.fn = vim.fn or {
     shellescape = function(str) return str end,
     filereadable = function() return 0 end,
     strdisplaywidth = function(str) return #tostring(str) end,
+    systemlist = function() return {} end,
 }
+vim.v = vim.v or { shell_error = 0 }
 vim.bo = vim.bo or { filetype = "python" }
 vim.o = vim.o or { columns = 120, lines = 40 }
 vim.tbl_isempty = vim.tbl_isempty or function(tbl) return next(tbl) == nil end
@@ -1246,6 +1248,110 @@ local function test_run_live_missing_command()
     print("✓ RunLive missing command test passed")
 end
 
+-- Test Zig command detection from `zig --help` appears in build picker.
+local function test_zig_detected_commands_in_picker()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_open_win = vim.api.nvim_open_win
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local picker_opened = false
+    local rendered_lines = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function(cmd)
+        assert(type(cmd) == "table" and cmd[1] == "zig" and cmd[2] == "--help", "Expected zig --help for detection")
+        vim.v.shell_error = 0
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "",
+            "  build            Build project from build.zig",
+            "  fmt              Reformat Zig source into canonical form",
+            "  run              Create executable and run immediately",
+            "",
+            "General Options:",
+            "  -h, --help       Print command-specific usage",
+        }
+    end
+    vim.api.nvim_open_win = function(...)
+        picker_opened = true
+        return original_open_win(...)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            rendered_lines = lines
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    init.select_build_command("float")
+
+    assert(picker_opened, "Picker should open for detected zig commands")
+    local rendered = table.concat(rendered_lines, "\n")
+    assert(rendered:match("build"), "Picker should include detected zig build command")
+    assert(rendered:match("fmt"), "Picker should include detected zig fmt command")
+    assert(rendered:match("run"), "Picker should include detected zig run command")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.api.nvim_open_win = original_open_win
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.v.shell_error = 0
+
+    print("✓ Zig detected commands in picker test passed")
+end
+
+-- Test run_build_command can execute zig commands detected from `zig --help`.
+local function test_run_build_command_with_detected_zig_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function()
+        vim.v.shell_error = 0
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "  build            Build project from build.zig",
+            "  fmt              Reformat Zig source into canonical form",
+            "",
+            "General Options:",
+        }
+    end
+
+    reset_job_results()
+    init.run_build_command("fmt", "float")
+    assert(#job_results > 0, "Detected zig build command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("zig fmt"), "Detected zig command should execute via zig fmt")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected zig command test passed")
+end
+
 -- Test show_output respects split mode and renders in-window (not notify fallback).
 local function test_show_output_respects_mode()
     config.setup({
@@ -1559,6 +1665,8 @@ test_build_picker_filter_and_preview()
 test_run_build_last_behavior()
 test_run_live_priority_selection()
 test_run_live_missing_command()
+test_zig_detected_commands_in_picker()
+test_run_build_command_with_detected_zig_command()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
 test_reserved_argv_runner_guard()
