@@ -4,12 +4,23 @@ local M = {}
 -- If singleton = true, this will only ever have 1 item
 local runners = {}
 local spinner_timer = nil
+local quickfix_backend_available = nil
 
 local function get_config()
 	local cfg = require("zignite.config")
 	cfg.ensure()
 	return cfg.options
 end
+
+local function get_plugin_path()
+	local source = debug.getinfo(1, "S").source
+	if source:sub(1, 1) == "@" then
+		source = source:sub(2)
+	end
+	return vim.fn.fnamemodify(source, ":p:h:h:h")
+end
+
+local QUICKFIX_BACKEND = get_plugin_path() .. "/zig/zig-out/bin/zignite"
 
 local function format_key_for_display(key)
 	local text = tostring(key or "")
@@ -42,11 +53,61 @@ local function set_quickfix_lines(lines)
 	end)
 end
 
-local function populate_quickfix_from_buffer(buf, quickfix_opts)
-	if quickfix_opts.enabled == false or not vim.api.nvim_buf_is_valid(buf) then
-		return
+local function has_quickfix_backend()
+	if quickfix_backend_available == nil then
+		quickfix_backend_available = vim.fn.executable(QUICKFIX_BACKEND) == 1
+	end
+	return quickfix_backend_available
+end
+
+local function copy_lines(lines)
+	local out = {}
+	for i = 1, #lines do
+		out[i] = lines[i]
+	end
+	return out
+end
+
+local function append_truncation_notice(lines)
+	local out = { "[zignite] quickfix output truncated" }
+	for i = 1, #lines do
+		out[#out + 1] = lines[i]
+	end
+	return out
+end
+
+local function tail_lines_by_bytes(lines, max_bytes)
+	if max_bytes == nil or max_bytes <= 0 or #lines == 0 then
+		return lines, false
 	end
 
+	local used = 0
+	local start_idx = #lines + 1
+	for i = #lines, 1, -1 do
+		used = used + #lines[i] + 1
+		if used > max_bytes then
+			break
+		end
+		start_idx = i
+	end
+
+	if start_idx <= 1 then
+		return lines, false
+	end
+
+	if start_idx > #lines then
+		return { lines[#lines] }, true
+	end
+
+	local out = {}
+	for i = start_idx, #lines do
+		out[#out + 1] = lines[i]
+	end
+
+	return out, true
+end
+
+local function collect_lua_quickfix_lines(buf, quickfix_opts)
 	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
 	if max_lines < 1 then
 		max_lines = 1
@@ -55,8 +116,42 @@ local function populate_quickfix_from_buffer(buf, quickfix_opts)
 	local total_lines = vim.api.nvim_buf_line_count(buf)
 	local start_line = math.max(0, total_lines - max_lines)
 	local lines = vim.api.nvim_buf_get_lines(buf, start_line, -1, false)
+	local truncated = start_line > 0
+
+	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
+	local byte_truncated = false
+	lines, byte_truncated = tail_lines_by_bytes(lines, max_bytes)
+	truncated = truncated or byte_truncated
+
+	return lines, truncated, total_lines
+end
+
+local function choose_quickfix_processor(quickfix_opts, total_lines)
+	local processor = tostring(quickfix_opts.processor or "auto"):lower()
+	if processor == "lua" or processor == "zig" then
+		return processor
+	end
+
+	local zig_min_lines = tonumber(quickfix_opts.zig_min_lines) or 300
+	if zig_min_lines < 1 then
+		zig_min_lines = 1
+	end
+
+	if total_lines >= zig_min_lines then
+		return "zig"
+	end
+
+	return "lua"
+end
+
+local function populate_quickfix_lua(lines, quickfix_opts, truncated)
+	local processed = copy_lines(lines)
+	if truncated then
+		processed = append_truncation_notice(processed)
+	end
+
 	if quickfix_opts.strip_ansi == false then
-		set_quickfix_lines(lines)
+		set_quickfix_lines(processed)
 		return
 	end
 
@@ -65,30 +160,158 @@ local function populate_quickfix_from_buffer(buf, quickfix_opts)
 		chunk_size = 1
 	end
 
-	local idx = 1
+	local strip_max_lines = tonumber(quickfix_opts.strip_ansi_max_lines) or #processed
+	if strip_max_lines < 1 then
+		strip_max_lines = #processed
+	end
+	local strip_start = math.max(1, #processed - strip_max_lines + 1)
+
+	local idx = strip_start
 	local function strip_next_chunk()
-		local upper = math.min(#lines, idx + chunk_size - 1)
+		local upper = math.min(#processed, idx + chunk_size - 1)
 		for i = idx, upper do
-			if lines[i]:find("\27", 1, true) then
-				lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
+			if processed[i]:find("\27", 1, true) then
+				processed[i] = processed[i]:gsub("\27%[[0-9;]*m", "")
 			end
 		end
 		idx = upper + 1
 
-		if idx <= #lines and quickfix_opts.async_strip ~= false then
+		if idx <= #processed and quickfix_opts.async_strip ~= false then
 			vim.schedule(strip_next_chunk)
 			return
 		end
 
-		if idx <= #lines then
+		if idx <= #processed then
 			strip_next_chunk()
 			return
 		end
 
-		set_quickfix_lines(lines)
+		set_quickfix_lines(processed)
 	end
 
 	strip_next_chunk()
+end
+
+local function bool_to_flag(value, default)
+	local resolved = value
+	if resolved == nil then
+		resolved = default
+	end
+	if type(resolved) == "string" then
+		local lowered = resolved:lower()
+		if lowered == "0" or lowered == "false" or lowered == "no" then
+			resolved = false
+		else
+			resolved = true
+		end
+	elseif type(resolved) == "number" then
+		resolved = resolved ~= 0
+	end
+	return resolved and "1" or "0"
+end
+
+local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
+	if not has_quickfix_backend() then
+		on_fallback()
+		return
+	end
+
+	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" or type(vim.fn.chanclose) ~= "function" then
+		on_fallback()
+		return
+	end
+
+	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
+	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
+	local strip_max_lines = tonumber(quickfix_opts.strip_ansi_max_lines) or 400
+
+	local cmd = {
+		QUICKFIX_BACKEND,
+		"--quickfix",
+		"--max-lines=" .. max_lines,
+		"--max-bytes=" .. max_bytes,
+		"--strip-ansi=" .. bool_to_flag(quickfix_opts.strip_ansi, true),
+		"--strip-max-lines=" .. strip_max_lines,
+		"--parse-diagnostics=" .. bool_to_flag(quickfix_opts.parse_diagnostics, true),
+	}
+
+	local output_lines = {}
+	local failed = false
+	local job_id = vim.fn.jobstart(cmd, {
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, data)
+			if type(data) ~= "table" then
+				return
+			end
+			for _, line in ipairs(data) do
+				if line ~= nil and line ~= "" then
+					output_lines[#output_lines + 1] = line
+				end
+			end
+		end,
+		on_exit = function(_, exit_code)
+			if failed then
+				return
+			end
+			if exit_code == 0 then
+				if force_truncated and output_lines[1] ~= "[zignite] quickfix output truncated" then
+					table.insert(output_lines, 1, "[zignite] quickfix output truncated")
+				end
+				on_success(output_lines)
+				return
+			end
+			failed = true
+			on_fallback()
+		end,
+	})
+
+	if type(job_id) ~= "number" or job_id <= 0 then
+		on_fallback()
+		return
+	end
+
+	local payload = table.concat(raw_lines, "\n")
+	if #payload > 0 then
+		local ok_send = pcall(vim.fn.chansend, job_id, payload .. "\n")
+		if not ok_send then
+			failed = true
+			on_fallback()
+			return
+		end
+	end
+	local ok_close = pcall(vim.fn.chanclose, job_id, "stdin")
+	if not ok_close then
+		failed = true
+		on_fallback()
+	end
+end
+
+local function populate_quickfix_from_buffer(buf, quickfix_opts)
+	if quickfix_opts.enabled == false or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	local total_lines = vim.api.nvim_buf_line_count(buf)
+	local processor = choose_quickfix_processor(quickfix_opts, total_lines)
+
+	if processor == "zig" then
+		local max_lines = tonumber(quickfix_opts.max_lines) or 1000
+		if max_lines < 1 then
+			max_lines = 1
+		end
+		local start_line = math.max(0, total_lines - max_lines)
+		local raw_lines = vim.api.nvim_buf_get_lines(buf, start_line, -1, false)
+		local force_truncated = start_line > 0
+		run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, set_quickfix_lines, function()
+			local lua_lines, truncated = collect_lua_quickfix_lines(buf, quickfix_opts)
+			populate_quickfix_lua(lua_lines, quickfix_opts, truncated)
+		end)
+		return
+	end
+
+	local lua_lines, truncated = collect_lua_quickfix_lines(buf, quickfix_opts)
+	populate_quickfix_lua(lua_lines, quickfix_opts, truncated)
 end
 
 -- Helper to track a new runner
