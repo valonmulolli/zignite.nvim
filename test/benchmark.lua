@@ -245,6 +245,16 @@ bench("get_command (hot)", function()
 	end
 end)
 
+local picker_iters = math.max(1, math.floor(iterations / 50))
+init.get_build_commands_for_filetype("zig") -- warm build list path used by picker
+local picker_ms = bench_ms(function()
+	for _ = 1, picker_iters do
+		init.get_build_commands_for_filetype("zig")
+	end
+end)
+print(string.format("%-34s %10.2f ms", "picker build list (cache-first):", picker_ms))
+print(string.format("%-34s %10.2f ms", "picker build list avg/run:", picker_ms / picker_iters))
+
 local large_lines = {}
 for i = 1, 20000 do
 	large_lines[i] = string.format("\27[31merror line %d\27[0m", i)

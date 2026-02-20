@@ -115,9 +115,17 @@ local quickfix_results = {}
 local notify_results = {}
 local next_exit_code = 0
 local next_quickfix_backend_exit_code = 0
+local next_detect_backend_exit_code = 0
 local next_job_id = 123
 local mock_jobs = {}
 local quickfix_backend_invocations = 0
+local detect_backend_invocations = 0
+local detect_backend_tool_commands = {
+    zig = { "build", "fmt", "fetch", "run" },
+    go = { "build", "env", "fmt" },
+    cargo = { "build", "check", "run" },
+    odin = { "build", "run", "test" },
+}
 
 local function split_lines(text)
     local lines = {}
@@ -229,6 +237,18 @@ local function is_quickfix_daemon_cmd(cmd)
     return false
 end
 
+local function is_detect_daemon_cmd(cmd)
+    if type(cmd) ~= "table" then
+        return false
+    end
+    for _, arg in ipairs(cmd) do
+        if arg == "--detect-daemon" then
+            return true
+        end
+    end
+    return false
+end
+
 local function is_quickfix_backend_cmd(cmd)
     if type(cmd) ~= "table" then
         return false
@@ -288,13 +308,107 @@ local function parse_daemon_request(request_text)
     return response
 end
 
+local function parse_detect_daemon_request(request_text)
+    local req_lines = split_lines(request_text or "")
+    if #req_lines < 2 then
+        return nil
+    end
+
+    local begin_line = req_lines[1]
+    local request_id, tool = begin_line:match("^@@ZDET_REQ_BEGIN%s+(%d+)%s+([%w_%-]+)$")
+    if not request_id or not tool then
+        return nil
+    end
+
+    local end_line = req_lines[#req_lines]
+    local end_id = end_line:match("^@@ZDET_REQ_END%s+(%d+)$")
+    if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+        return nil
+    end
+
+    local response = { "@@ZDET_RES_BEGIN " .. request_id }
+    local commands = detect_backend_tool_commands[tool] or {}
+    for _, command in ipairs(commands) do
+        response[#response + 1] = "\t" .. command
+    end
+    response[#response + 1] = "@@ZDET_RES_END " .. request_id
+    return response
+end
+
+local function simulated_tool_help_output(cmd)
+    if type(cmd) ~= "table" or type(cmd[1]) ~= "string" then
+        return nil
+    end
+
+    if cmd[1] == "zig" and cmd[2] == "--help" then
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "",
+            "  build            Build project from build.zig",
+            "  fetch            Copy a package into global cache and print its hash",
+            "  fmt              Reformat Zig source into canonical form",
+            "  run              Create executable and run immediately",
+            "",
+            "General Options:",
+            "  -h, --help       Print command-specific usage",
+        }
+    end
+
+    if cmd[1] == "go" and cmd[2] == "help" then
+        return {
+            "The commands are:",
+            "",
+            "    build       compile packages and dependencies",
+            "    env         print Go environment information",
+            "    fmt         gofmt package sources",
+            "",
+            "Additional help topics:",
+        }
+    end
+
+    if cmd[1] == "cargo" and cmd[2] == "--list" then
+        return {
+            "Installed Commands:",
+            "    build      Compile a local package and all of its dependencies",
+            "    check      Analyze the current package and report errors",
+            "    run        Run a binary or example of the local package",
+        }
+    end
+
+    if cmd[1] == "odin" and cmd[2] == "help" then
+        return {
+            "Commands:",
+            "  build      Build an Odin package",
+            "  run        Build and run an Odin package",
+            "  test       Build and run tests for an Odin package",
+            "Flags:",
+        }
+    end
+
+    return nil
+end
+
 vim.fn.jobstart = function(cmd, opts)
     local job_id = next_job_id
     next_job_id = next_job_id + 1
     table.insert(job_results, {cmd = cmd, opts = opts, job_id = job_id})
     mock_jobs[job_id] = { cmd = cmd, opts = opts, input = "" }
 
-    if is_quickfix_backend_cmd(cmd) then
+    if is_quickfix_backend_cmd(cmd) or is_detect_daemon_cmd(cmd) then
+        return job_id
+    end
+
+    local tool_lines = simulated_tool_help_output(cmd)
+    if tool_lines then
+        if opts.on_stdout then
+            vim.defer_fn(function() opts.on_stdout(job_id, tool_lines) end, 10)
+        end
+        if opts.on_exit then
+            local exit_code = next_exit_code
+            vim.defer_fn(function() opts.on_exit(job_id, exit_code) end, 10)
+        end
         return job_id
     end
 
@@ -325,6 +439,25 @@ vim.fn.chansend = function(job_id, data)
         local response = parse_daemon_request(text)
         if response and job.opts and job.opts.on_stdout then
             quickfix_backend_invocations = quickfix_backend_invocations + 1
+            vim.defer_fn(function() job.opts.on_stdout(job_id, response) end, 10)
+        end
+        return 1
+    end
+
+    if is_detect_daemon_cmd(job.cmd) then
+        if next_detect_backend_exit_code ~= 0 then
+            local exit_code = next_detect_backend_exit_code
+            next_detect_backend_exit_code = 0
+            if job.opts and job.opts.on_exit then
+                vim.defer_fn(function() job.opts.on_exit(job_id, exit_code) end, 10)
+            end
+            return 1
+        end
+
+        local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+        local response = parse_detect_daemon_request(text)
+        if response and job.opts and job.opts.on_stdout then
+            detect_backend_invocations = detect_backend_invocations + 1
             vim.defer_fn(function() job.opts.on_stdout(job_id, response) end, 10)
         end
         return 1
@@ -398,6 +531,7 @@ end
 local function reset_job_results()
     job_results = {}
     quickfix_backend_invocations = 0
+    detect_backend_invocations = 0
 end
 
 local function reset_quickfix_results()
@@ -420,6 +554,10 @@ local function count_quickfix_daemon_jobs()
         end
     end
     return count
+end
+
+local function count_detect_backend_jobs()
+    return detect_backend_invocations
 end
 
 -- Test basic command execution
@@ -486,6 +624,119 @@ local function test_interpreted_runner_uses_argv_mode()
     print("✓ Interpreted runner argv-mode test passed")
 end
 
+-- Test timeout-enabled runs go through zig wrapper (`--timeout` + `--argv`).
+local function test_timeout_uses_zig_wrapper()
+    config.setup({
+        mode = "float",
+        timeout = 5000,
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/timeout/main.py" end
+        return original_expand(expr)
+    end
+
+    reset_job_results()
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "Timeout run job was not started")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("%-%-timeout=5000"), "Timeout run should include --timeout wrapper flag")
+    assert(command:match("%-%-argv"), "Timeout run should include --argv wrapper mode")
+    assert(command:match("python3"), "Timeout run should include python command payload")
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Timeout wrapper runtime test passed")
+end
+
+-- Test filetype fallback by extension when vim.bo.filetype is empty.
+local function test_language_detected_from_extension()
+    config.setup({ mode = "float" })
+
+    local original_expand = vim.fn.expand
+    vim.bo.filetype = ""
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/fallback/main.rs" end
+        return original_expand(expr)
+    end
+
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "Extension-based detection should start a job")
+    local has_rust = false
+    local commands = {}
+    for _, job in ipairs(job_results) do
+        local command = command_to_string(job.cmd)
+        commands[#commands + 1] = command
+        if command:match("rustc") then
+            has_rust = true
+        end
+    end
+    assert(has_rust, "Expected rust runner for .rs fallback, got: " .. table.concat(commands, " | "))
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Extension-based language detection test passed")
+end
+
+-- Test filetype fallback by shebang when extension and vim.bo.filetype are missing.
+local function test_language_detected_from_shebang()
+    config.setup({ mode = "float" })
+
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    vim.bo.filetype = ""
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/fallback/script" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/fallback/script" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/fallback/script" then
+            return { "#!/usr/bin/env python3" }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "Shebang-based detection should start a job")
+    local has_python = false
+    local commands = {}
+    for _, job in ipairs(job_results) do
+        local command = command_to_string(job.cmd)
+        commands[#commands + 1] = command
+        if command:match("python3") then
+            has_python = true
+        end
+    end
+    assert(has_python, "Expected python runner for python shebang fallback, got: " .. table.concat(commands, " | "))
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    reset_job_results()
+
+    print("✓ Shebang-based language detection test passed")
+end
+
 -- Test project detection
 local function test_project_execution()
     config.setup({
@@ -549,6 +800,29 @@ local function test_build_command_uses_cwd()
     reset_job_results()
 
     print("✓ Build command cwd test passed")
+end
+
+-- Test build command detection maps related filetypes (e.g. typescriptreact -> typescript).
+local function test_build_command_filetype_alias()
+    config.setup({ mode = "float" })
+
+    local original_expand = vim.fn.expand
+    vim.bo.filetype = "typescriptreact"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/alias/main.tsx" end
+        return original_expand(expr)
+    end
+
+    init.run_build_command("dev", "float")
+
+    assert(#job_results > 0, "Alias filetype build command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("npm run dev"), "typescriptreact should reuse typescript build commands")
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Build command filetype alias test passed")
 end
 
 -- Test Lua quickfix generation on non-zero exits strips ANSI and tails lines.
@@ -1121,6 +1395,145 @@ local function test_build_picker_filter_and_preview()
     print("✓ Build picker filter/preview test passed")
 end
 
+-- Test picker can force filter prompt to command-line input even when vim.ui.input exists.
+local function test_build_picker_filter_cmdline_mode()
+    local original_expand = vim.fn.expand
+    local original_keymap = vim.keymap
+    local original_input = vim.fn.input
+    local original_ui = vim.ui
+    local mapped = {}
+    local cmdline_calls = 0
+    local ui_calls = 0
+
+    config.setup({
+        build_commands = {
+            tinyft = {
+                run = "echo run",
+                test = "echo test",
+            },
+        },
+        picker = {
+            filter_input = "cmdline",
+        },
+    })
+
+    vim.bo.filetype = "tinyft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+        return original_expand(expr)
+    end
+    vim.fn.input = function(_, default)
+        cmdline_calls = cmdline_calls + 1
+        return default or ""
+    end
+    vim.ui = {
+        input = function(_, cb)
+            ui_calls = ui_calls + 1
+            if cb then
+                cb("")
+            end
+        end,
+    }
+    vim.keymap = {
+        set = function(_, lhs, rhs, _opts)
+            mapped[lhs] = rhs
+        end,
+    }
+
+    init.select_build_command("float")
+
+    assert(type(mapped["/"]) == "function", "Picker should map '/' for filtering")
+    mapped["/"]()
+    assert(cmdline_calls == 1, "Picker should use vim.fn.input when picker.filter_input='cmdline'")
+    assert(ui_calls == 0, "Picker should not call vim.ui.input when picker.filter_input='cmdline'")
+
+    vim.fn.expand = original_expand
+    vim.fn.input = original_input
+    vim.ui = original_ui
+    vim.keymap = original_keymap
+
+    print("✓ Build picker cmdline filter mode test passed")
+end
+
+-- Test picker inline filter mode captures text in-picker without ui/cmdline prompts.
+local function test_build_picker_filter_inline_mode()
+    local original_expand = vim.fn.expand
+    local original_keymap = vim.keymap
+    local original_getcharstr = vim.fn.getcharstr
+    local original_input = vim.fn.input
+    local original_ui = vim.ui
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local mapped = {}
+    local latest_lines = {}
+    local cmdline_calls = 0
+    local ui_calls = 0
+    local idx = 1
+    local keys = { "r", "u", "n", "\r" }
+
+    config.setup({
+        build_commands = {
+            tinyft = {
+                run = "echo run",
+                test = "echo test",
+            },
+        },
+        picker = {
+            filter_input = "inline",
+        },
+    })
+
+    vim.bo.filetype = "tinyft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+        return original_expand(expr)
+    end
+    vim.fn.getcharstr = function()
+        local key = keys[idx]
+        idx = idx + 1
+        return key
+    end
+    vim.fn.input = function(_, default)
+        cmdline_calls = cmdline_calls + 1
+        return default or ""
+    end
+    vim.ui = {
+        input = function(_, cb)
+            ui_calls = ui_calls + 1
+            if cb then
+                cb("")
+            end
+        end,
+    }
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        latest_lines = lines or {}
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+    vim.keymap = {
+        set = function(_, lhs, rhs, _opts)
+            mapped[lhs] = rhs
+        end,
+    }
+
+    init.select_build_command("float")
+
+    assert(type(mapped["/"]) == "function", "Picker should map '/' for filtering")
+    mapped["/"]()
+    assert(latest_lines[1]:match("Filter:%s+run"), "Inline filter should update picker header query")
+    assert(cmdline_calls == 0, "Inline filter should not use vim.fn.input")
+    assert(ui_calls == 0, "Inline filter should not use vim.ui.input")
+
+    vim.fn.expand = original_expand
+    vim.fn.getcharstr = original_getcharstr
+    vim.fn.input = original_input
+    vim.ui = original_ui
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.keymap = original_keymap
+
+    print("✓ Build picker inline filter mode test passed")
+end
+
 -- Test :RunBuildLast behavior (warn before first run, then repeat latest command).
 local function test_run_build_last_behavior()
     config.setup({
@@ -1245,7 +1658,207 @@ local function test_run_live_missing_command()
     vim.api.nvim_buf_set_lines = original_buf_set_lines
     reset_job_results()
 
-    print("✓ RunLive missing command test passed")
+	print("✓ RunLive missing command test passed")
+end
+
+-- Test picker path never relies on vim.wait when async picker mode is enabled.
+---@return nil
+local function test_picker_async_path_without_wait()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = true,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_open_win = vim.api.nvim_open_win
+	local original_wait = vim.wait
+	local picker_opened = false
+	local wait_called = false
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/asyncwait/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.api.nvim_open_win = function(...)
+		picker_opened = true
+		return original_open_win(...)
+	end
+	vim.wait = function()
+		wait_called = true
+		error("picker async path should not call vim.wait")
+	end
+
+	local ok, err = pcall(init.select_build_command, "float")
+	assert(ok, "Picker should open without vim.wait dependency: " .. tostring(err))
+	assert(picker_opened, "Picker should still open in async mode")
+	assert(not wait_called, "Async picker path should never call vim.wait")
+
+	vim.fn.expand = original_expand
+	vim.api.nvim_open_win = original_open_win
+	vim.wait = original_wait
+
+	print("✓ Picker async no-wait test passed")
+end
+
+-- Test picker opens from immediate commands then live-merges async detected commands.
+---@return nil
+local function test_picker_async_live_merge_refresh()
+	init.setup({
+		build_commands = {
+			go = {
+				build = "go build",
+			},
+		},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 1,
+			live_merge = true,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_chansend_fn = vim.fn.chansend
+	local original_buf_set_lines = vim.api.nvim_buf_set_lines
+	local rendered_lines = {}
+	local deferred_detect = nil
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/asyncrefresh/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+		if type(lines) == "table" and #lines > 0 then
+			rendered_lines = lines
+		end
+		if original_buf_set_lines then
+			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+		end
+	end
+	vim.fn.chansend = function(job_id, data)
+		local job = mock_jobs[job_id]
+		if job and is_detect_daemon_cmd(job.cmd) then
+			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+			deferred_detect = {
+				job_id = job_id,
+				opts = job.opts,
+				response = parse_detect_daemon_request(text),
+			}
+			detect_backend_invocations = detect_backend_invocations + 1
+			return 1
+		end
+		return original_chansend_fn(job_id, data)
+	end
+
+	reset_job_results()
+	init.select_build_command("float")
+
+	local initial_render = table.concat(rendered_lines, "\n")
+	assert(initial_render:match("cmd:%s+go build"), "Initial picker render should keep selected command preview")
+	assert(not initial_render:match("go env"), "Initial picker render should not include deferred detected commands")
+	assert(deferred_detect and deferred_detect.opts and deferred_detect.response, "Detect response should be deferred")
+
+	deferred_detect.opts.on_stdout(deferred_detect.job_id, deferred_detect.response)
+	local refreshed_render = table.concat(rendered_lines, "\n")
+	assert(refreshed_render:match("go env"), "Live refresh should merge detected commands into picker")
+	assert(refreshed_render:match("cmd:%s+go build"), "Live refresh should preserve selected command preview")
+
+	vim.fn.expand = original_expand
+	vim.fn.chansend = original_chansend_fn
+	vim.api.nvim_buf_set_lines = original_buf_set_lines
+
+	print("✓ Picker async live-merge refresh test passed")
+end
+
+-- Test picker detection cache invalidation uses TTL and mtime signature.
+---@return nil
+local function test_picker_detection_cache_ttl_and_mtime()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = false,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_exepath = vim.fn.exepath
+	local original_hrtime = vim.loop.hrtime
+	local original_fs_stat = vim.loop.fs_stat
+	local fake_now_ms = 1000
+	local signature_version = 1
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/cachettl/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.fn.exepath = function(name)
+		if name == "go" then
+			return "/tmp/fake-go"
+		end
+		if original_exepath then
+			return original_exepath(name)
+		end
+		return ""
+	end
+	vim.loop.hrtime = function()
+		return fake_now_ms * 1e6
+	end
+	vim.loop.fs_stat = function(path)
+		if path == "/tmp/fake-go" then
+			return {
+				size = 1,
+				mtime = {
+					sec = signature_version,
+					nsec = 0,
+				},
+			}
+		end
+		if original_fs_stat then
+			return original_fs_stat(path)
+		end
+		return nil
+	end
+
+	reset_job_results()
+	init.select_build_command("float")
+	local first = count_detect_backend_jobs()
+	assert(first > 0, "First picker open should trigger detection")
+
+	init.select_build_command("float")
+	local second = count_detect_backend_jobs()
+	assert(second == first, "Second picker open within TTL should reuse cache")
+
+	fake_now_ms = fake_now_ms + 20000
+	init.select_build_command("float")
+	local third = count_detect_backend_jobs()
+	assert(third > second, "TTL expiry should trigger new detection")
+
+	fake_now_ms = fake_now_ms + 10
+	signature_version = signature_version + 1
+	init.select_build_command("float")
+	local fourth = count_detect_backend_jobs()
+	assert(fourth > third, "Mtime signature change should trigger new detection")
+
+	vim.fn.expand = original_expand
+	vim.fn.exepath = original_exepath
+	vim.loop.hrtime = original_hrtime
+	vim.loop.fs_stat = original_fs_stat
+
+	print("✓ Picker detection cache TTL+mtime test passed")
 end
 
 -- Test Zig command detection from `zig --help` appears in build picker.
@@ -1256,7 +1869,6 @@ local function test_zig_detected_commands_in_picker()
 
     vim.bo.filetype = "zig"
     local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
     local original_open_win = vim.api.nvim_open_win
     local original_buf_set_lines = vim.api.nvim_buf_set_lines
     local picker_opened = false
@@ -1266,21 +1878,316 @@ local function test_zig_detected_commands_in_picker()
         if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
         return original_expand(expr)
     end
+    vim.api.nvim_open_win = function(...)
+        picker_opened = true
+        return original_open_win(...)
+    end
+	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+		if type(lines) == "table" and #lines > 0 then
+			rendered_lines = lines
+		end
+		if original_buf_set_lines then
+			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+		end
+	end
+
+	reset_job_results()
+	init.select_build_command("float")
+
+	    assert(picker_opened, "Picker should open for detected zig commands")
+	    local rendered = table.concat(rendered_lines, "\n")
+	    assert(rendered:match("build"), "Picker should include detected zig build command")
+	    assert(rendered:match("fmt"), "Picker should include detected zig fmt command")
+	    assert(rendered:match("run"), "Picker should include detected zig run command")
+	    assert(rendered:match("fetch"), "Picker should include zig fetch command")
+	    assert(rendered:match("zig fetch <%a+>"), "Picker should display placeholder for required fetch argument")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_open_win = original_open_win
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.v.shell_error = 0
+
+    print("✓ Zig detected commands in picker test passed")
+end
+
+-- Test Go command detection from `go help` appears in build picker.
+local function test_go_detected_commands_in_picker()
+	init.setup({
+		build_commands = {},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_open_win = vim.api.nvim_open_win
+	local original_buf_set_lines = vim.api.nvim_buf_set_lines
+	local picker_opened = false
+	local rendered_lines = {}
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/godetect/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.api.nvim_open_win = function(...)
+		picker_opened = true
+		return original_open_win(...)
+	end
+	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+		if type(lines) == "table" and #lines > 0 then
+			rendered_lines = lines
+		end
+		if original_buf_set_lines then
+			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+		end
+	end
+
+	init.select_build_command("float")
+
+	assert(picker_opened, "Picker should open for detected go commands")
+	local rendered = table.concat(rendered_lines, "\n")
+	assert(rendered:match("env"), "Picker should include detected go env command")
+	assert(rendered:match("fmt"), "Picker should include detected go fmt command")
+
+	vim.fn.expand = original_expand
+	vim.api.nvim_open_win = original_open_win
+	vim.api.nvim_buf_set_lines = original_buf_set_lines
+	vim.v.shell_error = 0
+
+	print("✓ Go detected commands in picker test passed")
+end
+
+-- Test Go command detection can use the persistent zig detect worker path.
+local function test_go_detected_commands_with_zig_worker()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_wait = vim.wait
+    local original_open_win = vim.api.nvim_open_win
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local picker_opened = false
+    local rendered_lines = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/godetect/main.go" end
+        return original_expand(expr)
+    end
+    vim.wait = function(_, condition)
+        return condition()
+    end
     vim.fn.systemlist = function(cmd)
-        assert(type(cmd) == "table" and cmd[1] == "zig" and cmd[2] == "--help", "Expected zig --help for detection")
-        vim.v.shell_error = 0
-        return {
-            "Usage: zig [command] [options]",
-            "",
-            "Commands:",
-            "",
-            "  build            Build project from build.zig",
-            "  fmt              Reformat Zig source into canonical form",
-            "  run              Create executable and run immediately",
-            "",
-            "General Options:",
-            "  -h, --help       Print command-specific usage",
-        }
+        assert(
+            not (type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help"),
+            "go help should not be probed when zig detect worker succeeds"
+        )
+        return original_systemlist(cmd)
+    end
+    vim.api.nvim_open_win = function(...)
+        picker_opened = true
+        return original_open_win(...)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            rendered_lines = lines
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.select_build_command("float")
+
+    assert(picker_opened, "Picker should open for go commands detected via zig worker")
+    assert(count_detect_backend_jobs() > 0, "Detect worker path should send at least one request")
+    local rendered = table.concat(rendered_lines, "\n")
+    assert(rendered:match("go env"), "Worker-detected go commands should include env")
+    assert(rendered:match("go fmt"), "Worker-detected go commands should include fmt")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.wait = original_wait
+    vim.api.nvim_open_win = original_open_win
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.v.shell_error = 0
+
+    print("✓ Go detected commands via zig worker test passed")
+end
+
+-- Test Go command detection falls back to Lua parsing when zig detect worker fails.
+local function test_go_detected_commands_worker_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_open_win = vim.api.nvim_open_win
+	local original_buf_set_lines = vim.api.nvim_buf_set_lines
+	local picker_opened = false
+	local rendered_lines = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/godetect/main.go" end
+        return original_expand(expr)
+    end
+    next_detect_backend_exit_code = 1
+    vim.api.nvim_open_win = function(...)
+        picker_opened = true
+        return original_open_win(...)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            rendered_lines = lines
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.select_build_command("float")
+
+    local go_help_spawned = false
+    for _, job in ipairs(job_results) do
+        if type(job.cmd) == "table" and job.cmd[1] == "go" and job.cmd[2] == "help" then
+            go_help_spawned = true
+            break
+        end
+    end
+
+    assert(picker_opened, "Picker should open when falling back from worker to Lua parser")
+    assert(go_help_spawned, "Fallback should spawn go help when worker fails")
+    local rendered = table.concat(rendered_lines, "\n")
+    assert(rendered:match("go env"), "Fallback-detected go commands should include env")
+    assert(rendered:match("go fmt"), "Fallback-detected go commands should include fmt")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_open_win = original_open_win
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.v.shell_error = 0
+
+    print("✓ Go detected commands worker fallback test passed")
+end
+
+-- Test disabling go auto-detection removes detected commands and avoids probing.
+local function test_go_detection_can_be_disabled()
+	init.setup({
+		build_commands = {},
+		detect = {
+			go = false,
+		},
+	})
+	assert(config.options.detect.go == false, "Test setup should disable detect.go")
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_jobstart_fn = vim.fn.jobstart
+	local original_open_win = vim.api.nvim_open_win
+	local original_buf_set_lines = vim.api.nvim_buf_set_lines
+	local picker_opened = false
+	local rendered_lines = {}
+	local picker_job_commands = {}
+	local in_picker_call = false
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/godetect/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.api.nvim_open_win = function(...)
+		picker_opened = true
+		return original_open_win(...)
+	end
+	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+		if type(lines) == "table" and #lines > 0 then
+			rendered_lines = lines
+		end
+		if original_buf_set_lines then
+			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+		end
+	end
+	vim.fn.jobstart = function(cmd, opts)
+		if in_picker_call then
+			picker_job_commands[#picker_job_commands + 1] = command_to_string(cmd)
+		end
+		return original_jobstart_fn(cmd, opts)
+	end
+
+	reset_job_results()
+	in_picker_call = true
+	init.select_build_command("float")
+	in_picker_call = false
+
+	local go_help_spawned = false
+	for _, cmd in ipairs(picker_job_commands) do
+		if cmd:match("^go help") then
+			go_help_spawned = true
+			break
+		end
+	end
+
+	assert(picker_opened, "Picker should still open when go detection is disabled")
+	assert(not go_help_spawned, "go help should not run when detect.go=false")
+	local rendered = table.concat(rendered_lines, "\n")
+	assert(not rendered:match("go env"), "Disabled go detection should not include detected go env command")
+	assert(not rendered:match("go fmt"), "Disabled go detection should not include detected go fmt command")
+
+	vim.fn.expand = original_expand
+	vim.fn.jobstart = original_jobstart_fn
+	vim.api.nvim_open_win = original_open_win
+	vim.api.nvim_buf_set_lines = original_buf_set_lines
+	vim.v.shell_error = 0
+
+	print("✓ Go detection disable test passed")
+end
+
+-- Test C command detection from Makefile targets appears in build picker.
+local function test_c_detected_make_targets_in_picker()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "c"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_open_win = vim.api.nvim_open_win
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local picker_opened = false
+    local rendered_lines = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/cdetect/main.c" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cdetect/Makefile" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cdetect/Makefile" then
+            return {
+                "all: app",
+                "bench test: app",
+                ".PHONY: all bench test",
+                "\t@echo done",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
     end
     vim.api.nvim_open_win = function(...)
         picker_opened = true
@@ -1297,19 +2204,19 @@ local function test_zig_detected_commands_in_picker()
 
     init.select_build_command("float")
 
-    assert(picker_opened, "Picker should open for detected zig commands")
+    assert(picker_opened, "Picker should open for detected c Makefile targets")
     local rendered = table.concat(rendered_lines, "\n")
-    assert(rendered:match("build"), "Picker should include detected zig build command")
-    assert(rendered:match("fmt"), "Picker should include detected zig fmt command")
-    assert(rendered:match("run"), "Picker should include detected zig run command")
+    assert(rendered:match("bench"), "Picker should include detected Makefile target: bench")
+    assert(rendered:match("test"), "Picker should include detected Makefile target: test")
+    assert(rendered:match("make bench"), "Detected target should map to make bench")
 
     vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
     vim.api.nvim_open_win = original_open_win
     vim.api.nvim_buf_set_lines = original_buf_set_lines
-    vim.v.shell_error = 0
 
-    print("✓ Zig detected commands in picker test passed")
+    print("✓ C detected Makefile targets in picker test passed")
 end
 
 -- Test run_build_command can execute zig commands detected from `zig --help`.
@@ -1325,18 +2232,21 @@ local function test_run_build_command_with_detected_zig_command()
         if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
         return original_expand(expr)
     end
-    vim.fn.systemlist = function()
-        vim.v.shell_error = 0
-        return {
-            "Usage: zig [command] [options]",
-            "",
-            "Commands:",
-            "  build            Build project from build.zig",
-            "  fmt              Reformat Zig source into canonical form",
-            "",
-            "General Options:",
-        }
-    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=zig" then
+			return { "fmt" }
+		end
+		return {
+			"Usage: zig [command] [options]",
+			"",
+			"Commands:",
+			"  build            Build project from build.zig",
+			"  fmt              Reformat Zig source into canonical form",
+			"",
+			"General Options:",
+		}
+	end
 
     reset_job_results()
     init.run_build_command("fmt", "float")
@@ -1350,6 +2260,362 @@ local function test_run_build_command_with_detected_zig_command()
     reset_job_results()
 
     print("✓ RunBuild with detected zig command test passed")
+end
+
+-- Test run_build_command can execute go commands detected from `go help`.
+local function test_run_build_command_with_detected_go_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/godetect/main.go" end
+        return original_expand(expr)
+    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=go" then
+			return { "env" }
+		end
+		if type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help" then
+			return {
+				"The commands are:",
+				"    env         print Go environment information",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("env", "float")
+    assert(#job_results > 0, "Detected go command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("go env"), "Detected go command should execute via go env")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected go command test passed")
+end
+
+-- Test run_build_command can execute rust commands detected from `cargo --list`.
+local function test_run_build_command_with_detected_rust_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "rust"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/rustdetect/main.rs" end
+        return original_expand(expr)
+    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
+			return { "metadata" }
+		end
+		if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
+			return {
+				"Installed Commands:",
+				"    metadata    Output metadata about local package",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("metadata", "float")
+    assert(#job_results > 0, "Detected rust command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("cargo metadata"), "Detected rust command should execute via cargo metadata")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected rust command test passed")
+end
+
+-- Test run_build_command can execute cpp commands detected from Makefile targets.
+local function test_run_build_command_with_detected_cpp_make_target()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "cpp"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/cppdetect/main.cpp" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cppdetect/Makefile" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cppdetect/Makefile" then
+            return {
+                "custom-target:",
+                "\t@echo cpp",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_build_command("custom-target", "float")
+    assert(#job_results > 0, "Detected cpp Makefile target should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("make custom%-target"), "Detected cpp Makefile target should execute via make custom-target")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    reset_job_results()
+
+    print("✓ RunBuild with detected cpp Makefile target test passed")
+end
+
+-- Test run_build_command can execute odin commands detected from `odin help`.
+local function test_run_build_command_with_detected_odin_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "odin"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/odindetect/main.odin" end
+        return original_expand(expr)
+    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=odin" then
+			return { "version" }
+		end
+		if type(cmd) == "table" and cmd[1] == "odin" and cmd[2] == "help" then
+			return {
+				"Commands:",
+				"    version     Print version information",
+				"",
+				"Flags:",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("version", "float")
+    assert(#job_results > 0, "Detected odin command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("odin version"), "Detected odin command should execute via odin version")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected odin command test passed")
+end
+
+-- Test Java build commands can be inferred from Maven project files.
+local function test_run_build_command_with_detected_java_maven_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "java"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/javadetect/src/Main.java" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/javadetect/pom.xml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    reset_job_results()
+    init.run_build_command("mvn-test", "float")
+    assert(#job_results > 0, "Detected Java Maven command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("mvn test"), "Detected Java Maven command should execute via mvn test")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ RunBuild with detected Java Maven command test passed")
+end
+
+-- Test Kotlin build commands can be inferred from Gradle wrapper projects.
+local function test_run_build_command_with_detected_kotlin_gradle_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "kotlin"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/ktdetect/src/Main.kt" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/ktdetect/gradlew" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    reset_job_results()
+    init.run_build_command("gradle-build", "float")
+    assert(#job_results > 0, "Detected Kotlin Gradle command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("./gradlew build"), "Detected Kotlin Gradle command should execute via ./gradlew build")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ RunBuild with detected Kotlin Gradle command test passed")
+end
+
+-- Test JavaScript package scripts are detected from package.json.
+local function test_javascript_package_scripts_detection()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "javascript"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_vim_json = vim.json
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/jsapp/src/main.js" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/jsapp/package.json" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/jsapp/package.json" then
+            return { '{"scripts":{"dev":"vite","lint":"eslint ."}}' }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+    vim.json = {
+        decode = function(_)
+            return {
+                scripts = {
+                    dev = "vite",
+                    lint = "eslint .",
+                },
+            }
+        end,
+    }
+
+    reset_job_results()
+    init.run_build_command("lint", "float")
+    assert(#job_results > 0, "Detected package script should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("npm run lint"), "Detected script should execute via npm run lint")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.json = original_vim_json
+    reset_job_results()
+
+    print("✓ JavaScript package script detection test passed")
+end
+
+-- Test run_build_command prompts for zig fetch URL/path and executes with provided argument.
+local function test_run_build_command_with_detected_zig_fetch_prompt()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_input = vim.fn.input
+    local prompts = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function()
+        vim.v.shell_error = 0
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "  fetch            Copy a package into global cache and print its hash",
+            "",
+            "General Options:",
+        }
+    end
+    vim.fn.input = function(prompt, _default)
+        prompts[#prompts + 1] = prompt
+        return "https://example.com/pkg.tar.gz"
+    end
+
+    reset_job_results()
+    init.run_build_command("fetch", "float")
+    assert(#job_results > 0, "Detected zig fetch command should start a job after prompting for URL/path")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("zig fetch"), "Detected zig fetch should execute via zig fetch")
+    assert(command:match("https://example%.com/pkg%.tar%.gz"), "zig fetch should include provided URL/path argument")
+    assert(#prompts == 1 and prompts[1]:match("zig fetch"), "zig fetch should prompt for URL/path exactly once")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.fn.input = original_input
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected zig fetch prompt test passed")
 end
 
 -- Test show_output respects split mode and renders in-window (not notify fallback).
@@ -1649,8 +2915,12 @@ end
 -- Run integration tests
 test_basic_execution()
 test_interpreted_runner_uses_argv_mode()
+test_timeout_uses_zig_wrapper()
+test_language_detected_from_extension()
+test_language_detected_from_shebang()
 test_project_execution()
 test_build_command_uses_cwd()
+test_build_command_filetype_alias()
 test_quickfix_on_error_lua_processor()
 test_quickfix_zig_processor()
 test_quickfix_auto_threshold_behavior()
@@ -1662,11 +2932,29 @@ test_build_picker_window_clamped()
 test_build_picker_focus_behavior()
 test_build_picker_focus_override()
 test_build_picker_filter_and_preview()
+test_build_picker_filter_cmdline_mode()
+test_build_picker_filter_inline_mode()
 test_run_build_last_behavior()
 test_run_live_priority_selection()
 test_run_live_missing_command()
+test_picker_async_path_without_wait()
+test_picker_async_live_merge_refresh()
+test_picker_detection_cache_ttl_and_mtime()
 test_zig_detected_commands_in_picker()
+test_go_detected_commands_in_picker()
+test_go_detected_commands_with_zig_worker()
+test_go_detected_commands_worker_fallback()
+test_go_detection_can_be_disabled()
+test_c_detected_make_targets_in_picker()
 test_run_build_command_with_detected_zig_command()
+test_run_build_command_with_detected_go_command()
+test_run_build_command_with_detected_rust_command()
+test_run_build_command_with_detected_cpp_make_target()
+test_run_build_command_with_detected_odin_command()
+test_run_build_command_with_detected_java_maven_command()
+test_run_build_command_with_detected_kotlin_gradle_command()
+test_javascript_package_scripts_detection()
+test_run_build_command_with_detected_zig_fetch_prompt()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
 test_reserved_argv_runner_guard()
