@@ -36,7 +36,7 @@ local ZIG_EXECUTABLE = PLUGIN_PATH .. "/zig/zig-out/bin/zignite"
 ---@type boolean|nil
 local zig_backend_available = nil
 local zig_missing_notified = false
----@type table<string, table>
+---@type table<string, { ok: boolean, argv?: string[] }>
 local argv_cache = {}
 ---@type string[]
 local argv_cache_order = {}
@@ -50,7 +50,7 @@ local NORMALIZED_RUNNER_CACHE_MAX = 128
 local last_build_command_by_filetype = {}
 ---@type table<string, table>
 local tool_command_cache = {}
----@type table<string, string|boolean>
+---@type table<string, string|false>
 local shebang_filetype_cache = {}
 ---@type table<string, table>
 local package_script_cache = {}
@@ -527,7 +527,7 @@ local function argv_cache_key(command_template, filepath)
 end
 
 ---@param key string
----@param value string
+---@param value { ok: boolean, argv?: string[] }
 ---@return nil
 local function cache_argv_result(key, value)
 	if argv_cache[key] == nil then
