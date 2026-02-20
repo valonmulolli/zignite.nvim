@@ -1,6 +1,8 @@
+---@type table
 local M = {}
 
 -- Default configuration
+---@type table
 M.defaults = {
 	keymaps = {
 		{ "n", "<leader>r",  ":RunFile<CR>",        { desc = "Run file" } },
@@ -25,38 +27,41 @@ M.defaults = {
 	--   $dir               - Full directory path
 	--   $fileExt           - File extension
 	--   $dirName           - Just the directory name (not full path)
-	runners = {
-		-- Compiled languages - optimized for speed
-		c = {
-			cmd = {
-				"cd $dir",
-				"gcc $fileName -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
+		runners = {
+			-- Compiled languages - optimized for speed
+			c = {
+				cmd = {
+					"cd $dir",
+					"gcc $fileName -o /tmp/$fileNameWithoutExt",
+					"/tmp/$fileNameWithoutExt",
+				},
+				cleanup_command = "rm /tmp/$fileNameWithoutExt",
 			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		cpp = {
-			cmd = {
-				"cd $dir",
-				"clang++ $fileName -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
+			cpp = {
+				cmd = {
+					"cd $dir",
+					"(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
+					"/tmp/$fileNameWithoutExt",
+				},
+				cleanup_command = "rm /tmp/$fileNameWithoutExt",
 			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		rust = {
-			cmd = {
-				"cd $dir",
-				"rustc $fileName -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
+			rust = {
+				cmd = {
+					"cd $dir",
+					"rustc $fileName -o /tmp/$fileNameWithoutExt",
+					"/tmp/$fileNameWithoutExt",
+				},
+				cleanup_command = "rm /tmp/$fileNameWithoutExt",
 			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		go = "go run $file",
+			go = "go run $file",
 		zig = "zig run $file",
 		java = {
-			"cd $dir",
-			"javac $fileName",
-			"java $fileNameWithoutExt",
+			cmd = {
+				"cd $dir",
+				"javac $fileName",
+				"java $fileNameWithoutExt",
+			},
+			cleanup_command = "rm -f $fileNameWithoutExt.class",
 		},
 		kotlin = {
 			cmd = {
@@ -97,7 +102,7 @@ M.defaults = {
 			},
 			cleanup_command = "rm /tmp/$fileNameWithoutExt",
 		},
-			odin = "odin run $file -file",
+		odin = "odin run $file -file",
 		fortran = {
 			cmd = {
 				"cd $dir",
@@ -110,7 +115,7 @@ M.defaults = {
 
 	-- Build commands for different languages
 	-- These are project-level commands (cargo build, zig build, etc.)
-	build_commands = {
+		build_commands = {
 		rust = {
 			build = "cargo build",
 			run = "cargo run",
@@ -222,8 +227,27 @@ M.defaults = {
 			"[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
 			["meson-clean"] = "rm -rf build",
 			["meson-test"] = "meson test -C build",
+			},
 		},
-	},
+
+		-- Auto-detection toggles for build command picker/RunBuild.
+		-- Keep defaults enabled for "smart by default" behavior.
+		detect = {
+			zig = true, -- Parse zig commands from `zig --help`
+			go = true, -- Parse go commands from `go help`
+			rust = true, -- Parse cargo commands from `cargo --list`
+			odin = true, -- Parse odin commands from `odin help`
+			c_cpp_make = true, -- Parse Makefile targets for c/cpp
+			js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
+			java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects
+		},
+
+		-- Detection runtime behavior for picker responsiveness.
+		detect_runtime = {
+			async_picker = true, -- Open picker from cache/defaults, refresh detected commands asynchronously
+			cache_ttl_ms = 15000, -- Detection cache freshness window
+			live_merge = true, -- Merge refreshed commands into open picker without reopening
+		},
 
 	-- Spinner configuration
 	spinner = "dots",      -- Spinner type: "dots", "line", "bar", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
@@ -233,12 +257,8 @@ M.defaults = {
 	-- Execution configuration
 	timeout = nil, -- Timeout in milliseconds (e.g., 10000 for 10s). nil = no timeout. Only works with Zig backend.
 
-	-- Output configuration
-	show_stderr_prefix = false,                    -- Whether to prefix stderr output with [STDERR] (default: false for better UX)
-	no_stderr_prefix_types = { "zig", "go", "rust" }, -- Filetypes that commonly output to stderr normally
-
-	-- Quickfix behavior on command errors
-	quickfix = {
+		-- Quickfix behavior on command errors
+		quickfix = {
 		enabled = true,              -- Populate quickfix when command exits with non-zero status
 		processor = "auto",          -- "auto", "lua", or "zig"
 		zig_min_lines = 300,         -- In auto mode, switch to zig processor when output reaches this line count
@@ -252,16 +272,7 @@ M.defaults = {
 		strip_chunk_size = 200,      -- Lines processed per chunk when async_strip=true
 	},
 
-	-- Filter patterns for stderr (hide these warnings/info messages)
-	stderr_filters = {
-		"MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module type warnings
-		"ExperimentalWarning",    -- Node.js experimental feature warnings
-		"DeprecationWarning",     -- Deprecation warnings
-		"Use `node --trace%-warnings", -- Node.js trace suggestion
-		"To eliminate this warning", -- Generic warning elimination suggestions
-	},
-
-	-- Project configuration
+		-- Project configuration
 	-- Pattern matching for project root detection
 	project = {},
 
@@ -291,6 +302,7 @@ M.defaults = {
 	-- Build picker configuration
 	picker = {
 		focus = true, -- Focus the interactive build picker window when opening
+		filter_input = "inline", -- Filter prompt mode: "inline", "ui", or "cmdline"
 	},
 
 	-- Execution behavior
@@ -299,9 +311,12 @@ M.defaults = {
 }
 
 -- This will hold the merged user and default configuration
+---@type table
 M.options = {}
 
 -- Validate configuration options
+---@param opts table
+---@return nil
 local function validate_config(opts)
 	if opts.mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, opts.mode) then
 		vim.notify("Invalid mode: " .. opts.mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.WARN)
@@ -330,6 +345,56 @@ local function validate_config(opts)
 		end
 	end
 
+	if opts.picker then
+		local picker = opts.picker
+		if picker.filter_input and not vim.tbl_contains({ "inline", "ui", "cmdline" }, picker.filter_input) then
+			vim.notify(
+				"Invalid picker.filter_input: "
+					.. tostring(picker.filter_input)
+					.. ". Valid values: inline, ui, cmdline",
+				vim.log.levels.WARN
+			)
+		end
+	end
+
+	if opts.detect then
+		local detect = opts.detect
+		for key, value in pairs(detect) do
+			if type(value) ~= "boolean" then
+				vim.notify(
+					"Invalid detect." .. tostring(key) .. ": expected boolean, got " .. type(value),
+					vim.log.levels.WARN
+				)
+			end
+		end
+	end
+
+	if opts.detect_runtime then
+		local runtime = opts.detect_runtime
+		if runtime.async_picker ~= nil and type(runtime.async_picker) ~= "boolean" then
+			vim.notify(
+				"Invalid detect_runtime.async_picker: expected boolean, got " .. type(runtime.async_picker),
+				vim.log.levels.WARN
+			)
+		end
+		if runtime.live_merge ~= nil and type(runtime.live_merge) ~= "boolean" then
+			vim.notify(
+				"Invalid detect_runtime.live_merge: expected boolean, got " .. type(runtime.live_merge),
+				vim.log.levels.WARN
+			)
+		end
+		if runtime.cache_ttl_ms ~= nil then
+			local ttl = tonumber(runtime.cache_ttl_ms)
+			if not ttl or ttl <= 0 then
+				vim.notify(
+					"Invalid detect_runtime.cache_ttl_ms: expected positive number, got "
+						.. tostring(runtime.cache_ttl_ms),
+					vim.log.levels.WARN
+				)
+			end
+		end
+	end
+
 	if opts.close_behavior and not vim.tbl_contains({ "stop", "hide" }, opts.close_behavior) then
 		vim.notify("Invalid close_behavior: " .. opts.close_behavior .. ". Valid values: stop, hide", vim.log.levels.WARN)
 	end
@@ -337,6 +402,8 @@ end
 
 -- A setup function for users to call.
 -- It will merge their provided options with the defaults.
+---@param opts table|nil
+---@return nil
 function M.setup(opts)
 	opts = opts or {}
 	validate_config(opts)
@@ -350,6 +417,7 @@ function M.setup(opts)
 end
 
 -- Ensure defaults are available without applying side effects (e.g. keymaps).
+---@return table
 function M.ensure()
 	if vim.tbl_isempty(M.options) then
 		M.options = vim.tbl_deep_extend("force", {}, M.defaults, {})
@@ -357,6 +425,7 @@ function M.ensure()
 	return M.options
 end
 
+---@return nil
 function M.setup_keymaps()
 	if not M.options.keymaps then
 		return
