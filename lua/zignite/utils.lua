@@ -1,15 +1,24 @@
+---@type table
 local M = {}
-
+---@type table<string, table>
 local detect_cache = {}
+---@type string[]
 local detect_cache_order = {}
 local DETECT_CACHE_MAX = 256
 
+---@param filepath string
+---@param project_config table|nil
+---@return string
 local function make_detect_cache_key(filepath, project_config)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
 	local normalized_dir = vim.fs.normalize(dir)
 	return tostring(project_config) .. "::" .. normalized_dir
 end
 
+---@param key string
+---@param project table|nil
+---@param pattern string|nil
+---@return nil
 local function set_detect_cache(key, project, pattern)
 	if detect_cache[key] == nil then
 		table.insert(detect_cache_order, key)
@@ -25,6 +34,7 @@ local function set_detect_cache(key, project, pattern)
 	}
 end
 
+---@return nil
 function M.clear_project_cache()
 	detect_cache = {}
 	detect_cache_order = {}
@@ -32,6 +42,9 @@ end
 
 -- Substitute variables in command string
 -- This is inspired by code_runner.nvim's variable system
+---@param command string
+---@param filepath string
+---@return string
 function M.substitute_variables(command, filepath)
 	if not filepath or filepath == "" then
 		return command
@@ -96,6 +109,9 @@ end
 
 -- Enhanced variable substitution that doesn't escape paths
 -- Useful when paths are already within quoted strings
+---@param command string
+---@param filepath string
+---@return string
 function M.substitute_variables_raw(command, filepath)
 	if not filepath or filepath == "" then
 		return command
@@ -131,6 +147,7 @@ function M.substitute_variables_raw(command, filepath)
 end
 
 -- Default project markers
+---@type table<string, table>
 local default_project_markers = {
 	["package.json"] = { name = "Node.js Project", command = "npm start" },
 	["Cargo.toml"] = { name = "Rust Project", command = "cargo run" },
@@ -143,6 +160,8 @@ local default_project_markers = {
 }
 
 -- Detect project by markers
+---@param filepath string
+---@return table|nil
 local function detect_project_by_markers(filepath)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
 	-- Check current directory and parent directories
@@ -175,6 +194,9 @@ local function detect_project_by_markers(filepath)
 end
 
 -- Detect if current file belongs to a project
+---@param filepath string
+---@param project_config table|nil
+---@return table|nil, string|nil
 function M.detect_project(filepath, project_config)
 	if not filepath or filepath == "" then
 		return nil, nil
@@ -216,6 +238,9 @@ function M.detect_project(filepath, project_config)
 end
 
 -- Get project root directory
+---@param filepath string
+---@param project_config table|nil
+---@return string|nil
 function M.get_project_root(filepath, project_config)
 	local project, pattern = M.detect_project(filepath, project_config)
 	if not project then
@@ -240,34 +265,16 @@ function M.get_project_root(filepath, project_config)
 	return vim.fn.fnamemodify(filepath, ":h")
 end
 
--- Get all available variables for a given filepath (useful for debugging)
-function M.get_available_variables(filepath)
-	if not filepath or filepath == "" then
-		return {}
-	end
-
-	local file = vim.fn.expand(filepath)
-	local fileName = vim.fn.fnamemodify(file, ":t")
-	local fileNameWithoutExt = vim.fn.fnamemodify(file, ":t:r")
-	local dir = vim.fn.fnamemodify(file, ":h")
-	local fileExt = vim.fn.fnamemodify(file, ":e")
-	local dirName = vim.fn.fnamemodify(dir, ":t")
-
-	return {
-		["$file"] = file,
-		["$fileName"] = fileName,
-		["$fileNameWithoutExt"] = fileNameWithoutExt,
-		["$dir"] = dir,
-		["$fileExt"] = fileExt,
-		["$dirName"] = dirName,
-	}
-end
-
+---@param s string
+---@return string
 local function trim(s)
 	return s:match("^%s*(.-)%s*$")
 end
 
+---@param tbl string[]
+---@return string[]
 local function filter_empty(tbl)
+	---@type string[]
 	local new_tbl = {}
 	for _, v in ipairs(tbl) do
 		local trimmed = trim(v)
@@ -278,10 +285,13 @@ local function filter_empty(tbl)
 	return new_tbl
 end
 
+---@param runner string|string[]|table
+---@return string|nil
 function M.normalize_command(runner)
 	if type(runner) == "string" then
 		return runner
 	elseif type(runner) == "table" then
+		---@type string[]
 		local commands
 		if runner.cmd then
 			if type(runner.cmd) == "table" then

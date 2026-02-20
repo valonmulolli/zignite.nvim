@@ -1,18 +1,24 @@
+---@type table
 local M = {}
 
 -- Keep track of runner windows
 -- If singleton = true, this will only ever have 1 item
+---@type table
 local runners = {}
 local spinner_timer = nil
+---@type boolean|nil
 local quickfix_backend_available = nil
+---@type table|nil
 local quickfix_worker = nil
 
+---@return table
 local function get_config()
 	local cfg = require("zignite.config")
 	cfg.ensure()
 	return cfg.options
 end
 
+---@return string|nil
 local function get_plugin_path()
 	local source = debug.getinfo(1, "S").source
 	if source:sub(1, 1) == "@" then
@@ -23,6 +29,8 @@ end
 
 local QUICKFIX_BACKEND = get_plugin_path() .. "/zig/zig-out/bin/zignite"
 
+---@param key string
+---@return string
 local function format_key_for_display(key)
 	local text = tostring(key or "")
 	text = text:gsub("^<", ""):gsub(">$", "")
@@ -32,6 +40,8 @@ local function format_key_for_display(key)
 	return text
 end
 
+---@param mode string
+---@return string
 local function normalize_mode(mode)
 	local resolved = mode or get_config().mode or "float"
 	if not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, resolved) then
@@ -40,6 +50,7 @@ local function normalize_mode(mode)
 	return resolved
 end
 
+---@return string
 local function normalize_close_behavior()
 	local behavior = tostring(get_config().close_behavior or "stop"):lower()
 	if behavior ~= "hide" and behavior ~= "stop" then
@@ -48,6 +59,8 @@ local function normalize_close_behavior()
 	return behavior
 end
 
+---@param stop_jobs boolean
+---@return boolean
 local function should_stop_on_close(stop_jobs)
 	if stop_jobs == nil then
 		return normalize_close_behavior() == "stop"
@@ -55,6 +68,9 @@ local function should_stop_on_close(stop_jobs)
 	return stop_jobs == true
 end
 
+---@param float_config table
+---@param should_focus boolean
+---@return string
 local function build_float_footer(float_config, should_focus)
 	local close_key = format_key_for_display(float_config.close_key or "<Esc>")
 	local input_hint
@@ -68,6 +84,8 @@ local function build_float_footer(float_config, should_focus)
 	return string.format(" %s: close | %s ", close_key, input_hint)
 end
 
+---@param text string
+---@return string[]
 local function split_text_lines(text)
 	local input = tostring(text or "")
 	if input == "" then
@@ -81,6 +99,8 @@ local function split_text_lines(text)
 	return lines
 end
 
+---@param lines string[]
+---@return nil
 local function set_quickfix_lines(lines)
 	vim.schedule(function()
 		vim.fn.setqflist({}, " ", {
@@ -90,6 +110,7 @@ local function set_quickfix_lines(lines)
 	end)
 end
 
+---@return boolean
 local function has_quickfix_backend()
 	if quickfix_backend_available == nil then
 		quickfix_backend_available = vim.fn.executable(QUICKFIX_BACKEND) == 1
@@ -97,6 +118,8 @@ local function has_quickfix_backend()
 	return quickfix_backend_available
 end
 
+---@param lines string[]
+---@return string[]
 local function copy_lines(lines)
 	local out = {}
 	for i = 1, #lines do
@@ -105,6 +128,8 @@ local function copy_lines(lines)
 	return out
 end
 
+---@param lines string[]
+---@return string[]
 local function append_truncation_notice(lines)
 	local out = { "[zignite] quickfix output truncated" }
 	for i = 1, #lines do
@@ -113,6 +138,9 @@ local function append_truncation_notice(lines)
 	return out
 end
 
+---@param lines string[]
+---@param max_bytes integer
+---@return string[], boolean
 local function tail_lines_by_bytes(lines, max_bytes)
 	if max_bytes == nil or max_bytes <= 0 or #lines == 0 then
 		return lines, false
@@ -144,6 +172,9 @@ local function tail_lines_by_bytes(lines, max_bytes)
 	return out, true
 end
 
+---@param buf integer
+---@param quickfix_opts table
+---@return string[], boolean, integer
 local function collect_lua_quickfix_lines(buf, quickfix_opts)
 	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
 	if max_lines < 1 then
@@ -163,6 +194,9 @@ local function collect_lua_quickfix_lines(buf, quickfix_opts)
 	return lines, truncated, total_lines
 end
 
+---@param quickfix_opts table
+---@param total_lines integer
+---@return string
 local function choose_quickfix_processor(quickfix_opts, total_lines)
 	local processor = tostring(quickfix_opts.processor or "auto"):lower()
 	if processor == "lua" or processor == "zig" then
@@ -181,6 +215,10 @@ local function choose_quickfix_processor(quickfix_opts, total_lines)
 	return "lua"
 end
 
+---@param lines string[]
+---@param quickfix_opts table
+---@param truncated boolean
+---@return nil
 local function populate_quickfix_lua(lines, quickfix_opts, truncated)
 	local processed = copy_lines(lines)
 	if truncated then
@@ -204,6 +242,7 @@ local function populate_quickfix_lua(lines, quickfix_opts, truncated)
 	local strip_start = math.max(1, #processed - strip_max_lines + 1)
 
 	local idx = strip_start
+	---@return nil
 	local function strip_next_chunk()
 		local upper = math.min(#processed, idx + chunk_size - 1)
 		for i = idx, upper do
@@ -229,6 +268,9 @@ local function populate_quickfix_lua(lines, quickfix_opts, truncated)
 	strip_next_chunk()
 end
 
+---@param value boolean|string|number|nil
+---@param default boolean|string|number|nil
+---@return string
 local function bool_to_flag(value, default)
 	local resolved = value
 	if resolved == nil then
@@ -247,6 +289,8 @@ local function bool_to_flag(value, default)
 	return resolved and "1" or "0"
 end
 
+---@param quickfix_opts table
+---@return table
 local function quickfix_flag_values(quickfix_opts)
 	local max_lines = tonumber(quickfix_opts.max_lines) or 1000
 	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
@@ -270,6 +314,12 @@ local function quickfix_flag_values(quickfix_opts)
 	}
 end
 
+---@param raw_lines string[]
+---@param quickfix_opts table
+---@param force_truncated boolean
+---@param on_success fun(lines: string[]):nil
+---@param on_fallback fun():nil
+---@return nil
 local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 	if not has_quickfix_backend() then
 		on_fallback()
@@ -345,6 +395,8 @@ local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_trunca
 	end
 end
 
+---@param worker table
+---@return nil
 local function flush_quickfix_worker_fallbacks(worker)
 	if not worker or not worker.pending then
 		return
@@ -361,6 +413,9 @@ local function flush_quickfix_worker_fallbacks(worker)
 	worker.active_lines = {}
 end
 
+---@param worker table
+---@param data string[]|nil
+---@return nil
 local function handle_quickfix_worker_stdout(worker, data)
 	if type(data) ~= "table" then
 		return
@@ -406,6 +461,7 @@ local function handle_quickfix_worker_stdout(worker, data)
 	end
 end
 
+---@return table|nil
 local function ensure_quickfix_worker()
 	if not has_quickfix_backend() then
 		return nil
@@ -450,6 +506,12 @@ local function ensure_quickfix_worker()
 	return worker
 end
 
+---@param raw_lines string[]
+---@param quickfix_opts table
+---@param force_truncated boolean
+---@param on_success fun(lines: string[]):nil
+---@param on_fallback fun():nil
+---@return boolean
 local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 	local worker = ensure_quickfix_worker()
 	if not worker then
@@ -497,6 +559,12 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 	return true
 end
 
+---@param raw_lines string[]
+---@param quickfix_opts table
+---@param force_truncated boolean
+---@param on_success fun(lines: string[]):nil
+---@param on_fallback fun():nil
+---@return nil
 local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 	if quickfix_opts.zig_worker ~= false then
 		local ok = run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
@@ -508,6 +576,9 @@ local function run_quickfix_with_zig(raw_lines, quickfix_opts, force_truncated, 
 	run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
 end
 
+---@param buf integer
+---@param quickfix_opts table
+---@return nil
 local function populate_quickfix_from_buffer(buf, quickfix_opts)
 	if quickfix_opts.enabled == false or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -536,16 +607,24 @@ local function populate_quickfix_from_buffer(buf, quickfix_opts)
 end
 
 -- Helper to track a new runner
+---@param win_id integer
+---@param buf_id integer
+---@return table
 local function track_runner(win_id, buf_id)
 	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil }
 	table.insert(runners, runner)
 	return runner
 end
 
+---@param index integer
+---@return nil
 local function remove_runner(index)
 	table.remove(runners, index)
 end
 
+---@param index integer
+---@param stop_job boolean
+---@return nil
 local function close_runner_at_index(index, stop_job)
 	local runner = runners[index]
 	if not runner then
@@ -569,6 +648,9 @@ local function close_runner_at_index(index, stop_job)
 	remove_runner(index)
 end
 
+---@param win_id integer
+---@param stop_job boolean
+---@return boolean
 local function close_runner_by_win_id(win_id, stop_job)
 	for idx, runner in ipairs(runners) do
 		if runner.win_id == win_id then
@@ -580,6 +662,7 @@ local function close_runner_by_win_id(win_id, stop_job)
 end
 
 -- Helper to remove invalid runners from tracking
+---@return nil
 local function clean_tracked_runners()
 	local valid = {}
 	for _, runner in ipairs(runners) do
@@ -602,6 +685,7 @@ local spinner_frames = {
 }
 
 -- Private: Get window config
+---@return table
 local function get_float_config()
 	local float_config = get_config().float
 	local max_width = math.max(20, vim.o.columns - 2)
@@ -628,6 +712,10 @@ local function get_float_config()
 	}
 end
 
+---@param mode string
+---@param buf integer
+---@param term_config table
+---@return integer|nil, integer, integer|nil
 local function open_mode_window(mode, buf, term_config)
 	local previous_win = vim.api.nvim_get_current_win()
 	local previous_tab = nil
@@ -656,6 +744,11 @@ local function open_mode_window(mode, buf, term_config)
 	return win, previous_win, previous_tab
 end
 
+---@param mode string
+---@param term_config table
+---@param previous_win integer|nil
+---@param previous_tab integer|nil
+---@return nil
 local function restore_focus_if_disabled(mode, term_config, previous_win, previous_tab)
 	if term_config.focus ~= false then
 		return
@@ -678,6 +771,8 @@ local function restore_focus_if_disabled(mode, term_config, previous_win, previo
 end
 
 -- Close existing runner output(s)
+---@param stop_jobs boolean
+---@return nil
 function M.close_output(stop_jobs)
 	M.stop_spinner()
 	local should_stop = should_stop_on_close(stop_jobs)
@@ -689,19 +784,10 @@ function M.close_output(stop_jobs)
 	runners = {}
 end
 
-function M.close_current_runner(stop_jobs)
-	local should_stop = should_stop_on_close(stop_jobs)
-	local current_win = vim.api.nvim_get_current_win()
-	if close_runner_by_win_id(current_win, should_stop) then
-		return
-	end
-
-	if vim.api.nvim_win_is_valid(current_win) then
-		pcall(vim.api.nvim_win_close, current_win, true)
-	end
-end
-
 -- Start the spinner animation in the window title
+---@param win_id integer
+---@param base_title string
+---@return nil
 function M.start_title_spinner(win_id, base_title)
 	local config = get_config()
 	if not config.enable_animations then
@@ -739,6 +825,7 @@ function M.start_title_spinner(win_id, base_title)
 	end
 end
 
+---@return nil
 function M.stop_spinner()
 	if spinner_timer then
 		spinner_timer:stop()
@@ -747,6 +834,9 @@ function M.stop_spinner()
 	end
 end
 
+---@param win_id integer
+---@param exit_code integer
+---@return nil
 function M.set_exit_status(win_id, exit_code)
 	-- Only stop spinner if it belongs to this window (heuristic)
 	-- For now, stopping global spinner is safe enough
@@ -783,6 +873,11 @@ function M.set_exit_status(win_id, exit_code)
 end
 
 -- Main function to run command in interactive float
+---@param command string
+---@param on_exit_cb fun(exit_code: integer):nil
+---@param title_name string
+---@param job_opts table|nil
+---@return integer|nil, integer|nil, integer|nil
 function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local config = get_config()
 
@@ -813,6 +908,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 
 	-- Keymaps to close
 	local close_key = float_config.close_key or "<Esc>"
+	---@return nil
 	local function close_float_runner()
 		local should_stop = should_stop_on_close(nil)
 		close_runner_by_win_id(win, should_stop)
@@ -860,6 +956,11 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 end
 
 -- Legacy support for split/tab execution
+---@param mode string
+---@param command string
+---@param on_exit_cb fun(exit_code: integer):nil
+---@param job_opts table|nil
+---@return nil
 function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local config_opts = get_config()
 	if config_opts.singleton then
@@ -898,9 +999,9 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	end
 end
 
--- Stub for compatibility if needed
-function M.show_spinner() end
-
+---@param message string
+---@param mode string
+---@return nil
 function M.show_output(message, mode)
 	local text = type(message) == "string" and message or tostring(message)
 	local level = text:match("^Error:") and vim.log.levels.ERROR or vim.log.levels.WARN
@@ -908,6 +1009,8 @@ function M.show_output(message, mode)
 	local resolved_mode = normalize_mode(mode)
 	local lines = split_text_lines(text)
 
+	---@param buf integer
+	---@return nil
 	local function set_message_buffer(buf)
 		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 		vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
@@ -915,6 +1018,8 @@ function M.show_output(message, mode)
 		vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
 	end
 
+	---@param win_id integer
+	---@return nil
 	local function close_message_runner(win_id)
 		close_runner_by_win_id(win_id, false)
 	end
@@ -961,11 +1066,5 @@ function M.show_output(message, mode)
 		close_message_runner(win)
 	end, { buffer = buf, silent = true, nowait = true })
 end
-
-function M.update_output() end
-
-function M.append_output() end
-
-function M.update_output_with_exit_animation() end
 
 return M
