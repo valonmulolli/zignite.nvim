@@ -22,6 +22,7 @@ Features:
   • Execute code files instantly in Interactive Terminal
   • Run visual selections
   • Project-level execution with auto-detection
+  • Smart language detection (filetype, extension, shebang fallback)
   • 50+ build commands across 20+ languages
   • Interactive command picker
   • Multiple output modes (float, split, vsplit, tab)
@@ -37,6 +38,8 @@ FEATURES                                                    *zignite-features*
 FILE EXECUTION~
 Run any code file with a single keypress. Supports 20+ languages including
 C, C++, Rust, Zig, Go, Python, JavaScript, TypeScript, and more.
+When Neovim filetype is missing or generic, Zignite falls back to extension
+and shebang detection.
 
 PROJECT EXECUTION~
 Auto-detects project type and runs appropriate commands:
@@ -76,6 +79,8 @@ SAFETY & ERROR HANDLING~
     list, allowing you to jump to the error quickly.
   • Persistent worker: Reuses a Zig quickfix daemon to reduce repeated
     quickfix processing latency on failed runs.
+  • Persistent detect worker: Reuses a Zig daemon for build command
+    detection parsing (zig/go/cargo/odin), with automatic Lua fallback.
 
 ==============================================================================
 COMMANDS                                                    *zignite-commands*
@@ -141,10 +146,24 @@ COMMANDS                                                    *zignite-commands*
                                                             *:RunBuildSelect*
 :RunBuildSelect [mode]
     Show interactive picker to select build command.
-    For filetype `zig`, commands are merged from:
-      • configured `build_commands.zig`
-      • auto-detected Zig subcommands from `zig --help`
-    (configured names take precedence)
+    Commands are merged from configured `build_commands.<filetype>` and
+    auto-detected tool/project commands when available:
+      • zig: `zig --help`
+      • go: `go help`
+      • rust: `cargo --list`
+      • odin: `odin help`
+      • c/cpp: Makefile targets
+      • javascript/typescript: package.json scripts
+      • java/kotlin: Maven/Gradle project tasks
+	    (configured names take precedence)
+	    Auto-detection is enabled by default and can be disabled per detector via
+	    `detect` config table (e.g. `detect.go = false`).
+	    Picker opens cache-first by default and refreshes detected commands
+	    asynchronously in-place (`detect_runtime.async_picker = true`).
+	    When Zig backend is available, detection parsing runs through a persistent
+	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
+	    `zig fetch` prompts for URL/path input when selected.
+	    Any build command template can use `$zignite_args` to prompt for arguments.
     
     Arguments:
       [mode]    Optional output mode: float, split, vsplit, tab
@@ -153,11 +172,16 @@ COMMANDS                                                    *zignite-commands*
       j, ↓      Move down
       k, ↑      Move up
       Enter     Select command
-      /         Filter commands
+      /         Start inline filter (same picker popup)
       c         Clear filter
       r         Run previous build command for current filetype
       1-9       Quick select
       Esc, q    Cancel
+
+    Filter prompt mode:
+      picker.filter_input = "inline"   Use in-picker inline filter (default)
+      picker.filter_input = "ui"       Use vim.ui.input
+      picker.filter_input = "cmdline"  Use vim.fn.input command line
     
     Examples: >
         :RunBuildSelect
@@ -296,6 +320,13 @@ Customize terminal: >lua
     }
 <
 
+Customize build picker: >lua
+    picker = {
+        focus = true,
+        filter_input = "inline",  -- inline|ui|cmdline
+    }
+<
+
 Customize animations: >lua
     spinner = "dots",  -- dots, line, bar, arrows, etc.
     spinner_speed = 80,
@@ -327,6 +358,20 @@ Quickfix processor behavior:
     fallback on backend failure).
   • zig_worker = true: keep a persistent Zig daemon process to reduce
     per-run spawn overhead.
+
+DETECTION RUNTIME~
+                                               *zignite-config-detect-runtime*
+Control picker detection latency behavior: >lua
+    detect_runtime = {
+        async_picker = true,   -- open immediately from cache/defaults
+        cache_ttl_ms = 15000,  -- stale window before refresh
+        live_merge = true,     -- merge refreshed commands into open picker
+    }
+<
+
+Notes:
+  • async_picker = false restores legacy blocking picker behavior.
+  • live_merge = false disables in-place picker refresh.
 
 PROJECT DETECTION~
                                                        *zignite-config-project*
