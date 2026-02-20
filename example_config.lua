@@ -59,7 +59,7 @@ require("zignite.config").setup({
         cpp = {
             cmd = {
                 "cd $dir",
-                "clang++ $fileName -o /tmp/$fileNameWithoutExt",
+                "(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
@@ -326,18 +326,11 @@ require("zignite.config").setup({
     -- Execution configuration
     timeout = nil, -- Timeout in ms (e.g. 5000). nil = disabled.
 
-    -- Output configuration
-    show_stderr_prefix = false,                     -- Whether to prefix stderr with [STDERR]
-    no_stderr_prefix_types = { "zig", "go", "rust" }, -- Languages that use stderr normally
-
-    -- Stderr filtering
-    -- Hide common warnings while preserving errors
-    stderr_filters = {
-        "MODULE_TYPELESS_PACKAGE_JSON", -- Node.js module type warnings
-        "ExperimentalWarning",          -- Node.js experimental features
-        "DeprecationWarning",           -- Deprecation warnings
-        "Use `node --trace-warnings",   -- Node.js trace suggestions
-        "To eliminate this warning",    -- Generic warning hints
+    -- Picker detection runtime (cache-first + async refresh)
+    detect_runtime = {
+        async_picker = true, -- Open picker immediately from cache/default commands
+        cache_ttl_ms = 15000, -- Refresh detection when cache is older than this
+        live_merge = true, -- Merge refreshed detected commands while picker is open
     },
 
     -- Quickfix behavior on errors (performance-friendly defaults)
