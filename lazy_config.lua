@@ -33,7 +33,7 @@ return {
           cpp = {
             cmd = {
               "cd $dir",
-              "clang++ $fileName -o /tmp/$fileNameWithoutExt",
+              "(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
               "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
@@ -42,6 +42,11 @@ return {
 
         -- Optional execution behavior.
         timeout = nil,
+        detect_runtime = {
+          async_picker = true,
+          cache_ttl_ms = 15000,
+          live_merge = true,
+        },
         quickfix = {
           enabled = true,
           max_lines = 1000,

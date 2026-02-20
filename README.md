@@ -21,9 +21,11 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **Safety Timeouts**: Automatically kill processes that run too long (infinite loops) via the Zig backend.
 - **Quickfix Integration**: Automatically populates the Quickfix list on error, allowing you to jump straight to the correct line.
 - **Persistent Quickfix Worker**: Reuses a Zig daemon for quickfix processing to reduce repeat-run latency.
+- **Persistent Detect Worker**: Reuses a Zig daemon for build-command detection parsing (`zig/go/cargo/odin`) with Lua fallback.
 - **Build System Support**: First-class support for `cargo`, `zig build`, `npm`, `make`, etc.
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
+- **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
 - **Cross-Platform**: Works efficiently on Linux, macOS, and Windows.
 
 ## Requirements
@@ -142,6 +144,17 @@ require('zignite.config').setup({
         startinsert = true,
     },
 
+    picker = {
+        focus = true,             -- Focus build picker on open
+        filter_input = "inline",  -- "inline" | "ui" (vim.ui.input) | "cmdline" (vim.fn.input)
+    },
+
+    detect_runtime = {
+        async_picker = true,      -- Open picker immediately from cache/defaults
+        cache_ttl_ms = 15000,     -- Detection cache freshness window
+        live_merge = true,        -- Refresh detected commands in-place while picker is open
+    },
+
     quickfix = {
         enabled = true,             -- Populate quickfix on non-zero exit
         processor = "auto",         -- "auto" | "lua" | "zig"
@@ -187,15 +200,73 @@ Press `<leader>rb` (default) to open the Command Picker:
 Use:
 - `j`/`k` (or arrow keys) to navigate
 - `Enter` to select
-- `/` to filter by command name/text
+- `/` to start inline filter in the same picker popup (type to filter, `Enter` apply, `Esc` cancel)
 - `c` to clear filter
 - `r` to run the previous build command for current filetype
 
-For `zig` files, picker commands are merged from:
-- `build_commands.zig` (your config)
-- auto-detected Zig subcommands parsed from `zig --help`
+To use external prompt modes instead of inline filtering, set:
+```lua
+picker = {
+    filter_input = "ui",      -- use vim.ui.input popup
+    -- or
+    filter_input = "cmdline",
+}
+```
 
-Configured commands take priority when names overlap.
+Picker commands are merged from your configured `build_commands.<filetype>` plus
+auto-detected commands when available:
+- `zig`: parsed from `zig --help`
+- `go`: parsed from `go help`
+- `rust`: parsed from `cargo --list`
+- `odin`: parsed from `odin help`
+- `c` / `cpp`: parsed from `Makefile` targets when `Makefile` is present
+- `javascript` / `typescript`: project `package.json` scripts
+- `java` / `kotlin`: Maven/Gradle project tasks inferred from project files
+
+Configured commands always take priority when names overlap.
+
+Auto-detection is enabled by default. You can disable specific detectors:
+
+```lua
+detect = {
+    go = false,
+    rust = false,
+    c_cpp_make = false,
+}
+```
+
+When the Zig backend is available, command detection parsing uses a persistent
+worker (`--detect-daemon`) for lower overhead. If unavailable/failing, it
+falls back to Lua parsing automatically.
+
+Picker detection runtime defaults:
+
+```lua
+detect_runtime = {
+    async_picker = true,
+    cache_ttl_ms = 15000,
+    live_merge = true,
+}
+```
+
+- `async_picker = true`: `:RunBuildSelect` opens immediately from configured/cached commands.
+- `cache_ttl_ms`: stale threshold used before triggering refresh.
+- `live_merge = true`: refreshed detected commands are merged into the open picker without closing it.
+
+`zig fetch` is included and prompts for URL/path input when selected.
+
+Any build command can request runtime arguments by using `$zignite_args` in the
+command template. Example:
+
+```lua
+build_commands = {
+    python = {
+        pip = "pip install $zignite_args",
+    },
+}
+```
+
+When selected, the picker asks for the argument and runs the expanded command.
 
 ### RunFile vs RunProject
 
@@ -278,6 +349,15 @@ quickfix = {
 }
 ```
 
+### Build picker refresh behavior
+If you prefer legacy blocking detection behavior for the picker:
+```lua
+detect_runtime = {
+    async_picker = false,
+    live_merge = false,
+}
+```
+
 ## Development
 
 ### Run tests
@@ -299,6 +379,7 @@ lua test/benchmark.lua 10000
 ```
 
 The benchmark prints:
+- Cache-first picker build-list latency and avg/run.
 - Lua quickfix path time.
 - Zig quickfix simulation time.
 - Zig quickfix + diagnostics parse simulation time.
