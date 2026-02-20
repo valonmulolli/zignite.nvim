@@ -4,6 +4,7 @@ if vim.g.loaded_zignite then
 end
 vim.g.loaded_zignite = true
 
+---@return table
 local function zignite()
 	return require("zignite.init")
 end
