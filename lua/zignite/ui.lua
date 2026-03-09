@@ -10,6 +10,7 @@ local spinner_timer = nil
 local quickfix_backend_available = nil
 ---@type table|nil
 local quickfix_worker = nil
+local QUICKFIX_WORKER_REQUEST_TIMEOUT_MS = 3000
 
 ---@return table
 local function get_config()
@@ -128,6 +129,47 @@ local function copy_lines(lines)
 	return out
 end
 
+---@param timeout_ms integer
+---@param callback fun():nil
+---@return table|nil
+local function start_request_timer(timeout_ms, callback)
+	local uv = vim.uv or vim.loop
+	if not uv or type(uv.new_timer) ~= "function" then
+		return nil
+	end
+
+	local timer = uv.new_timer()
+	if not timer then
+		return nil
+	end
+
+	timer:start(timeout_ms, 0, vim.schedule_wrap(function()
+		pcall(function()
+			timer:stop()
+		end)
+		pcall(function()
+			timer:close()
+		end)
+		callback()
+	end))
+
+	return timer
+end
+
+---@param timer table|nil
+---@return nil
+local function stop_request_timer(timer)
+	if not timer then
+		return
+	end
+	pcall(function()
+		timer:stop()
+	end)
+	pcall(function()
+		timer:close()
+	end)
+end
+
 ---@param lines string[]
 ---@return string[]
 local function append_truncation_notice(lines)
@@ -187,7 +229,7 @@ local function collect_lua_quickfix_lines(buf, quickfix_opts)
 	local truncated = start_line > 0
 
 	local max_bytes = tonumber(quickfix_opts.max_bytes) or 262144
-	local byte_truncated = false
+	local byte_truncated
 	lines, byte_truncated = tail_lines_by_bytes(lines, max_bytes)
 	truncated = truncated or byte_truncated
 
@@ -326,7 +368,11 @@ local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_trunca
 		return
 	end
 
-	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" or type(vim.fn.chanclose) ~= "function" then
+	if
+		type(vim.fn.jobstart) ~= "function"
+		or type(vim.fn.chansend) ~= "function"
+		or type(vim.fn.chanclose) ~= "function"
+	then
 		on_fallback()
 		return
 	end
@@ -403,6 +449,7 @@ local function flush_quickfix_worker_fallbacks(worker)
 	end
 
 	for _, request in pairs(worker.pending) do
+		stop_request_timer(request.timer)
 		if request and request.on_fallback then
 			request.on_fallback()
 		end
@@ -442,6 +489,7 @@ local function handle_quickfix_worker_stdout(worker, data)
 				worker.active_id = nil
 				worker.active_lines = {}
 				if request and request.on_success then
+					stop_request_timer(request.timer)
 					if request.force_truncated and completed_lines[1] ~= "[zignite] quickfix output truncated" then
 						table.insert(completed_lines, 1, "[zignite] quickfix output truncated")
 					end
@@ -527,6 +575,27 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 		on_fallback = on_fallback,
 		force_truncated = force_truncated,
 	}
+	local request = worker.pending[request_id]
+	request.timer = start_request_timer(QUICKFIX_WORKER_REQUEST_TIMEOUT_MS, function()
+		if worker.pending[request_id] ~= request then
+			return
+		end
+
+		worker.pending[request_id] = nil
+		if worker.active_id == request_id then
+			worker.active_id = nil
+			worker.active_lines = {}
+		end
+		if request.on_fallback then
+			request.on_fallback()
+		end
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if quickfix_worker == worker then
+			quickfix_worker = nil
+		end
+	end)
 
 	local payload = {
 		string.format(
@@ -546,6 +615,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 
 	local ok_send = pcall(vim.fn.chansend, worker.job_id, table.concat(payload, "\n") .. "\n")
 	if not ok_send then
+		stop_request_timer(request.timer)
 		worker.pending[request_id] = nil
 		if type(vim.fn.jobstop) == "function" then
 			pcall(vim.fn.jobstop, worker.job_id)

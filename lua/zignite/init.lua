@@ -69,6 +69,7 @@ local DETECT_REQ_END = "@@ZDET_REQ_END"
 local DETECT_RES_BEGIN = "@@ZDET_RES_BEGIN"
 local DETECT_RES_END = "@@ZDET_RES_END"
 local DETECT_WORKER_WAIT_MS = 1200
+local DETECT_WORKER_REQUEST_TIMEOUT_MS = 3000
 local DETECT_RUNTIME_DEFAULT_TTL_MS = 15000
 local zig_detected_command_templates = {
 	["ast-check"] = "zig ast-check $file",
@@ -588,6 +589,47 @@ local function copy_list(list)
 	return out
 end
 
+---@param timeout_ms integer
+---@param callback fun():nil
+---@return table|nil
+local function start_request_timer(timeout_ms, callback)
+	local uv = vim.uv or vim.loop
+	if not uv or type(uv.new_timer) ~= "function" then
+		return nil
+	end
+
+	local timer = uv.new_timer()
+	if not timer then
+		return nil
+	end
+
+	timer:start(timeout_ms, 0, vim.schedule_wrap(function()
+		pcall(function()
+			timer:stop()
+		end)
+		pcall(function()
+			timer:close()
+		end)
+		callback()
+	end))
+
+	return timer
+end
+
+---@param timer table|nil
+---@return nil
+local function stop_request_timer(timer)
+	if not timer then
+		return
+	end
+	pcall(function()
+		timer:stop()
+	end)
+	pcall(function()
+		timer:close()
+	end)
+end
+
 ---@param command_template string
 ---@param filepath string
 ---@return string[]|nil
@@ -851,6 +893,7 @@ local function flush_detect_worker_fallbacks(worker)
 	end
 
 	for _, request in pairs(worker.pending) do
+		stop_request_timer(request.timer)
 		if type(request.callbacks) == "table" then
 			for _, callback in ipairs(request.callbacks) do
 				if type(callback) == "function" then
@@ -895,6 +938,7 @@ local function handle_detect_worker_stdout(worker, data)
 						worker.active_lines = {}
 
 						if request then
+							stop_request_timer(request.timer)
 							if type(request.callbacks) == "table" then
 								local commands = build_detected_templates_from_names(request.tool or "", completed_lines)
 								for _, callback in ipairs(request.callbacks) do
@@ -1036,10 +1080,35 @@ local function detect_with_zig_worker_async(tool, on_done)
 
 	worker.next_request_id = worker.next_request_id + 1
 	local request_id = worker.next_request_id
-	worker.pending[request_id] = {
+	local request = {
 		tool = tool,
 		callbacks = { on_done },
 	}
+	request.timer = start_request_timer(DETECT_WORKER_REQUEST_TIMEOUT_MS, function()
+		if worker.pending[request_id] ~= request then
+			return
+		end
+
+		worker.pending[request_id] = nil
+		if worker.active_id == request_id then
+			worker.active_id = nil
+			worker.active_lines = {}
+		end
+		if type(request.callbacks) == "table" then
+			for _, callback in ipairs(request.callbacks) do
+				if type(callback) == "function" then
+					pcall(callback, nil)
+				end
+			end
+		end
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if detect_worker == worker then
+			detect_worker = nil
+		end
+	end)
+	worker.pending[request_id] = request
 
 	local payload = string.format(
 		"%s %d %s\n%s %d\n",
@@ -1051,6 +1120,7 @@ local function detect_with_zig_worker_async(tool, on_done)
 	)
 	local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
 	if not ok_send then
+		stop_request_timer(request.timer)
 		worker.pending[request_id] = nil
 		if type(vim.fn.jobstop) == "function" then
 			pcall(vim.fn.jobstop, worker.job_id)
@@ -1202,7 +1272,15 @@ end
 ---@param on_done fun(commands: table<string, string>|nil):nil
 ---@param force_refresh boolean|nil
 ---@return nil
-local function detect_commands_from_tool_async(cache_key, tool, executable, command_argv, parser, on_done, force_refresh)
+local function detect_commands_from_tool_async(
+	cache_key,
+	tool,
+	executable,
+	command_argv,
+	parser,
+	on_done,
+	force_refresh
+)
 	local cached = tool_command_cache[cache_key]
 	if force_refresh ~= true and cached ~= nil then
 		on_done(copy_string_map(cached))
@@ -1692,13 +1770,48 @@ local function detect_tool_commands_for_filetype(filetype, filepath)
 end
 
 ---@param filetype string
+---@return boolean
+local function can_detect_build_commands_for_filetype(filetype)
+	if filetype == "zig" and is_detection_enabled("zig") then
+		return true
+	end
+	if filetype == "go" and is_detection_enabled("go") then
+		return true
+	end
+	if filetype == "rust" and is_detection_enabled("rust") then
+		return true
+	end
+	if filetype == "odin" and is_detection_enabled("odin") then
+		return true
+	end
+	if (filetype == "c" or filetype == "cpp") and is_detection_enabled("c_cpp_make") then
+		return true
+	end
+	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
+		return true
+	end
+	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
+		return true
+	end
+	return false
+end
+
+---@param filetype string
 ---@param filepath string
 ---@param on_done fun(commands: table<string, string>|nil):nil
 ---@param force_refresh boolean|nil
 ---@return nil
 local function detect_tool_commands_for_filetype_async(filetype, filepath, on_done, force_refresh)
 	if filetype == "zig" and is_detection_enabled("zig") then
-		detect_commands_from_tool_async("zig", "zig", "zig", { "zig", "--help" }, parse_zig_help_commands, on_done, force_refresh)
+		detect_commands_from_tool_async(
+			"zig",
+			"zig",
+			"zig",
+			{ "zig", "--help" },
+			parse_zig_help_commands,
+			on_done,
+			force_refresh
+		)
 		return
 	end
 	if filetype == "go" and is_detection_enabled("go") then
@@ -1718,7 +1831,15 @@ local function detect_tool_commands_for_filetype_async(filetype, filepath, on_do
 		return
 	end
 	if filetype == "odin" and is_detection_enabled("odin") then
-		detect_commands_from_tool_async("odin", "odin", "odin", { "odin", "help" }, parse_odin_commands, on_done, force_refresh)
+		detect_commands_from_tool_async(
+			"odin",
+			"odin",
+			"odin",
+			{ "odin", "help" },
+			parse_odin_commands,
+			on_done,
+			force_refresh
+		)
 		return
 	end
 	if (filetype == "c" or filetype == "cpp") and is_detection_enabled("c_cpp_make") then
@@ -1746,30 +1867,29 @@ end
 ---@param filepath string
 ---@return table<string, string>
 local function get_build_commands_for_filetype(filetype, filepath)
-	local configured = config.options.build_commands[filetype] or {}
 	local detected = detect_tool_commands_for_filetype(filetype, filepath)
-	local merged = copy_string_map(detected)
+	local configured = config.options.build_commands[filetype] or {}
+	return copy_string_map(vim.tbl_extend("force", detected, configured))
+end
 
+---@param filetype string
+---@param detected table<string, string>|nil
+---@return table<string, string>
+local function merge_build_commands(filetype, detected)
+	local merged = copy_string_map(detected)
+	local configured = config.options.build_commands[filetype] or {}
 	for key, value in pairs(configured) do
 		if type(key) == "string" and type(value) == "string" then
 			merged[key] = value
 		end
 	end
-
 	return merged
 end
 
 ---@param filetype string
 ---@param filepath string
----@param on_refresh fun(commands: table<string, string>):nil
----@return table<string, string>
-local function get_build_commands_for_picker(filetype, filepath, on_refresh)
-	local runtime_opts = get_detect_runtime_options()
-	if runtime_opts.async_picker == false then
-		return get_build_commands_for_filetype(filetype, filepath)
-	end
-
-	local configured = copy_string_map(config.options.build_commands[filetype] or {})
+---@return table<string, string>, table|nil, string, string|nil
+local function get_cached_detected_commands(filetype, filepath)
 	local cache_key = detect_runtime_cache_key(filetype, filepath)
 	local mtime_signature = get_mtime_signature_for_filetype(filetype, filepath)
 	local entry = detect_runtime_cache[cache_key]
@@ -1777,14 +1897,22 @@ local function get_build_commands_for_picker(filetype, filepath, on_refresh)
 	if type(entry) == "table" and type(entry.commands) == "table" then
 		cached_detected = copy_string_map(entry.commands)
 	end
+	return cached_detected, entry, cache_key, mtime_signature
+end
 
-	local merged = copy_string_map(cached_detected)
-	for key, value in pairs(configured) do
-		merged[key] = value
+---@param filetype string
+---@param filepath string
+---@param on_refresh fun(commands: table<string, string>):nil
+---@return boolean
+local function request_build_command_refresh(filetype, filepath, on_refresh)
+	local runtime_opts = get_detect_runtime_options()
+	if not can_detect_build_commands_for_filetype(filetype) then
+		return false
 	end
 
+	local cached_detected, entry, cache_key, mtime_signature = get_cached_detected_commands(filetype, filepath)
 	if not is_cache_stale(entry, runtime_opts.cache_ttl_ms, mtime_signature) then
-		return merged
+		return false
 	end
 
 	local inflight = detect_runtime_inflight[cache_key]
@@ -1792,7 +1920,7 @@ local function get_build_commands_for_picker(filetype, filepath, on_refresh)
 		if type(on_refresh) == "function" then
 			table.insert(inflight.callbacks, on_refresh)
 		end
-		return merged
+		return true
 	end
 
 	detect_runtime_inflight[cache_key] = {
@@ -1800,11 +1928,10 @@ local function get_build_commands_for_picker(filetype, filepath, on_refresh)
 	}
 
 	detect_tool_commands_for_filetype_async(filetype, filepath, function(detected)
-		local previous_commands = cached_detected
 		local status = "ready"
 		if detected == nil then
 			status = "failed"
-			detected = previous_commands
+			detected = cached_detected
 		end
 
 		local detected_copy = copy_string_map(detected)
@@ -1815,11 +1942,7 @@ local function get_build_commands_for_picker(filetype, filepath, on_refresh)
 			status = status,
 		}
 
-		local merged_commands = copy_string_map(detected_copy)
-		for key, value in pairs(configured) do
-			merged_commands[key] = value
-		end
-
+		local merged_commands = merge_build_commands(filetype, detected_copy)
 		local pending = detect_runtime_inflight[cache_key]
 		detect_runtime_inflight[cache_key] = nil
 		if not pending or type(pending.callbacks) ~= "table" then
@@ -1832,14 +1955,123 @@ local function get_build_commands_for_picker(filetype, filepath, on_refresh)
 		end
 	end, true)
 
+	return true
+end
+
+---@param filetype string
+---@param filepath string
+---@param on_refresh fun(commands: table<string, string>):nil
+---@return table<string, string>, boolean
+local function get_build_commands_for_cached_lookup(filetype, filepath, on_refresh)
+	local cached_detected = get_cached_detected_commands(filetype, filepath)
+	local merged = merge_build_commands(filetype, cached_detected)
+	local refresh_started = request_build_command_refresh(filetype, filepath, on_refresh)
+	return merged, refresh_started
+end
+
+---@param filetype string
+---@param filepath string
+---@param on_refresh fun(commands: table<string, string>):nil
+---@return table<string, string>
+local function get_build_commands_for_picker(filetype, filepath, on_refresh)
+	local runtime_opts = get_detect_runtime_options()
+	if runtime_opts.async_picker == false then
+		return get_build_commands_for_filetype(filetype, filepath)
+	end
+
+	local merged = get_build_commands_for_cached_lookup(filetype, filepath, on_refresh)
 	return merged
+end
+
+---@param filetype string
+---@param command_name string
+---@param build_cmds table<string, string>
+---@param mode string
+---@return nil
+local function show_build_command_missing(filetype, command_name, build_cmds, mode)
+	if vim.tbl_isempty(build_cmds) then
+		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+		return
+	end
+
+	local available = {}
+	for cmd_name, _ in pairs(build_cmds) do
+		table.insert(available, cmd_name)
+	end
+	table.sort(available)
+	ui.show_output(
+		string.format(
+			"Command '%s' not found for %s.\nAvailable commands: %s",
+			command_name,
+			filetype,
+			table.concat(available, ", ")
+		),
+		mode
+	)
+end
+
+---@param filetype string
+---@param filepath string
+---@param command_name string
+---@param command_template string
+---@param mode string
+---@return nil
+local function execute_build_command(filetype, filepath, command_name, command_template, mode)
+	local resolved_template = resolve_command_arguments(filetype, command_name, command_template, mode)
+	if not resolved_template then
+		return
+	end
+
+	local command = resolved_template
+	if is_reserved_argv_command(command) then
+		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+		return
+	end
+
+	local cwd = utils.get_project_root(filepath, config.options.project)
+	if not cwd then
+		cwd = vim.fn.fnamemodify(filepath, ":h")
+	end
+
+	if filetype == "zig" and command_name == "run" then
+		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(cwd, "build.zig")) == 1
+		if not has_build_zig then
+			local zig_runner = utils.normalize_command(config.options.runners.zig)
+			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
+				zig_runner = "zig run $file"
+			end
+			if is_reserved_argv_command(zig_runner) then
+				ui.show_output(ERRORS.RESERVED_ARGV, mode)
+				return
+			end
+			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
+			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
+			local standalone_argv = command_to_argv(zig_runner, filepath)
+			local standalone_system_command = build_system_command(standalone_cmd, standalone_argv)
+			M.execute_command(standalone_system_command, filepath, 0, mode, "zig: run", nil, {
+				cwd = standalone_dir,
+			})
+			return
+		end
+	end
+
+	command = utils.substitute_variables(command, filepath)
+	local argv_command = command_to_argv(resolved_template, filepath)
+	if not cwd then
+		argv_command = nil
+	end
+
+	local system_command = build_system_command(command, argv_command)
+	local display_name = string.format("%s: %s", filetype, command_name)
+	last_build_command_by_filetype[filetype] = command_name
+	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
 end
 
 -- Helper function to get visual selection
 ---@return string
 local function get_visual_selection()
-	local _, start_line, start_col, _ = table.unpack(vim.fn.getpos("'<"))
-	local _, end_line, end_col, _ = table.unpack(vim.fn.getpos("'>"))
+	local _, start_line, start_col, _ = unpack(vim.fn.getpos("'<"))
+	local _, end_line, end_col, _ = unpack(vim.fn.getpos("'>"))
 	if start_line == 0 or end_line == 0 then
 		return ""
 	end
@@ -2009,7 +2241,7 @@ function M.execute_command(system_command, execution_path, range, mode, display_
 	-- Callback to run cleanup tasks
 	---@param exit_code integer
 	---@return nil
-	local function on_exit(exit_code)
+	local function on_exit()
 		-- Clean up temporary file if created for visual selection
 		if range > 0 and execution_path then
 			os.remove(execution_path)
@@ -2085,90 +2317,38 @@ function M.run_build_command(command_name, mode)
 
 	local filepath = vim.fn.expand("%:p")
 	local filetype = resolve_supported_filetype(vim.bo.filetype, filepath)
-
-	local build_cmds = get_build_commands_for_filetype(filetype, filepath)
-	if vim.tbl_isempty(build_cmds) then
-		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
-		return
-	end
-
-	-- Get the specific command
-	local command_template = build_cmds[command_name]
-	if not command_template then
-		-- Show available commands
-		local available = {}
-		for cmd_name, _ in pairs(build_cmds) do
-			table.insert(available, cmd_name)
+	local settled = false
+	local function try_run(build_cmds)
+		if settled then
+			return true
 		end
-		table.sort(available)
-		ui.show_output(
-			string.format(
-				"Command '%s' not found for %s.\nAvailable commands: %s",
-				command_name,
-				filetype,
-				table.concat(available, ", ")
-			),
-			mode
-		)
-		return
+		local command_template = build_cmds[command_name]
+		if not command_template then
+			return false
+		end
+		settled = true
+		execute_build_command(filetype, filepath, command_name, command_template, mode)
+		return true
 	end
 
-	local resolved_template = resolve_command_arguments(filetype, command_name, command_template, mode)
-	if not resolved_template then
-		return
-	end
-
-	local command = resolved_template
-	if is_reserved_argv_command(command) then
-		ui.show_output(ERRORS.RESERVED_ARGV, mode)
-		return
-	end
-
-	-- Get project root (if in a project)
-	local cwd = utils.get_project_root(filepath, config.options.project)
-	if not cwd then
-		cwd = vim.fn.fnamemodify(filepath, ":h")
-	end
-
-	-- Zig standalone support:
-	-- `zig build run` requires a build.zig, so for plain single-file scripts
-	-- we fallback to the file runner command (defaults to `zig run $file`).
-	if filetype == "zig" and command_name == "run" then
-		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(cwd, "build.zig")) == 1
-		if not has_build_zig then
-			local zig_runner = utils.normalize_command(config.options.runners.zig)
-			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
-				zig_runner = "zig run $file"
-			end
-			if is_reserved_argv_command(zig_runner) then
-				ui.show_output(ERRORS.RESERVED_ARGV, mode)
-				return
-			end
-			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
-			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
-			local standalone_argv = command_to_argv(zig_runner, filepath)
-			local system_command = build_system_command(standalone_cmd, standalone_argv)
-
-			local display_name = "zig: run"
-			M.execute_command(system_command, filepath, 0, mode, display_name, nil, {
-				cwd = standalone_dir,
-			})
+	local build_cmds, refresh_started = get_build_commands_for_cached_lookup(filetype, filepath, function(updated_commands)
+		if try_run(updated_commands) then
 			return
 		end
+		if settled then
+			return
+		end
+		settled = true
+		show_build_command_missing(filetype, command_name, updated_commands, mode)
+	end)
+
+	if try_run(build_cmds) then
+		return
 	end
-
-	-- Substitute variables using the current file path.
-	command = utils.substitute_variables(command, filepath)
-	local argv_command = command_to_argv(resolved_template, filepath)
-	if not cwd then
-		argv_command = nil
+	if refresh_started then
+		return
 	end
-
-	local system_command = build_system_command(command, argv_command)
-
-	local display_name = string.format("%s: %s", filetype, command_name)
-	last_build_command_by_filetype[filetype] = command_name
-	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
+	show_build_command_missing(filetype, command_name, build_cmds, mode)
 end
 
 -- Run a long-lived live/watch/dev command for the current filetype.
@@ -2179,14 +2359,9 @@ function M.run_live(mode)
 
 	local filepath = vim.fn.expand("%:p")
 	local filetype = resolve_supported_filetype(vim.bo.filetype, filepath)
-	local build_cmds = get_build_commands_for_filetype(filetype, filepath)
-	if vim.tbl_isempty(build_cmds) then
-		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
-		return
-	end
+	local settled = false
 
-	local command_name = select_live_command_name(build_cmds)
-	if not command_name then
+	local function show_missing_live()
 		ui.show_output(
 			string.format(
 				"No live/watch command found for %s. Add one of: %s",
@@ -2195,10 +2370,46 @@ function M.run_live(mode)
 			),
 			mode
 		)
-		return
 	end
 
-	M.run_build_command(command_name, mode)
+	local function try_run_live(build_cmds)
+		if settled then
+			return true
+		end
+		if vim.tbl_isempty(build_cmds) then
+			return false
+		end
+		local command_name = select_live_command_name(build_cmds)
+		if not command_name then
+			return false
+		end
+		settled = true
+		M.run_build_command(command_name, mode)
+		return true
+	end
+
+	local build_cmds, refresh_started = get_build_commands_for_cached_lookup(filetype, filepath, function(updated_commands)
+		if try_run_live(updated_commands) then
+			return
+		end
+		if settled then
+			return
+		end
+		settled = true
+		show_missing_live()
+	end)
+
+	if try_run_live(build_cmds) then
+		return
+	end
+	if refresh_started then
+		return
+	end
+	if vim.tbl_isempty(build_cmds) then
+		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+		return
+	end
+	show_missing_live()
 end
 
 -- Show a picker to select and run a build command
@@ -2385,24 +2596,8 @@ function M.select_build_command(mode)
 		build_cmds = get_build_commands_for_filetype(filetype, filepath)
 	end
 
-	local can_refresh_from_detection = false
-	if detect_runtime_opts.async_picker ~= false then
-		if filetype == "zig" and is_detection_enabled("zig") then
-			can_refresh_from_detection = true
-		elseif filetype == "go" and is_detection_enabled("go") then
-			can_refresh_from_detection = true
-		elseif filetype == "rust" and is_detection_enabled("rust") then
-			can_refresh_from_detection = true
-		elseif filetype == "odin" and is_detection_enabled("odin") then
-			can_refresh_from_detection = true
-		elseif (filetype == "c" or filetype == "cpp") and is_detection_enabled("c_cpp_make") then
-			can_refresh_from_detection = true
-		elseif (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
-			can_refresh_from_detection = true
-		elseif (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-			can_refresh_from_detection = true
-		end
-	end
+	local can_refresh_from_detection = detect_runtime_opts.async_picker ~= false
+		and can_detect_build_commands_for_filetype(filetype)
 
 	if vim.tbl_isempty(build_cmds) and not can_refresh_from_detection then
 		vim.notify(string.format("No build commands available for filetype: %s", filetype), vim.log.levels.WARN)
@@ -2735,7 +2930,6 @@ function M.select_build_command(mode)
 	picker_ready = true
 	if pending_refresh_commands then
 		on_picker_refresh(pending_refresh_commands)
-		pending_refresh_commands = nil
 	else
 		render_picker()
 	end
@@ -2764,6 +2958,16 @@ function M.get_build_commands_for_filetype(filetype)
 	local filepath = vim.fn.expand("%:p")
 	local ft = resolve_supported_filetype(filetype or vim.bo.filetype, filepath)
 	return get_build_commands_for_filetype(ft, filepath)
+end
+
+---@param filetype string
+---@return table<string, string>
+function M.get_build_commands_for_completion(filetype)
+	ensure_config()
+	local filepath = vim.fn.expand("%:p")
+	local ft = resolve_supported_filetype(filetype or vim.bo.filetype, filepath)
+	local build_cmds = get_build_commands_for_cached_lookup(ft, filepath, nil)
+	return build_cmds
 end
 
 ---@return nil

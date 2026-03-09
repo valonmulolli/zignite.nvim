@@ -82,9 +82,13 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 	zignite().run_build_command(command_name, mode)
 end, {
 	nargs = "+",
-	complete = function(ArgLead, CmdLine, CursorPos)
+	---@param ArgLead string
+	---@param _CmdLine string
+	---@param _CursorPos integer
+	---@return string[]
+	complete = function(ArgLead, _CmdLine, _CursorPos)
 		local filetype = vim.bo.filetype
-		local build_cmds = zignite().get_build_commands_for_filetype(filetype)
+		local build_cmds = zignite().get_build_commands_for_completion(filetype)
 
 		if not build_cmds or vim.tbl_isempty(build_cmds) then
 			return {}
@@ -92,7 +96,7 @@ end, {
 
 		local commands = {}
 		for cmd_name, _ in pairs(build_cmds) do
-			if cmd_name:find("^" .. ArgLead) then
+			if ArgLead == "" or cmd_name:sub(1, #ArgLead) == ArgLead then
 				table.insert(commands, cmd_name)
 			end
 		end
@@ -103,12 +107,12 @@ end, {
 
 vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
 	local mode = opts.fargs[1]
-	 
+
 	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
 		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
 		return
 	end
-	 
+
 	zignite().select_build_command(mode)
 end, { nargs = "?" })
 
