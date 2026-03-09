@@ -79,9 +79,9 @@ require("zignite.config").setup({
 
         -- Interpreted languages
         python = "python3 -u $file",
-        javascript = { "cd $dir", "node $fileName" },
-        typescript = { "cd $dir", "bun $fileName" },
-        lua = { "cd $dir", "lua $fileName" },
+        javascript = "node $file",
+        typescript = "bun $file",
+        lua = "lua $file",
         ruby = "ruby $file",
         php = "php $file",
         -- Use Odin single-file mode to avoid package-wide main redeclaration errors.

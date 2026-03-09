@@ -79,7 +79,7 @@ end
 vim.fn.filereadable = function(path)
 	return marker_files[path] and 1 or 0
 end
-vim.fn.executable = function(path)
+vim.fn.executable = function(_path)
 	return 0
 end
 vim.fn.shellescape = function(str)
@@ -246,14 +246,14 @@ bench("get_command (hot)", function()
 end)
 
 local picker_iters = math.max(1, math.floor(iterations / 50))
-init.get_build_commands_for_filetype("zig") -- warm build list path used by picker
+init.get_build_commands_for_completion("zig") -- warm non-blocking build list path
 local picker_ms = bench_ms(function()
 	for _ = 1, picker_iters do
-		init.get_build_commands_for_filetype("zig")
+		init.get_build_commands_for_completion("zig")
 	end
 end)
-print(string.format("%-34s %10.2f ms", "picker build list (cache-first):", picker_ms))
-print(string.format("%-34s %10.2f ms", "picker build list avg/run:", picker_ms / picker_iters))
+print(string.format("%-34s %10.2f ms", "build list (nonblocking cache-first):", picker_ms))
+print(string.format("%-34s %10.2f ms", "build list avg/run:", picker_ms / picker_iters))
 
 local large_lines = {}
 for i = 1, 20000 do

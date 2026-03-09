@@ -3,13 +3,6 @@
 
 local M = {}
 
--- Simple assertion function
-local function assert(condition, message)
-    if not condition then
-        error("Assertion failed: " .. (message or "no message"), 2)
-    end
-end
-
 -- Test runner
 function M.run_tests()
     print("Running Zignite.nvim tests...")
