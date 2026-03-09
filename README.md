@@ -26,7 +26,7 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
-- **Cross-Platform**: Verified in CI on Linux and macOS, with Windows intended but not continuously validated.
+- **Cross-Platform Core**: Verified in CI on Linux and macOS. Some bundled runner examples are POSIX-oriented and may need overrides on Windows.
 
 ## Requirements
 
@@ -38,6 +38,11 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 
 The `build` step is required to compile the Zig backend.
 
+Example files in this repo:
+
+- `lazy_config.lua`: recommended minimal `lazy.nvim` setup
+- `example_config.lua`: full reference config with more options than most users need
+
 **Lazy.nvim**
 
 ```lua
@@ -45,7 +50,7 @@ The `build` step is required to compile the Zig backend.
     "valonmulolli/zignite.nvim",
     build = "cd zig && zig build -Doptimize=ReleaseFast",
     config = function()
-        require("zignite.config").setup({})
+        require("zignite").setup({})
     end,
 }
 ```
@@ -61,7 +66,7 @@ If you manage keymaps through Lazy's `keys` field, use Lazy's key format:
         { "<leader>rl", "<cmd>RunLive<cr>", mode = "n", desc = "Run live/watch command" },
     },
     config = function()
-        require("zignite.config").setup({
+        require("zignite").setup({
             keymaps = {}, -- avoid duplicate mappings when Lazy keys are used
         })
     end,
@@ -75,7 +80,7 @@ use {
     'valonmulolli/zignite.nvim',
     build = "cd zig && zig build -Doptimize=ReleaseFast",
     config = function()
-        require("zignite.config").setup({})
+        require("zignite").setup({})
     end,
 }
 ```
@@ -109,7 +114,7 @@ programs.neovim = {
 Zignite works out of the box for 20+ languages. Here is the default configuration structure:
 
 ```lua
-require('zignite.config').setup({
+require('zignite').setup({
     -- Timeout in milliseconds (e.g., 5000 = 5 seconds). 
     -- If a process runs longer than this, the Zig backend will kill it.
     timeout = nil, 
@@ -177,7 +182,7 @@ require('zignite.config').setup({
 ### Commands
 
 - `:RunFile`: Run the current file using the filetype runner (single-file flow).
-- `:RunCode`: Run the current visual selection.
+- `:RunCode`: Run the current visual selection, or the current file when used without a visual range.
 - `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunBuildLast`: Repeat the most recent `:RunBuild`/picker command for the current filetype.
@@ -325,6 +330,9 @@ runners = {
 }
 ```
 
+### Windows note
+Core runtime and tests are exercised on Linux/macOS in CI. If you use Windows, expect to override POSIX-style cleanup or shell snippets in language runners/build commands.
+
 ### Odin "Redeclaration of 'main'" on `:RunFile`
 Use single-file mode for Odin:
 ```lua
@@ -341,7 +349,7 @@ Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for 
 
 ### `<leader>` mapping does not trigger
 If you define mappings via Lazy.nvim `keys`, use `{ "<lhs>", "<rhs>", mode = "n", ... }` format.  
-The `{ "n", "<lhs>", "<rhs>", ... }` format is for `zignite.config.setup({ keymaps = { ... } })`.
+The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ keymaps = { ... } })`.
 
 ### Quickfix feels slow on huge error logs
 Tune these options first:

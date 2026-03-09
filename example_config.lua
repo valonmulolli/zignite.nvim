@@ -1,14 +1,15 @@
 -- ============================================================================
 -- Zignite.nvim - Complete Example Configuration
 -- ============================================================================
--- This file shows all available configuration options with examples
--- Copy and modify sections you need for your setup
+-- This file is a full reference configuration.
+-- Use `lazy_config.lua` if you want the recommended minimal lazy.nvim setup.
+-- Use this file when you want to browse most available options in one place.
 -- ============================================================================
 
 -- Plugin manager build step (recommended):
 -- build = "cd zig && zig build -Doptimize=ReleaseFast",
 
-require("zignite.config").setup({
+require("zignite").setup({
 
     -- ========================================================================
     -- KEYMAPS
@@ -49,8 +50,7 @@ require("zignite.config").setup({
         -- Compiled languages
         c = {
             cmd = {
-                "cd $dir",
-                "gcc $fileName -o /tmp/$fileNameWithoutExt",
+                "gcc $file -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
@@ -58,8 +58,7 @@ require("zignite.config").setup({
 
         cpp = {
             cmd = {
-                "cd $dir",
-                "(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
+                "c++ -pipe $file -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
@@ -67,8 +66,7 @@ require("zignite.config").setup({
 
         rust = {
             cmd = {
-                "cd $dir",
-                "rustc $fileName -o /tmp/$fileNameWithoutExt",
+                "rustc $file -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
@@ -88,8 +86,7 @@ require("zignite.config").setup({
         odin = "odin run $file -file",
         fortran = {
             cmd = {
-                "cd $dir",
-                "gfortran $fileName -o /tmp/$fileNameWithoutExt",
+                "gfortran $file -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"

@@ -1,3 +1,7 @@
+-- Minimal lazy.nvim example.
+-- Use this when you want the recommended install shape with Lazy handling
+-- keymaps via the plugin spec.
+
 local keys = {
   { "<leader>r", "<cmd>RunFile<cr>", desc = "Run file" },
   { "<leader>rb", "<cmd>RunBuildSelect<cr>", desc = "Select build command" },
@@ -17,23 +21,21 @@ return {
     lazy = false,
     keys = keys,
     config = function()
-      require("zignite.config").setup({
+      require("zignite").setup({
         -- Keymaps are managed by Lazy above.
         keymaps = {},
         mode = "float",
         runners = {
           c = {
             cmd = {
-              "cd $dir",
-              "gcc $fileName -o /tmp/$fileNameWithoutExt",
+              "gcc $file -o /tmp/$fileNameWithoutExt",
               "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
           },
           cpp = {
             cmd = {
-              "cd $dir",
-              "(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
+              "c++ -pipe $file -o /tmp/$fileNameWithoutExt",
               "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt",
