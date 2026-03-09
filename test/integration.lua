@@ -101,8 +101,8 @@ vim.api = vim.api or {
     nvim_buf_get_text = function() return {"test"} end,
     nvim_getpos = function() return {0, 1, 1, 0} end
 }
-vim.split = function(str, sep) return {str} end
-vim.defer_fn = function(func, delay)
+vim.split = function(str, _sep) return { str } end
+vim.defer_fn = function(func, _delay)
     func()
 end
 
@@ -1707,6 +1707,94 @@ local function test_picker_async_path_without_wait()
 	print("✓ Picker async no-wait test passed")
 end
 
+-- Test RunBuild uses async detection fallback instead of sync vim.wait when
+-- a detected command is not yet cached.
+---@return nil
+local function test_run_build_async_detect_without_wait()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = true,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_wait = vim.wait
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/async-build/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.wait = function()
+		error("run_build_command should not call vim.wait")
+	end
+
+	reset_job_results()
+	local ok, err = pcall(init.run_build_command, "fmt", "float")
+	assert(ok, "RunBuild should resolve detected commands without vim.wait: " .. tostring(err))
+	assert(#job_results > 0, "RunBuild should start a job for detected command")
+	local command = command_to_string(job_results[#job_results].cmd)
+	assert(command:match("go fmt"), "RunBuild should execute detected go fmt command")
+
+	vim.fn.expand = original_expand
+	vim.wait = original_wait
+	reset_job_results()
+
+	print("✓ RunBuild async detect test passed")
+end
+
+-- Test RunBuild completion stays non-blocking and uses literal prefix matching.
+---@return nil
+local function test_run_build_completion_nonblocking_prefix()
+	local original_create_user_command = vim.api.nvim_create_user_command
+	local original_expand = vim.fn.expand
+	local original_wait = vim.wait
+	local commands = {}
+
+	config.setup({
+		build_commands = {
+			cpp = {
+				["c++"] = "zig c++",
+				clean = "make clean",
+			},
+		},
+	})
+
+	vim.bo.filetype = "cpp"
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/completion/main.cpp"
+		end
+		return original_expand(expr)
+	end
+	vim.wait = function()
+		error("completion should not call vim.wait")
+	end
+	vim.api.nvim_create_user_command = function(name, fn, opts)
+		commands[name] = { fn = fn, opts = opts }
+	end
+	vim.g = vim.g or {}
+	vim.g.loaded_zignite = nil
+
+	dofile(project_root .. "/plugin/zignite.lua")
+
+	assert(commands.RunBuild ~= nil, "Plugin should register RunBuild command")
+	local matches = commands.RunBuild.opts.complete("c+", "", 0)
+	assert(#matches == 1 and matches[1] == "c++", "RunBuild completion should use literal prefix matching")
+
+	vim.api.nvim_create_user_command = original_create_user_command
+	vim.fn.expand = original_expand
+	vim.wait = original_wait
+	vim.g.loaded_zignite = nil
+
+	print("✓ RunBuild completion nonblocking prefix test passed")
+end
+
 -- Test picker opens from immediate commands then live-merges async detected commands.
 ---@return nil
 local function test_picker_async_live_merge_refresh()
@@ -2309,13 +2397,15 @@ local function test_run_build_command_with_detected_rust_command()
         build_commands = {},
     })
 
-    vim.bo.filetype = "rust"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/rustdetect/main.rs" end
-        return original_expand(expr)
-    end
+	vim.bo.filetype = "rust"
+	local original_expand = vim.fn.expand
+	local original_systemlist = vim.fn.systemlist
+	local original_detect_commands = detect_backend_tool_commands.cargo
+	vim.fn.expand = function(expr)
+	    if expr == "%:p" then return "/tmp/rustdetect/main.rs" end
+	    return original_expand(expr)
+	end
+	detect_backend_tool_commands.cargo = { "metadata" }
 	vim.fn.systemlist = function(cmd)
 		vim.v.shell_error = 0
 		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
@@ -2336,10 +2426,11 @@ local function test_run_build_command_with_detected_rust_command()
     local command = command_to_string(job_results[#job_results].cmd)
     assert(command:match("cargo metadata"), "Detected rust command should execute via cargo metadata")
 
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.v.shell_error = 0
-    reset_job_results()
+	vim.fn.expand = original_expand
+	vim.fn.systemlist = original_systemlist
+	detect_backend_tool_commands.cargo = original_detect_commands
+	vim.v.shell_error = 0
+	reset_job_results()
 
     print("✓ RunBuild with detected rust command test passed")
 end
@@ -2400,13 +2491,15 @@ local function test_run_build_command_with_detected_odin_command()
         build_commands = {},
     })
 
-    vim.bo.filetype = "odin"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/odindetect/main.odin" end
-        return original_expand(expr)
-    end
+	vim.bo.filetype = "odin"
+	local original_expand = vim.fn.expand
+	local original_systemlist = vim.fn.systemlist
+	local original_detect_commands = detect_backend_tool_commands.odin
+	vim.fn.expand = function(expr)
+	    if expr == "%:p" then return "/tmp/odindetect/main.odin" end
+	    return original_expand(expr)
+	end
+	detect_backend_tool_commands.odin = { "version" }
 	vim.fn.systemlist = function(cmd)
 		vim.v.shell_error = 0
 		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=odin" then
@@ -2429,10 +2522,11 @@ local function test_run_build_command_with_detected_odin_command()
     local command = command_to_string(job_results[#job_results].cmd)
     assert(command:match("odin version"), "Detected odin command should execute via odin version")
 
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.v.shell_error = 0
-    reset_job_results()
+	vim.fn.expand = original_expand
+	vim.fn.systemlist = original_systemlist
+	detect_backend_tool_commands.odin = original_detect_commands
+	vim.v.shell_error = 0
+	reset_job_results()
 
     print("✓ RunBuild with detected odin command test passed")
 end
@@ -2938,6 +3032,8 @@ test_run_build_last_behavior()
 test_run_live_priority_selection()
 test_run_live_missing_command()
 test_picker_async_path_without_wait()
+test_run_build_async_detect_without_wait()
+test_run_build_completion_nonblocking_prefix()
 test_picker_async_live_merge_refresh()
 test_picker_detection_cache_ttl_and_mtime()
 test_zig_detected_commands_in_picker()

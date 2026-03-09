@@ -31,11 +31,11 @@ _G.vim = {
             WARN = 1
         }
     },
-    notify = function(msg, level)
+    notify = function(_msg, _level)
         -- Mock notify - do nothing
     end,
     keymap = {
-        set = function(mode, lhs, rhs, opts)
+        set = function(_mode, _lhs, _rhs, _opts)
             -- Mock keymap.set - do nothing for testing
         end
     }
@@ -75,7 +75,7 @@ local function test_keymap_setup()
     local keymaps_set = {}
     _G.vim.keymap = {
         set = function(mode, lhs, rhs, opts)
-            table.insert(keymaps_set, {mode = mode, lhs = lhs, rhs = rhs, opts = opts})
+            table.insert(keymaps_set, { mode = mode, lhs = lhs, rhs = rhs, opts = opts })
         end
     }
 

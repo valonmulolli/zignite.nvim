@@ -128,6 +128,8 @@ COMMANDS                                                    *zignite-commands*
                                                                    *:RunBuild*
 :RunBuild <command> [mode]
     Execute specific build command for current language.
+    Uses configured commands and cached detected commands first, then refreshes
+    tool detection in the background when needed.
     
     Arguments:
       <command>  Build command name (use tab completion)
@@ -160,6 +162,8 @@ COMMANDS                                                    *zignite-commands*
 	    `detect` config table (e.g. `detect.go = false`).
 	    Picker opens cache-first by default and refreshes detected commands
 	    asynchronously in-place (`detect_runtime.async_picker = true`).
+	    `:RunBuild`, `:RunLive`, and `:RunBuild` completion also prefer
+	    configured/cached commands first to avoid blocking on detection.
 	    When Zig backend is available, detection parsing runs through a persistent
 	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
 	    `zig fetch` prompts for URL/path input when selected.

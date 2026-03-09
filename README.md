@@ -26,7 +26,7 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 - **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
 - **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
-- **Cross-Platform**: Works efficiently on Linux, macOS, and Windows.
+- **Cross-Platform**: Verified in CI on Linux and macOS, with Windows intended but not continuously validated.
 
 ## Requirements
 
@@ -239,6 +239,11 @@ When the Zig backend is available, command detection parsing uses a persistent
 worker (`--detect-daemon`) for lower overhead. If unavailable/failing, it
 falls back to Lua parsing automatically.
 
+`RunBuild`, `RunLive`, and `:RunBuild` completion now use configured commands
+plus cached detected commands first, then refresh detection in the background.
+That keeps command dispatch responsive even when tool help output has to be
+parsed.
+
 Picker detection runtime defaults:
 
 ```lua
@@ -379,7 +384,7 @@ lua test/benchmark.lua 10000
 ```
 
 The benchmark prints:
-- Cache-first picker build-list latency and avg/run.
+- Non-blocking cache-first build-list latency and avg/run.
 - Lua quickfix path time.
 - Zig quickfix simulation time.
 - Zig quickfix + diagnostics parse simulation time.
