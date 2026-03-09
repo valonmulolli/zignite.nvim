@@ -30,6 +30,8 @@ vim.fn = vim.fn or {
     filereadable = function() return 0 end,
     strdisplaywidth = function(str) return #tostring(str) end,
     systemlist = function() return {} end,
+    tempname = function() return os.tmpname() end,
+    getpos = function() return { 0, 1, 1, 0 } end,
 }
 vim.v = vim.v or { shell_error = 0 }
 vim.bo = vim.bo or { filetype = "python" }
@@ -87,6 +89,7 @@ vim.api = vim.api or {
     nvim_get_current_win = function() return 1 end,
     nvim_win_set_buf = function() end,
     nvim_win_set_height = function() end,
+    nvim_win_set_width = function() end,
     nvim_buf_set_keymap = function() end,
     nvim_set_option_value = function() end,
     nvim_win_set_cursor = function() end,
@@ -120,6 +123,7 @@ local next_job_id = 123
 local mock_jobs = {}
 local quickfix_backend_invocations = 0
 local detect_backend_invocations = 0
+local detect_backend_request_count = 0
 local detect_backend_tool_commands = {
     zig = { "build", "fmt", "fetch", "run" },
     go = { "build", "env", "fmt" },
@@ -186,15 +190,44 @@ end
 local function simulate_quickfix_backend(input, cmd)
     local lines = split_lines(input or "")
     local max_lines = tonumber(parse_backend_flag(cmd, "--max-lines=", "1000")) or 1000
+    local max_bytes = tonumber(parse_backend_flag(cmd, "--max-bytes=", "262144")) or 262144
     local strip_ansi = parse_backend_bool(cmd, "--strip-ansi=", true)
     local strip_max_lines = tonumber(parse_backend_flag(cmd, "--strip-max-lines=", "400")) or 400
     local parse_diagnostics = parse_backend_bool(cmd, "--parse-diagnostics=", true)
 
-    local truncated = #lines > max_lines
     if max_lines < 1 then
         max_lines = 1
     end
+    if max_bytes < 1 then
+        max_bytes = 1
+    end
+
+    local truncated = false
+    local used = 0
+    local start_idx = #lines + 1
+    for i = #lines, 1, -1 do
+        used = used + #lines[i] + 1
+        if used > max_bytes then
+            truncated = true
+            break
+        end
+        start_idx = i
+    end
+
+    if #lines > 0 then
+        if start_idx > #lines then
+            lines = { lines[#lines] }
+        elseif start_idx > 1 then
+            local sliced = {}
+            for i = start_idx, #lines do
+                table.insert(sliced, lines[i])
+            end
+            lines = sliced
+        end
+    end
+
     if #lines > max_lines then
+        truncated = true
         local sliced = {}
         for i = #lines - max_lines + 1, #lines do
             table.insert(sliced, lines[i])
@@ -203,8 +236,8 @@ local function simulate_quickfix_backend(input, cmd)
     end
 
     if strip_ansi and strip_max_lines > 0 then
-        local start_idx = math.max(1, #lines - strip_max_lines + 1)
-        for i = start_idx, #lines do
+        local strip_start_idx = math.max(1, #lines - strip_max_lines + 1)
+        for i = strip_start_idx, #lines do
             lines[i] = lines[i]:gsub("\27%[[0-9;]*m", "")
         end
     end
@@ -445,6 +478,7 @@ vim.fn.chansend = function(job_id, data)
     end
 
     if is_detect_daemon_cmd(job.cmd) then
+        detect_backend_request_count = detect_backend_request_count + 1
         if next_detect_backend_exit_code ~= 0 then
             local exit_code = next_detect_backend_exit_code
             next_detect_backend_exit_code = 0
@@ -532,6 +566,7 @@ local function reset_job_results()
     job_results = {}
     quickfix_backend_invocations = 0
     detect_backend_invocations = 0
+    detect_backend_request_count = 0
 end
 
 local function reset_quickfix_results()
@@ -558,6 +593,10 @@ end
 
 local function count_detect_backend_jobs()
     return detect_backend_invocations
+end
+
+local function count_detect_backend_requests()
+    return detect_backend_request_count
 end
 
 -- Test basic command execution
@@ -622,6 +661,46 @@ local function test_interpreted_runner_uses_argv_mode()
     vim.fn.expand = original_expand
 
     print("✓ Interpreted runner argv-mode test passed")
+end
+
+-- Test visual RunCode temp files preserve a useful source extension.
+local function test_visual_run_code_preserves_extension()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "typescript"
+    local original_expand = vim.fn.expand
+    local original_getpos = vim.fn.getpos
+    local original_tempname = vim.fn.tempname
+    local original_get_text = vim.api.nvim_buf_get_text
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/visual/main.ts" end
+        return original_expand(expr)
+    end
+    vim.fn.tempname = function()
+        return "/tmp/zignite-visual"
+    end
+    vim.fn.getpos = function()
+        return { 0, 1, 0, 0 }
+    end
+    vim.api.nvim_buf_get_text = function()
+        return { "console.log('ok')" }
+    end
+
+    reset_job_results()
+    init.run_code(1, "float")
+
+    assert(#job_results > 0, "Visual RunCode should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("/tmp/zignite%-visual%.ts"), "Visual RunCode temp file should preserve .ts extension")
+
+    vim.fn.expand = original_expand
+    vim.fn.getpos = original_getpos
+    vim.fn.tempname = original_tempname
+    vim.api.nvim_buf_get_text = original_get_text
+    reset_job_results()
+
+    print("✓ Visual RunCode temp extension test passed")
 end
 
 -- Test timeout-enabled runs go through zig wrapper (`--timeout` + `--argv`).
@@ -944,6 +1023,63 @@ local function test_quickfix_zig_processor()
     print("✓ Quickfix zig processor test passed")
 end
 
+-- Test zig quickfix processor keeps newest lines when max_bytes truncates input.
+local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 10,
+            max_bytes = 12,
+            strip_ansi = false,
+            strip_ansi_max_lines = 10,
+            parse_diagnostics = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "first-line",
+        "second-line",
+        "newest-line",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(#quickfix_results > 0, "Zig quickfix should populate results under byte cap")
+    local qf = quickfix_results[#quickfix_results]
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Zig quickfix should include truncation notice")
+    assert(qf.lines[2] == "newest-line", "Zig quickfix should keep newest line under byte cap")
+    assert(qf.lines[3] == nil, "Zig quickfix should drop older lines once byte cap is reached")
+
+    next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig byte-tail test passed")
+end
+
 -- Test auto processor routes to Lua below threshold and Zig above threshold.
 local function test_quickfix_auto_threshold_behavior()
     local original_expand = vim.fn.expand
@@ -1218,6 +1354,60 @@ local function test_build_picker_empty_state()
     reset_notify_results()
 
     print("✓ Build picker empty-state test passed")
+end
+
+-- Test non-C pickers keep generic commands visible even in mixed build-system repos.
+local function test_build_picker_keeps_generic_commands_in_mixed_repo()
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local original_open_win = vim.api.nvim_open_win
+    local rendered_lines = {}
+    local open_win_calls = 0
+
+    config.setup({
+        build_commands = {
+            testft = {
+                run = "echo run",
+                ["cmake-build"] = "cmake --build build",
+            },
+        },
+    })
+
+    vim.bo.filetype = "testft"
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/mixed/main.testft" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        return path:match("CMakeLists.txt$") and 1 or 0
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            rendered_lines = lines
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+    vim.api.nvim_open_win = function(...)
+        open_win_calls = open_win_calls + 1
+        return original_open_win(...)
+    end
+
+    init.select_build_command("float")
+
+    local render = table.concat(rendered_lines, "\n")
+    assert(open_win_calls > 0, "Picker should open when generic commands remain available")
+    assert(render:match("run"), "Picker should keep generic commands visible in mixed repos")
+    assert(render:match("cmake%-build"), "Picker should keep matching CMake commands visible")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    vim.api.nvim_open_win = original_open_win
+
+    print("✓ Build picker mixed-repo generic command test passed")
 end
 
 -- Test picker window coordinates are clamped on very small editor sizes.
@@ -1947,6 +2137,54 @@ local function test_picker_detection_cache_ttl_and_mtime()
 	vim.loop.fs_stat = original_fs_stat
 
 	print("✓ Picker detection cache TTL+mtime test passed")
+end
+
+-- Test failed detection retries sooner than the normal success TTL.
+---@return nil
+local function test_picker_detection_failed_cache_retries_early()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = false,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local original_hrtime = vim.loop.hrtime
+	local original_next_exit_code = next_exit_code
+	local fake_now_ms = 1000
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then
+			return "/tmp/cachefail/main.go"
+		end
+		return original_expand(expr)
+	end
+	vim.loop.hrtime = function()
+		return fake_now_ms * 1e6
+	end
+
+	reset_job_results()
+	next_detect_backend_exit_code = 1
+	next_exit_code = 1
+	init.select_build_command("float")
+	local first = count_detect_backend_requests()
+	assert(first > 0, "First picker open should issue a detect request")
+
+	fake_now_ms = fake_now_ms + 2000
+	init.select_build_command("float")
+	local second = count_detect_backend_requests()
+	assert(second > first, "Failed detection cache should retry before normal TTL expiry")
+
+	next_detect_backend_exit_code = 0
+	next_exit_code = original_next_exit_code
+	vim.fn.expand = original_expand
+	vim.loop.hrtime = original_hrtime
+
+	print("✓ Picker failed-detection retry test passed")
 end
 
 -- Test Zig command detection from `zig --help` appears in build picker.
@@ -2777,6 +3015,42 @@ local function test_vsplit_respects_left_position()
     print("✓ vsplit left-position test passed")
 end
 
+-- Test vsplit mode applies configured term.size as window width.
+local function test_vsplit_respects_configured_width()
+    config.setup({
+        mode = "vsplit",
+        term = {
+            position = "right",
+            size = 33,
+            focus = true,
+            startinsert = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_set_width = vim.api.nvim_win_set_width
+    local captured_width = nil
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/vsplit-width/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_win_set_width = function(_, width)
+        captured_width = width
+    end
+
+    init.run_code(0, "vsplit")
+
+    assert(captured_width == 33, "vsplit should apply term.size as window width")
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_win_set_width = original_set_width
+    reset_job_results()
+
+    print("✓ vsplit width test passed")
+end
+
 -- Test misconfigured runner command using reserved --argv fails fast with a clear error.
 local function test_reserved_argv_runner_guard()
     config.setup({
@@ -3009,6 +3283,7 @@ end
 -- Run integration tests
 test_basic_execution()
 test_interpreted_runner_uses_argv_mode()
+test_visual_run_code_preserves_extension()
 test_timeout_uses_zig_wrapper()
 test_language_detected_from_extension()
 test_language_detected_from_shebang()
@@ -3017,11 +3292,13 @@ test_build_command_uses_cwd()
 test_build_command_filetype_alias()
 test_quickfix_on_error_lua_processor()
 test_quickfix_zig_processor()
+test_quickfix_zig_processor_keeps_tail_on_byte_cap()
 test_quickfix_auto_threshold_behavior()
 test_quickfix_zig_fallback()
 test_quickfix_zig_diagnostic_parser()
 test_float_focus_behavior()
 test_build_picker_empty_state()
+test_build_picker_keeps_generic_commands_in_mixed_repo()
 test_build_picker_window_clamped()
 test_build_picker_focus_behavior()
 test_build_picker_focus_override()
@@ -3036,6 +3313,7 @@ test_run_build_async_detect_without_wait()
 test_run_build_completion_nonblocking_prefix()
 test_picker_async_live_merge_refresh()
 test_picker_detection_cache_ttl_and_mtime()
+test_picker_detection_failed_cache_retries_early()
 test_zig_detected_commands_in_picker()
 test_go_detected_commands_in_picker()
 test_go_detected_commands_with_zig_worker()
@@ -3053,6 +3331,7 @@ test_javascript_package_scripts_detection()
 test_run_build_command_with_detected_zig_fetch_prompt()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
+test_vsplit_respects_configured_width()
 test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()

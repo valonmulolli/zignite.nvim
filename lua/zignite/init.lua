@@ -18,6 +18,11 @@ local ERRORS = {
 }
 
 local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "preview" }
+local table_unpack = unpack
+local table_module = table
+if table_unpack == nil and type(table_module) == "table" then
+	table_unpack = rawget(table_module, "unpack")
+end
 
 -- Get the plugin directory path
 ---@return string
@@ -71,6 +76,7 @@ local DETECT_RES_END = "@@ZDET_RES_END"
 local DETECT_WORKER_WAIT_MS = 1200
 local DETECT_WORKER_REQUEST_TIMEOUT_MS = 3000
 local DETECT_RUNTIME_DEFAULT_TTL_MS = 15000
+local DETECT_RUNTIME_FAILED_TTL_MS = 1000
 local zig_detected_command_templates = {
 	["ast-check"] = "zig ast-check $file",
 	["build"] = "zig build",
@@ -212,6 +218,34 @@ local EXTENSION_FILETYPE_MAP = {
 	zig = "zig",
 	zsh = "zsh",
 }
+local TEMP_FILE_EXTENSION_MAP = {
+	c = "c",
+	cpp = "cpp",
+	dart = "dart",
+	elixir = "exs",
+	fortran = "f90",
+	go = "go",
+	haskell = "hs",
+	html = "html",
+	java = "java",
+	javascript = "js",
+	json = "json",
+	julia = "jl",
+	kotlin = "kt",
+	lua = "lua",
+	odin = "odin",
+	perl = "pl",
+	php = "php",
+	python = "py",
+	r = "r",
+	ruby = "rb",
+	rust = "rs",
+	sh = "sh",
+	swift = "swift",
+	typescript = "ts",
+	zig = "zig",
+	zsh = "zsh",
+}
 local SHEBANG_FILETYPE_MAP = {
 	bash = "sh",
 	bun = "javascript",
@@ -271,6 +305,27 @@ local function get_file_extension(filepath)
 		return ""
 	end
 	return ext:lower()
+end
+
+---@param filepath string
+---@param filetype string
+---@return string
+local function build_temp_execution_path(filepath, filetype)
+	local temp_path
+	if type(vim.fn.tempname) == "function" then
+		temp_path = vim.fn.tempname()
+	else
+		temp_path = os.tmpname()
+	end
+
+	local ext = get_file_extension(filepath)
+	if ext == "" then
+		ext = TEMP_FILE_EXTENSION_MAP[filetype] or ""
+	end
+	if ext == "" then
+		return temp_path
+	end
+	return temp_path .. "." .. ext
 end
 
 ---@param filepath string
@@ -1294,11 +1349,11 @@ local function detect_commands_from_tool_async(
 			return
 		end
 
-		if type(vim.fn.jobstart) == "function" then
-			local lines = {}
-			local job_id = vim.fn.jobstart(command_argv, {
-				stdout_buffered = true,
-				stderr_buffered = true,
+			if type(vim.fn.jobstart) == "function" then
+				local lines = {}
+				local job_id = vim.fn.jobstart(command_argv, {
+					stdout_buffered = true,
+					stderr_buffered = true,
 					on_stdout = function(_, data)
 						if type(data) ~= "table" then
 							return
@@ -1321,35 +1376,37 @@ local function detect_commands_from_tool_async(
 							end
 						end
 					end,
-				on_exit = function(_, _)
-					local detected = parser(lines)
-					tool_command_cache[cache_key] = detected
-					on_done(copy_string_map(detected))
-				end,
-			})
+					on_exit = function(_, exit_code)
+						if tonumber(exit_code) ~= 0 then
+							on_done(nil)
+							return
+						end
+						local detected = parser(lines)
+						tool_command_cache[cache_key] = detected
+						on_done(copy_string_map(detected))
+					end,
+				})
 			if type(job_id) == "number" and job_id > 0 then
 				return
 			end
 		end
 
-		if type(vim.fn.systemlist) == "function" then
-			local output_lines = vim.fn.systemlist(command_argv)
-			local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
-			if type(output_lines) ~= "table" or shell_error ~= 0 then
-				tool_command_cache[cache_key] = {}
-				on_done({})
-				return
-			end
+			if type(vim.fn.systemlist) == "function" then
+				local output_lines = vim.fn.systemlist(command_argv)
+				local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+				if type(output_lines) ~= "table" or shell_error ~= 0 then
+					on_done(nil)
+					return
+				end
 
-			local detected = parser(output_lines)
-			tool_command_cache[cache_key] = detected
+				local detected = parser(output_lines)
+				tool_command_cache[cache_key] = detected
 			on_done(copy_string_map(detected))
 			return
 		end
 
-		tool_command_cache[cache_key] = {}
-		on_done({})
-	end
+			on_done(nil)
+		end
 
 	detect_commands_with_zig_backend_async(tool, function(zig_detected)
 		if zig_detected ~= nil then
@@ -1477,7 +1534,11 @@ local function is_cache_stale(entry, ttl_ms, mtime_signature)
 		return true
 	end
 	local updated_at_ms = tonumber(entry.updated_at_ms) or 0
-	return (now_ms() - updated_at_ms) > ttl_ms
+	local effective_ttl_ms = ttl_ms
+	if entry.status == "failed" then
+		effective_ttl_ms = math.min(ttl_ms, DETECT_RUNTIME_FAILED_TTL_MS)
+	end
+	return (now_ms() - updated_at_ms) > effective_ttl_ms
 end
 
 ---@param payload string
@@ -1929,15 +1990,17 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 
 	detect_tool_commands_for_filetype_async(filetype, filepath, function(detected)
 		local status = "ready"
+		local updated_at_ms = now_ms()
 		if detected == nil then
 			status = "failed"
 			detected = cached_detected
+			updated_at_ms = updated_at_ms - (DETECT_RUNTIME_FAILED_TTL_MS + 1)
 		end
 
 		local detected_copy = copy_string_map(detected)
 		detect_runtime_cache[cache_key] = {
 			commands = detected_copy,
-			updated_at_ms = now_ms(),
+			updated_at_ms = updated_at_ms,
 			mtime_signature = mtime_signature,
 			status = status,
 		}
@@ -2070,8 +2133,8 @@ end
 -- Helper function to get visual selection
 ---@return string
 local function get_visual_selection()
-	local _, start_line, start_col, _ = unpack(vim.fn.getpos("'<"))
-	local _, end_line, end_col, _ = unpack(vim.fn.getpos("'>"))
+	local _, start_line, start_col, _ = table_unpack(vim.fn.getpos("'<"))
+	local _, end_line, end_col, _ = table_unpack(vim.fn.getpos("'>"))
 	if start_line == 0 or end_line == 0 then
 		return ""
 	end
@@ -2136,7 +2199,7 @@ function M.run_code(range, mode)
 			ui.show_output(ERRORS.VISUAL_EMPTY, mode)
 			return
 		end
-		execution_path = vim.fn.tempname()
+		execution_path = build_temp_execution_path(buffer_path, filetype)
 		local file = io.open(execution_path, "w")
 		if file then
 			local success, err = file:write(code_to_run)
@@ -2484,8 +2547,10 @@ function M.select_build_command(mode)
 					include = has_cmake
 				elseif string.match(cmd_name, "^meson%-") then
 					include = has_meson
-				else
+				elseif tostring(cmd_string or ""):match("^%s*make%s") then
 					include = has_makefile
+				else
+					include = true
 				end
 			end
 
