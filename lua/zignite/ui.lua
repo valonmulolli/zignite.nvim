@@ -803,6 +803,7 @@ local function open_mode_window(mode, buf, term_config)
 		vim.cmd(side .. " vsplit")
 		win = vim.api.nvim_get_current_win()
 		vim.api.nvim_win_set_buf(win, buf)
+		vim.api.nvim_win_set_width(win, term_config.size)
 	elseif mode == "split" then
 		local row_side = term_config.position == "top" and "topleft" or "botright"
 		vim.cmd(row_side .. " split")
