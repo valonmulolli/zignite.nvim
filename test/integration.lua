@@ -599,6 +599,23 @@ local function count_detect_backend_requests()
     return detect_backend_request_count
 end
 
+---@param func function
+---@param target_name string
+---@return any
+local function get_upvalue_by_name(func, target_name)
+    local index = 1
+    while true do
+        local name, value = debug.getupvalue(func, index)
+        if name == nil then
+            return nil
+        end
+        if name == target_name then
+            return value
+        end
+        index = index + 1
+    end
+end
+
 -- Test basic command execution
 local function test_basic_execution()
     config.setup({ mode = "float" })
@@ -2187,6 +2204,88 @@ local function test_picker_detection_failed_cache_retries_early()
 	print("✓ Picker failed-detection retry test passed")
 end
 
+-- Test shebang cache remains bounded across many unique files.
+---@return nil
+local function test_shebang_cache_is_bounded()
+	init.setup({})
+
+	local original_filereadable = vim.fn.filereadable
+	local original_readfile = vim.fn.readfile
+	local shebang_cache = get_upvalue_by_name(init.setup, "shebang_filetype_cache")
+	local shebang_cache_order = get_upvalue_by_name(init.setup, "shebang_filetype_cache_order")
+
+	vim.fn.filereadable = function(path)
+		if type(path) == "string" and path:match("^/tmp/shebang%-cache/") then
+			return 1
+		end
+		if type(original_filereadable) == "function" then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+	vim.fn.readfile = function(path, mode, max_lines)
+		if type(path) == "string" and path:match("^/tmp/shebang%-cache/") then
+			return { "#!/usr/bin/env python" }
+		end
+		if type(original_readfile) == "function" then
+			return original_readfile(path, mode, max_lines)
+		end
+		return {}
+	end
+
+	for index = 1, 300 do
+		local filepath = string.format("/tmp/shebang-cache/%03d/script", index)
+		init.get_command(filepath, "")
+	end
+
+	assert(type(shebang_cache) == "table", "Shebang cache upvalue should be available")
+	assert(type(shebang_cache_order) == "table", "Shebang cache order upvalue should be available")
+	assert(#shebang_cache_order <= 256, "Shebang cache should respect max size")
+	assert(shebang_cache["/tmp/shebang-cache/001/script"] == nil, "Oldest shebang cache entry should be evicted")
+
+	vim.fn.filereadable = original_filereadable
+	vim.fn.readfile = original_readfile
+
+	print("✓ Shebang cache bound test passed")
+end
+
+-- Test detect runtime cache remains bounded across many unique projects.
+---@return nil
+local function test_detect_runtime_cache_is_bounded()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = false,
+		},
+	})
+
+	vim.bo.filetype = "go"
+	local original_expand = vim.fn.expand
+	local detect_cache = get_upvalue_by_name(init.setup, "detect_runtime_cache")
+	local detect_cache_order = get_upvalue_by_name(init.setup, "detect_runtime_cache_order")
+
+	for index = 1, 300 do
+		vim.fn.expand = function(expr)
+			if expr == "%:p" then
+				return string.format("/tmp/detect-cache/%03d/main.go", index)
+			end
+			return original_expand(expr)
+		end
+		init.get_build_commands_for_completion("go")
+	end
+
+	assert(type(detect_cache) == "table", "Detect runtime cache upvalue should be available")
+	assert(type(detect_cache_order) == "table", "Detect runtime cache order upvalue should be available")
+	assert(#detect_cache_order <= 256, "Detect runtime cache should respect max size")
+	assert(detect_cache["go::/tmp/detect-cache/001"] == nil, "Oldest detect runtime cache entry should be evicted")
+
+	vim.fn.expand = original_expand
+
+	print("✓ Detect runtime cache bound test passed")
+end
+
 -- Test Zig command detection from `zig --help` appears in build picker.
 local function test_zig_detected_commands_in_picker()
     init.setup({
@@ -3314,6 +3413,8 @@ test_run_build_completion_nonblocking_prefix()
 test_picker_async_live_merge_refresh()
 test_picker_detection_cache_ttl_and_mtime()
 test_picker_detection_failed_cache_retries_early()
+test_shebang_cache_is_bounded()
+test_detect_runtime_cache_is_bounded()
 test_zig_detected_commands_in_picker()
 test_go_detected_commands_in_picker()
 test_go_detected_commands_with_zig_worker()

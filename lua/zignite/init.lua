@@ -55,14 +55,29 @@ local NORMALIZED_RUNNER_CACHE_MAX = 128
 local last_build_command_by_filetype = {}
 ---@type table<string, table>
 local tool_command_cache = {}
+---@type string[]
+local tool_command_cache_order = {}
+local TOOL_COMMAND_CACHE_MAX = 128
 ---@type table<string, string|false>
 local shebang_filetype_cache = {}
+---@type string[]
+local shebang_filetype_cache_order = {}
+local SHEBANG_FILETYPE_CACHE_MAX = 256
 ---@type table<string, table>
 local package_script_cache = {}
+---@type string[]
+local package_script_cache_order = {}
+local PACKAGE_SCRIPT_CACHE_MAX = 128
 ---@type table<string, table>
 local make_target_cache = {}
+---@type string[]
+local make_target_cache_order = {}
+local MAKE_TARGET_CACHE_MAX = 128
 ---@type table<string, table>
 local detect_runtime_cache = {}
+---@type string[]
+local detect_runtime_cache_order = {}
+local DETECT_RUNTIME_CACHE_MAX = 256
 ---@type table<string, table>
 local detect_runtime_inflight = {}
 ---@type table|nil
@@ -328,6 +343,51 @@ local function build_temp_execution_path(filepath, filetype)
 	return temp_path .. "." .. ext
 end
 
+---@param order string[]
+---@param key string
+---@return nil
+local function touch_cache_key(order, key)
+	for index, existing in ipairs(order) do
+		if existing == key then
+			table.remove(order, index)
+			break
+		end
+	end
+	order[#order + 1] = key
+end
+
+---@param cache table<string, any>
+---@param order string[]
+---@param max_entries number
+---@param key string
+---@param value any
+---@return nil
+local function set_bounded_cache_entry(cache, order, max_entries, key, value)
+	if type(key) ~= "string" or key == "" then
+		return
+	end
+	cache[key] = value
+	touch_cache_key(order, key)
+	while #order > max_entries do
+		local oldest = table.remove(order, 1)
+		if oldest ~= nil then
+			cache[oldest] = nil
+		end
+	end
+end
+
+---@param cache table<string, any>
+---@param order string[]
+---@param key string
+---@return any
+local function get_bounded_cache_entry(cache, order, key)
+	local value = cache[key]
+	if value ~= nil and type(key) == "string" and key ~= "" then
+		touch_cache_key(order, key)
+	end
+	return value
+end
+
 ---@param filepath string
 ---@return string|nil
 local function get_filetype_from_shebang(filepath)
@@ -335,7 +395,7 @@ local function get_filetype_from_shebang(filepath)
 		return nil
 	end
 
-	local cached = shebang_filetype_cache[filepath]
+	local cached = get_bounded_cache_entry(shebang_filetype_cache, shebang_filetype_cache_order, filepath)
 	if cached ~= nil then
 		if cached == false then
 			return nil
@@ -344,23 +404,47 @@ local function get_filetype_from_shebang(filepath)
 	end
 
 	if type(vim.fn.filereadable) ~= "function" or vim.fn.filereadable(filepath) ~= 1 then
-		shebang_filetype_cache[filepath] = false
+		set_bounded_cache_entry(
+			shebang_filetype_cache,
+			shebang_filetype_cache_order,
+			SHEBANG_FILETYPE_CACHE_MAX,
+			filepath,
+			false
+		)
 		return nil
 	end
 	if type(vim.fn.readfile) ~= "function" then
-		shebang_filetype_cache[filepath] = false
+		set_bounded_cache_entry(
+			shebang_filetype_cache,
+			shebang_filetype_cache_order,
+			SHEBANG_FILETYPE_CACHE_MAX,
+			filepath,
+			false
+		)
 		return nil
 	end
 
 	local lines = vim.fn.readfile(filepath, "", 1)
 	if type(lines) ~= "table" or type(lines[1]) ~= "string" then
-		shebang_filetype_cache[filepath] = false
+		set_bounded_cache_entry(
+			shebang_filetype_cache,
+			shebang_filetype_cache_order,
+			SHEBANG_FILETYPE_CACHE_MAX,
+			filepath,
+			false
+		)
 		return nil
 	end
 
 	local first_line = lines[1]
 	if not first_line:match("^#!") then
-		shebang_filetype_cache[filepath] = false
+		set_bounded_cache_entry(
+			shebang_filetype_cache,
+			shebang_filetype_cache_order,
+			SHEBANG_FILETYPE_CACHE_MAX,
+			filepath,
+			false
+		)
 		return nil
 	end
 
@@ -373,12 +457,24 @@ local function get_filetype_from_shebang(filepath)
 		end
 	end
 	if not interpreter then
-		shebang_filetype_cache[filepath] = false
+		set_bounded_cache_entry(
+			shebang_filetype_cache,
+			shebang_filetype_cache_order,
+			SHEBANG_FILETYPE_CACHE_MAX,
+			filepath,
+			false
+		)
 		return nil
 	end
 
 	local mapped = SHEBANG_FILETYPE_MAP[interpreter:lower()]
-	shebang_filetype_cache[filepath] = mapped or false
+	set_bounded_cache_entry(
+		shebang_filetype_cache,
+		shebang_filetype_cache_order,
+		SHEBANG_FILETYPE_CACHE_MAX,
+		filepath,
+		mapped or false
+	)
 	return mapped
 end
 
@@ -1286,36 +1382,36 @@ end
 ---@param parser fun(lines: string[]): table<string, string>
 ---@return table<string, string>
 local function detect_commands_from_tool(cache_key, tool, executable, command_argv, parser)
-	local cached = tool_command_cache[cache_key]
+	local cached = get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
 	if cached ~= nil then
 		return copy_string_map(cached)
 	end
 
 	local zig_detected = detect_commands_with_zig_backend(tool)
 	if zig_detected ~= nil then
-		tool_command_cache[cache_key] = zig_detected
+		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, zig_detected)
 		return copy_string_map(zig_detected)
 	end
 
 	if type(vim.fn.executable) ~= "function" or vim.fn.executable(executable) ~= 1 then
-		tool_command_cache[cache_key] = {}
+		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
 		return {}
 	end
 
 	if type(vim.fn.systemlist) ~= "function" then
-		tool_command_cache[cache_key] = {}
+		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
 		return {}
 	end
 
 	local output_lines = vim.fn.systemlist(command_argv)
 	local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
 	if type(output_lines) ~= "table" or shell_error ~= 0 then
-		tool_command_cache[cache_key] = {}
+		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
 		return {}
 	end
 
 	local detected = parser(output_lines)
-	tool_command_cache[cache_key] = detected
+	set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
 	return copy_string_map(detected)
 end
 
@@ -1336,7 +1432,7 @@ local function detect_commands_from_tool_async(
 	on_done,
 	force_refresh
 )
-	local cached = tool_command_cache[cache_key]
+	local cached = get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
 	if force_refresh ~= true and cached ~= nil then
 		on_done(copy_string_map(cached))
 		return
@@ -1344,73 +1440,79 @@ local function detect_commands_from_tool_async(
 
 	local function run_command_fallback()
 		if type(vim.fn.executable) ~= "function" or vim.fn.executable(executable) ~= 1 then
-			tool_command_cache[cache_key] = {}
+			set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
 			on_done({})
 			return
 		end
 
-			if type(vim.fn.jobstart) == "function" then
-				local lines = {}
-				local job_id = vim.fn.jobstart(command_argv, {
-					stdout_buffered = true,
-					stderr_buffered = true,
-					on_stdout = function(_, data)
-						if type(data) ~= "table" then
-							return
+		if type(vim.fn.jobstart) == "function" then
+			local lines = {}
+			local job_id = vim.fn.jobstart(command_argv, {
+				stdout_buffered = true,
+				stderr_buffered = true,
+				on_stdout = function(_, data)
+					if type(data) ~= "table" then
+						return
+					end
+					for _, raw_line in ipairs(data) do
+						local line = tostring(raw_line or "")
+						if trim_text(line) ~= "" then
+							lines[#lines + 1] = line
 						end
-						for _, raw_line in ipairs(data) do
-							local line = tostring(raw_line or "")
-							if trim_text(line) ~= "" then
-								lines[#lines + 1] = line
-							end
+					end
+				end,
+				on_stderr = function(_, data)
+					if type(data) ~= "table" then
+						return
+					end
+					for _, raw_line in ipairs(data) do
+						local line = tostring(raw_line or "")
+						if trim_text(line) ~= "" then
+							lines[#lines + 1] = line
 						end
-					end,
-					on_stderr = function(_, data)
-						if type(data) ~= "table" then
-							return
-						end
-						for _, raw_line in ipairs(data) do
-							local line = tostring(raw_line or "")
-							if trim_text(line) ~= "" then
-								lines[#lines + 1] = line
-							end
-						end
-					end,
-					on_exit = function(_, exit_code)
-						if tonumber(exit_code) ~= 0 then
-							on_done(nil)
-							return
-						end
-						local detected = parser(lines)
-						tool_command_cache[cache_key] = detected
-						on_done(copy_string_map(detected))
-					end,
-				})
+					end
+				end,
+				on_exit = function(_, exit_code)
+					if tonumber(exit_code) ~= 0 then
+						on_done(nil)
+						return
+					end
+					local detected = parser(lines)
+					set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
+					on_done(copy_string_map(detected))
+				end,
+			})
 			if type(job_id) == "number" and job_id > 0 then
 				return
 			end
 		end
 
-			if type(vim.fn.systemlist) == "function" then
-				local output_lines = vim.fn.systemlist(command_argv)
-				local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
-				if type(output_lines) ~= "table" or shell_error ~= 0 then
-					on_done(nil)
-					return
-				end
+		if type(vim.fn.systemlist) == "function" then
+			local output_lines = vim.fn.systemlist(command_argv)
+			local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+			if type(output_lines) ~= "table" or shell_error ~= 0 then
+				on_done(nil)
+				return
+			end
 
-				local detected = parser(output_lines)
-				tool_command_cache[cache_key] = detected
+			local detected = parser(output_lines)
+			set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
 			on_done(copy_string_map(detected))
 			return
 		end
 
-			on_done(nil)
-		end
+		on_done(nil)
+	end
 
 	detect_commands_with_zig_backend_async(tool, function(zig_detected)
 		if zig_detected ~= nil then
-			tool_command_cache[cache_key] = zig_detected
+			set_bounded_cache_entry(
+				tool_command_cache,
+				tool_command_cache_order,
+				TOOL_COMMAND_CACHE_MAX,
+				cache_key,
+				zig_detected
+			)
 			on_done(copy_string_map(zig_detected))
 			return
 		end
@@ -1638,22 +1740,34 @@ local function detect_makefile_targets(filepath)
 	end
 
 	local mtime_key = get_file_mtime_key(makefile_path)
-	local cached = make_target_cache[makefile_path]
+	local cached = get_bounded_cache_entry(make_target_cache, make_target_cache_order, makefile_path)
 	if cached and cached.mtime_key == mtime_key then
 		return copy_string_map(cached.commands)
 	end
 
 	local lines = vim.fn.readfile(makefile_path)
 	if type(lines) ~= "table" then
-		make_target_cache[makefile_path] = { mtime_key = mtime_key, commands = {} }
+		set_bounded_cache_entry(
+			make_target_cache,
+			make_target_cache_order,
+			MAKE_TARGET_CACHE_MAX,
+			makefile_path,
+			{ mtime_key = mtime_key, commands = {} }
+		)
 		return {}
 	end
 
 	local commands = parse_makefile_targets(lines)
-	make_target_cache[makefile_path] = {
-		mtime_key = mtime_key,
-		commands = copy_string_map(commands),
-	}
+	set_bounded_cache_entry(
+		make_target_cache,
+		make_target_cache_order,
+		MAKE_TARGET_CACHE_MAX,
+		makefile_path,
+		{
+			mtime_key = mtime_key,
+			commands = copy_string_map(commands),
+		}
+	)
 	return commands
 end
 
@@ -1679,14 +1793,20 @@ local function detect_package_scripts(filepath)
 	end
 
 	local mtime_key = get_file_mtime_key(package_json_path)
-	local cached = package_script_cache[package_json_path]
+	local cached = get_bounded_cache_entry(package_script_cache, package_script_cache_order, package_json_path)
 	if cached and cached.mtime_key == mtime_key then
 		return copy_string_map(cached.commands)
 	end
 
 	local lines = vim.fn.readfile(package_json_path)
 	if type(lines) ~= "table" or #lines == 0 then
-		package_script_cache[package_json_path] = { mtime_key = mtime_key, commands = {} }
+		set_bounded_cache_entry(
+			package_script_cache,
+			package_script_cache_order,
+			PACKAGE_SCRIPT_CACHE_MAX,
+			package_json_path,
+			{ mtime_key = mtime_key, commands = {} }
+		)
 		return {}
 	end
 
@@ -1708,10 +1828,16 @@ local function detect_package_scripts(filepath)
 		end
 	end
 
-	package_script_cache[package_json_path] = {
-		mtime_key = mtime_key,
-		commands = copy_string_map(commands),
-	}
+	set_bounded_cache_entry(
+		package_script_cache,
+		package_script_cache_order,
+		PACKAGE_SCRIPT_CACHE_MAX,
+		package_json_path,
+		{
+			mtime_key = mtime_key,
+			commands = copy_string_map(commands),
+		}
+	)
 	return commands
 end
 
@@ -1953,7 +2079,7 @@ end
 local function get_cached_detected_commands(filetype, filepath)
 	local cache_key = detect_runtime_cache_key(filetype, filepath)
 	local mtime_signature = get_mtime_signature_for_filetype(filetype, filepath)
-	local entry = detect_runtime_cache[cache_key]
+	local entry = get_bounded_cache_entry(detect_runtime_cache, detect_runtime_cache_order, cache_key)
 	local cached_detected = {}
 	if type(entry) == "table" and type(entry.commands) == "table" then
 		cached_detected = copy_string_map(entry.commands)
@@ -1998,12 +2124,18 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		end
 
 		local detected_copy = copy_string_map(detected)
-		detect_runtime_cache[cache_key] = {
-			commands = detected_copy,
-			updated_at_ms = updated_at_ms,
-			mtime_signature = mtime_signature,
-			status = status,
-		}
+			set_bounded_cache_entry(
+				detect_runtime_cache,
+				detect_runtime_cache_order,
+				DETECT_RUNTIME_CACHE_MAX,
+				cache_key,
+				{
+					commands = detected_copy,
+					updated_at_ms = updated_at_ms,
+					mtime_signature = mtime_signature,
+					status = status,
+				}
+			)
 
 		local merged_commands = merge_build_commands(filetype, detected_copy)
 		local pending = detect_runtime_inflight[cache_key]
@@ -3063,10 +3195,15 @@ function M.setup(opts)
 	normalized_runner_order = {}
 	last_build_command_by_filetype = {}
 	tool_command_cache = {}
+	tool_command_cache_order = {}
 	shebang_filetype_cache = {}
+	shebang_filetype_cache_order = {}
 	package_script_cache = {}
+	package_script_cache_order = {}
 	make_target_cache = {}
+	make_target_cache_order = {}
 	detect_runtime_cache = {}
+	detect_runtime_cache_order = {}
 	detect_runtime_inflight = {}
 	config.setup(opts)
 	utils.clear_project_cache()
