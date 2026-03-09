@@ -19,6 +19,16 @@ const DAEMON_RES_BEGIN = "@@ZQF_RES_BEGIN";
 const DAEMON_RES_END = "@@ZQF_RES_END";
 const DAEMON_MAX_LINE = 16 * 1024 * 1024;
 
+const TailLineViews = struct {
+    items: [][]const u8,
+    start_idx: usize,
+    truncated: bool,
+
+    fn deinit(self: *TailLineViews, allocator: std.mem.Allocator) void {
+        allocator.free(self.items);
+    }
+};
+
 const LineRing = struct {
     allocator: std.mem.Allocator,
     slots: []?[]u8,
@@ -94,12 +104,11 @@ pub fn parseArgs(args: []const []const u8) !Options {
 }
 
 pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    var truncated = false;
-    const input = try readStdinCapped(allocator, options.max_bytes, &truncated);
+    const input = try readStdinAll(allocator);
     defer allocator.free(input);
 
     const stdout = std.fs.File.stdout().deprecatedWriter();
-    try processQuickfixPayload(allocator, input, options, truncated, stdout);
+    try processQuickfixPayload(allocator, input, options, false, stdout);
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
@@ -176,34 +185,34 @@ fn processQuickfixPayload(
     already_truncated: bool,
     writer: anytype,
 ) !void {
-    var truncated = already_truncated;
-    var effective_input = input;
-    if (effective_input.len > options.max_bytes) {
-        effective_input = effective_input[0..options.max_bytes];
-        truncated = true;
+    var tail_lines = try collectTailLineViews(allocator, input, options.max_bytes);
+    defer tail_lines.deinit(allocator);
+
+    var start_idx = tail_lines.start_idx;
+    const visible_count = tail_lines.items.len - start_idx;
+    const overflow_lines = visible_count > options.max_lines;
+    if (overflow_lines) {
+        start_idx = tail_lines.items.len - options.max_lines;
     }
-
-    var ring = try LineRing.init(allocator, options.max_lines);
-    defer ring.deinit();
-
-    try splitLinesIntoRing(&ring, effective_input);
-
-    const overflow_lines = ring.total_seen > options.max_lines;
-    const is_truncated = truncated or overflow_lines;
+    const final_count = tail_lines.items.len - start_idx;
+    const is_truncated = already_truncated or tail_lines.truncated or overflow_lines;
 
     if (is_truncated) {
         try writer.writeAll("[zignite] quickfix output truncated\n");
     }
 
     const strip_enabled = options.strip_ansi and options.strip_max_lines > 0;
-    var strip_from_idx: usize = ring.len;
+    var strip_from_idx = tail_lines.items.len;
     if (strip_enabled) {
-        strip_from_idx = if (options.strip_max_lines >= ring.len) 0 else ring.len - options.strip_max_lines;
+        strip_from_idx = if (options.strip_max_lines >= final_count)
+            start_idx
+        else
+            tail_lines.items.len - options.strip_max_lines;
     }
 
-    var i: usize = 0;
-    while (i < ring.len) : (i += 1) {
-        const original_line = ring.at(i);
+    var i = start_idx;
+    while (i < tail_lines.items.len) : (i += 1) {
+        const original_line = tail_lines.items[i];
         var tmp_line: ?[]u8 = null;
         var line_view: []const u8 = original_line;
 
@@ -287,7 +296,7 @@ fn parseBool(value: []const u8) !bool {
     return error.InvalidBoolean;
 }
 
-fn readStdinCapped(allocator: std.mem.Allocator, max_bytes: usize, truncated: *bool) ![]u8 {
+fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(allocator);
 
@@ -299,20 +308,74 @@ fn readStdinCapped(allocator: std.mem.Allocator, max_bytes: usize, truncated: *b
         if (n == 0) {
             break;
         }
-
-        if (list.items.len < max_bytes) {
-            const remaining = max_bytes - list.items.len;
-            const take = @min(remaining, n);
-            try list.appendSlice(allocator, buf[0..take]);
-            if (take < n) {
-                truncated.* = true;
-            }
-        } else {
-            truncated.* = true;
-        }
+        try list.appendSlice(allocator, buf[0..n]);
     }
 
     return try list.toOwnedSlice(allocator);
+}
+
+fn collectTailLineViews(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    max_bytes: usize,
+) !TailLineViews {
+    var lines: std.ArrayList([]const u8) = .empty;
+    errdefer lines.deinit(allocator);
+
+    var total_bytes: usize = 0;
+    var start_idx: usize = 0;
+    var truncated = false;
+
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < input.len) : (i += 1) {
+        if (input[i] != '\n') {
+            continue;
+        }
+
+        var line = input[start..i];
+        if (line.len > 0 and line[line.len - 1] == '\r') {
+            line = line[0 .. line.len - 1];
+        }
+        if (line.len > 0) {
+            try lines.append(allocator, line);
+            total_bytes += line.len + 1;
+            while (total_bytes > max_bytes and start_idx + 1 < lines.items.len) {
+                total_bytes -= lines.items[start_idx].len + 1;
+                start_idx += 1;
+                truncated = true;
+            }
+            if (total_bytes > max_bytes) {
+                truncated = true;
+            }
+        }
+        start = i + 1;
+    }
+
+    if (start < input.len) {
+        var tail = input[start..];
+        if (tail.len > 0 and tail[tail.len - 1] == '\r') {
+            tail = tail[0 .. tail.len - 1];
+        }
+        if (tail.len > 0) {
+            try lines.append(allocator, tail);
+            total_bytes += tail.len + 1;
+            while (total_bytes > max_bytes and start_idx + 1 < lines.items.len) {
+                total_bytes -= lines.items[start_idx].len + 1;
+                start_idx += 1;
+                truncated = true;
+            }
+            if (total_bytes > max_bytes) {
+                truncated = true;
+            }
+        }
+    }
+
+    return .{
+        .items = try lines.toOwnedSlice(allocator),
+        .start_idx = start_idx,
+        .truncated = truncated,
+    };
 }
 
 fn splitLinesIntoRing(ring: *LineRing, input: []const u8) !void {
@@ -456,4 +519,23 @@ fn stripTrailingCR(line: []const u8) []const u8 {
         return line[0 .. line.len - 1];
     }
     return line;
+}
+
+test "quickfix max_bytes keeps newest lines" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try processQuickfixPayload(allocator, "first-line\nsecond-line\nnewest-line\n", .{
+        .max_lines = 10,
+        .max_bytes = 12,
+        .strip_ansi = false,
+        .strip_max_lines = 10,
+        .parse_diagnostics = false,
+    }, false, out.writer(allocator));
+
+    try std.testing.expectEqualStrings(
+        "[zignite] quickfix output truncated\nnewest-line\n",
+        out.items,
+    );
 }
