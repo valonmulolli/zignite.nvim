@@ -27,46 +27,43 @@ M.defaults = {
 	--   $dir               - Full directory path
 	--   $fileExt           - File extension
 	--   $dirName           - Just the directory name (not full path)
-		runners = {
-			-- Compiled languages - optimized for speed
-			c = {
-				cmd = {
-					"cd $dir",
-					"gcc $fileName -o /tmp/$fileNameWithoutExt",
-					"/tmp/$fileNameWithoutExt",
-				},
-				cleanup_command = "rm /tmp/$fileNameWithoutExt",
+	runners = {
+		-- Compiled languages.
+		-- Multi-step compile+run flows still need a shell join internally, but these
+		-- defaults avoid extra `cd`/probe work and use absolute paths directly.
+		c = {
+			cmd = {
+				"gcc $file -o /tmp/$fileNameWithoutExt",
+				"/tmp/$fileNameWithoutExt",
 			},
-			cpp = {
-				cmd = {
-					"cd $dir",
-					"(command -v g++ >/dev/null 2>&1 && g++ -pipe $fileName -o /tmp/$fileNameWithoutExt || clang++ -pipe -fuse-ld=lld $fileName -o /tmp/$fileNameWithoutExt)",
-					"/tmp/$fileNameWithoutExt",
-				},
-				cleanup_command = "rm /tmp/$fileNameWithoutExt",
+			cleanup_command = "rm /tmp/$fileNameWithoutExt",
+		},
+		cpp = {
+			cmd = {
+				"c++ -pipe $file -o /tmp/$fileNameWithoutExt",
+				"/tmp/$fileNameWithoutExt",
 			},
-			rust = {
-				cmd = {
-					"cd $dir",
-					"rustc $fileName -o /tmp/$fileNameWithoutExt",
-					"/tmp/$fileNameWithoutExt",
-				},
-				cleanup_command = "rm /tmp/$fileNameWithoutExt",
+			cleanup_command = "rm /tmp/$fileNameWithoutExt",
+		},
+		rust = {
+			cmd = {
+				"rustc $file -o /tmp/$fileNameWithoutExt",
+				"/tmp/$fileNameWithoutExt",
 			},
-			go = "go run $file",
+			cleanup_command = "rm /tmp/$fileNameWithoutExt",
+		},
+		go = "go run $file",
 		zig = "zig run $file",
 		java = {
 			cmd = {
-				"cd $dir",
-				"javac $fileName",
-				"java $fileNameWithoutExt",
+				"javac $file",
+				"java -cp $dir $fileNameWithoutExt",
 			},
-			cleanup_command = "rm -f $fileNameWithoutExt.class",
+			cleanup_command = "rm -f $dir/$fileNameWithoutExt.class",
 		},
 		kotlin = {
 			cmd = {
-				"cd $dir",
-				"kotlinc $fileName -include-runtime -d /tmp/$fileNameWithoutExt.jar",
+				"kotlinc $file -include-runtime -d /tmp/$fileNameWithoutExt.jar",
 				"java -jar /tmp/$fileNameWithoutExt.jar",
 			},
 			cleanup_command = "rm /tmp/$fileNameWithoutExt.jar",
@@ -96,8 +93,7 @@ M.defaults = {
 		elixir = "elixir $file",
 		haskell = {
 			cmd = {
-				"cd $dir",
-				"ghc -o /tmp/$fileNameWithoutExt $fileName",
+				"ghc -o /tmp/$fileNameWithoutExt $file",
 				"/tmp/$fileNameWithoutExt",
 			},
 			cleanup_command = "rm /tmp/$fileNameWithoutExt",
@@ -105,8 +101,7 @@ M.defaults = {
 		odin = "odin run $file -file",
 		fortran = {
 			cmd = {
-				"cd $dir",
-				"gfortran $fileName -o /tmp/$fileNameWithoutExt",
+				"gfortran $file -o /tmp/$fileNameWithoutExt",
 				"/tmp/$fileNameWithoutExt",
 			},
 			cleanup_command = "rm /tmp/$fileNameWithoutExt",

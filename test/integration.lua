@@ -32,7 +32,9 @@ local exported_globals = {
 local suites = {
 	"integration.core",
 	"integration.quickfix",
-	"integration.picker",
+	"integration.build_select",
+	"integration.build_execute",
+	"integration.build_resolve",
 	"integration.detect",
 	"integration.runtime",
 }

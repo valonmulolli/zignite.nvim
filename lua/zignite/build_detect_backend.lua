@@ -1,0 +1,381 @@
+---@type table
+local M = {}
+
+local DETECT_REQ_BEGIN = "@@ZDET_REQ_BEGIN"
+local DETECT_REQ_END = "@@ZDET_REQ_END"
+local DETECT_RES_BEGIN = "@@ZDET_RES_BEGIN"
+local DETECT_RES_END = "@@ZDET_RES_END"
+local DETECT_WORKER_WAIT_MS = 1200
+local DETECT_WORKER_REQUEST_TIMEOUT_MS = 3000
+
+local ZIG_EXECUTABLE = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h") .. "/zig/zig-out/bin/zignite"
+
+---@type table|nil
+local detect_worker = nil
+
+---@param value string
+---@return string
+local function trim_text(value)
+	if type(value) ~= "string" then
+		return ""
+	end
+	return (value:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+---@param timeout_ms integer
+---@param callback fun():nil
+---@return table|nil
+local function start_request_timer(timeout_ms, callback)
+	local uv = vim.uv or vim.loop
+	if not uv or type(uv.new_timer) ~= "function" then
+		return nil
+	end
+	local timer = uv.new_timer()
+	if not timer then
+		return nil
+	end
+	timer:start(timeout_ms, 0, vim.schedule_wrap(function()
+		pcall(function()
+			timer:stop()
+		end)
+		pcall(function()
+			timer:close()
+		end)
+		callback()
+	end))
+	return timer
+end
+
+---@param timer table|nil
+---@return nil
+local function stop_request_timer(timer)
+	if not timer then
+		return
+	end
+	pcall(function()
+		timer:stop()
+	end)
+	pcall(function()
+		timer:close()
+	end)
+end
+
+---@param tbl table<string, string>|nil
+---@return table<string, string>
+local function copy_string_map(tbl)
+	---@type table<string, string>
+	local out = {}
+	if type(tbl) ~= "table" then
+		return out
+	end
+	for key, value in pairs(tbl) do
+		if type(key) == "string" and type(value) == "string" then
+			out[key] = value
+		end
+	end
+	return out
+end
+
+---@param worker table
+---@return nil
+local function flush_detect_worker_fallbacks(worker)
+	if not worker or not worker.pending then
+		return
+	end
+	for _, request in pairs(worker.pending) do
+		stop_request_timer(request.timer)
+		if type(request.callbacks) == "table" then
+			for _, callback in ipairs(request.callbacks) do
+				if type(callback) == "function" then
+					pcall(callback, nil)
+				end
+			end
+		end
+		request.failed = true
+		request.completed = true
+	end
+	worker.pending = {}
+	worker.active_id = nil
+	worker.active_lines = {}
+end
+
+---@param worker table
+---@param data string[]|nil
+---@return nil
+local function handle_detect_worker_stdout(worker, data)
+	if type(data) ~= "table" then
+		return
+	end
+
+	for _, raw_line in ipairs(data) do
+		local line = tostring(raw_line or "")
+		if line == "" then
+			goto continue
+		end
+
+		local begin_id = line:match("^" .. DETECT_RES_BEGIN .. "%s+(%d+)$")
+		if begin_id then
+			worker.active_id = tonumber(begin_id)
+			worker.active_lines = {}
+			goto continue
+		end
+
+		if worker.active_id then
+			local end_id = line:match("^" .. DETECT_RES_END .. "%s+(%d+)$")
+			if end_id and tonumber(end_id) == worker.active_id then
+				local request = worker.pending[worker.active_id]
+				worker.pending[worker.active_id] = nil
+				local completed_lines = worker.active_lines
+				worker.active_id = nil
+				worker.active_lines = {}
+				if request then
+					stop_request_timer(request.timer)
+					if type(request.callbacks) == "table" then
+						local commands = worker.build_from_names(request.tool or "", completed_lines)
+						for _, callback in ipairs(request.callbacks) do
+							if type(callback) == "function" then
+								pcall(callback, copy_string_map(commands))
+							end
+						end
+					end
+					request.lines = completed_lines
+					request.completed = true
+					request.failed = false
+				end
+			else
+				if line:sub(1, 1) == "\t" then
+					worker.active_lines[#worker.active_lines + 1] = line:sub(2)
+				else
+					worker.active_lines[#worker.active_lines + 1] = line
+				end
+			end
+		end
+
+		::continue::
+	end
+end
+
+---@return boolean
+local function has_zig_backend()
+	return type(vim.fn.executable) == "function" and vim.fn.executable(ZIG_EXECUTABLE) == 1
+end
+
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return table|nil
+local function ensure_detect_worker(build_from_names)
+	if not has_zig_backend() then
+		return nil
+	end
+	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" then
+		return nil
+	end
+	if detect_worker and type(detect_worker.job_id) == "number" and detect_worker.job_id > 0 then
+		return detect_worker
+	end
+
+	local worker = {
+		job_id = nil,
+		next_request_id = 0,
+		pending = {},
+		active_id = nil,
+		active_lines = {},
+		build_from_names = build_from_names,
+	}
+
+	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--detect-daemon" }, {
+		stdout_buffered = false,
+		on_stdout = function(_, data)
+			handle_detect_worker_stdout(worker, data)
+		end,
+		on_exit = function()
+			if detect_worker == worker then
+				detect_worker = nil
+			end
+			flush_detect_worker_fallbacks(worker)
+		end,
+	})
+
+	if type(job_id) ~= "number" or job_id <= 0 then
+		return nil
+	end
+	worker.job_id = job_id
+	detect_worker = worker
+	return worker
+end
+
+---@param tool string
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return table<string, string>|nil
+function M.detect_with_zig_worker(tool, build_from_names)
+	if type(vim.wait) ~= "function" then
+		return nil
+	end
+	local worker = ensure_detect_worker(build_from_names)
+	if not worker then
+		return nil
+	end
+
+	worker.next_request_id = worker.next_request_id + 1
+	local request_id = worker.next_request_id
+	local request = { completed = false, failed = false, lines = {} }
+	worker.pending[request_id] = request
+
+	local payload = string.format("%s %d %s\n%s %d\n", DETECT_REQ_BEGIN, request_id, tool, DETECT_REQ_END, request_id)
+	local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
+	if not ok_send then
+		worker.pending[request_id] = nil
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if detect_worker == worker then
+			detect_worker = nil
+		end
+		return nil
+	end
+
+	local ok_wait = vim.wait(DETECT_WORKER_WAIT_MS, function()
+		return request.completed == true
+	end, 20)
+	if not ok_wait then
+		worker.pending[request_id] = nil
+		return nil
+	end
+	if request.failed then
+		return nil
+	end
+
+	local commands = build_from_names(tool, request.lines)
+	if vim.tbl_isempty(commands) then
+		return nil
+	end
+	return commands
+end
+
+---@param tool string
+---@param on_done fun(commands: table<string, string>|nil):nil
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return boolean
+function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
+	local worker = ensure_detect_worker(build_from_names)
+	if not worker then
+		return false
+	end
+
+	worker.next_request_id = worker.next_request_id + 1
+	local request_id = worker.next_request_id
+	local request = {
+		tool = tool,
+		callbacks = { on_done },
+		timer = nil,
+	}
+	request.timer = start_request_timer(DETECT_WORKER_REQUEST_TIMEOUT_MS, function()
+		if worker.pending[request_id] ~= request then
+			return
+		end
+		worker.pending[request_id] = nil
+		if worker.active_id == request_id then
+			worker.active_id = nil
+			worker.active_lines = {}
+		end
+		if type(request.callbacks) == "table" then
+			for _, callback in ipairs(request.callbacks) do
+				if type(callback) == "function" then
+					pcall(callback, nil)
+				end
+			end
+		end
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if detect_worker == worker then
+			detect_worker = nil
+		end
+	end)
+	worker.pending[request_id] = request
+
+	local payload = string.format("%s %d %s\n%s %d\n", DETECT_REQ_BEGIN, request_id, tool, DETECT_REQ_END, request_id)
+	local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
+	if not ok_send then
+		stop_request_timer(request.timer)
+		worker.pending[request_id] = nil
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+		if detect_worker == worker then
+			detect_worker = nil
+		end
+		return false
+	end
+
+	return true
+end
+
+---@param tool string
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return table<string, string>|nil
+function M.detect_with_zig_once(tool, build_from_names)
+	if not has_zig_backend() or type(vim.fn.systemlist) ~= "function" then
+		return nil
+	end
+	local output_lines = vim.fn.systemlist({ ZIG_EXECUTABLE, "--detect", "--tool=" .. tool })
+	local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+	if type(output_lines) ~= "table" or shell_error ~= 0 then
+		return nil
+	end
+	local commands = build_from_names(tool, output_lines)
+	if vim.tbl_isempty(commands) then
+		return nil
+	end
+	return commands
+end
+
+---@param tool string
+---@param on_done fun(commands: table<string, string>|nil):nil
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return boolean
+function M.detect_with_zig_once_async(tool, on_done, build_from_names)
+	if not has_zig_backend() then
+		return false
+	end
+	if type(vim.fn.jobstart) ~= "function" then
+		return false
+	end
+
+	---@type string[]
+	local output_lines = {}
+	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--detect", "--tool=" .. tool }, {
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, data)
+			if type(data) ~= "table" then
+				return
+			end
+			for _, raw_line in ipairs(data) do
+				local line = trim_text(tostring(raw_line or ""))
+				if line ~= "" then
+					output_lines[#output_lines + 1] = line
+				end
+			end
+		end,
+		on_exit = function(_, exit_code)
+			if exit_code ~= 0 then
+				on_done(nil)
+				return
+			end
+			on_done(build_from_names(tool, output_lines))
+		end,
+	})
+	return type(job_id) == "number" and job_id > 0
+end
+
+---@return nil
+function M.reset()
+	if detect_worker and type(detect_worker.job_id) == "number" and detect_worker.job_id > 0 then
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, detect_worker.job_id)
+		end
+	end
+	detect_worker = nil
+end
+
+return M
