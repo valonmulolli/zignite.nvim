@@ -248,13 +248,13 @@ NOTE for Lazy.nvim users:
   In plugin spec `keys = { ... }`, use Lazy key format:
     { "<leader>rl", "<cmd>RunLive<cr>", mode = "n", desc = "Run live/watch command" }
   The table format with leading mode (e.g. { "n", "<leader>rl", ... }) is for
-  `require("zignite.config").setup({ keymaps = { ... } })`.
+  `require("zignite").setup({ keymaps = { ... } })`.
 
 ==============================================================================
 CONFIGURATION                                          *zignite-configuration*
 
 Basic setup: >lua
-    require("zignite.config").setup({
+    require("zignite").setup({
         mode = "float",  -- Default output mode
         timeout = nil,   -- Timeout in ms (e.g. 5000). nil = disabled.
         close_behavior = "stop", -- stop|hide for :RunClose and float close key
@@ -274,8 +274,7 @@ Customize file execution commands: >lua
         javascript = "node $file",
         c = {
             cmd = {
-                "cd $dir",
-                "gcc $fileName -o /tmp/$fileNameWithoutExt",
+                "gcc $file -o /tmp/$fileNameWithoutExt",
                 "/tmp/$fileNameWithoutExt",
             },
             cleanup_command = "rm /tmp/$fileNameWithoutExt"
