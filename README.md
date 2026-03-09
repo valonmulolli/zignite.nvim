@@ -11,7 +11,7 @@
 
 ---
 
-Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performance and responsiveness. Unlike traditional runners that just pipe output to a text buffer, Zignite uses fully interactive terminal buffers inside floating windows. This means support for user input, full ANSI colors, and real-time streaming, all powered by a lightweight Zig backend for process safety.
+Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performance and responsiveness. Unlike traditional runners that just pipe output to a text buffer, Zignite uses interactive terminal buffers in floats, splits, vsplits, and tabs. This means support for user input, full ANSI colors, and real-time streaming, with a lightweight Zig backend handling timeout execution, quickfix processing, and command detection.
 
 ## Features
 
@@ -130,16 +130,17 @@ require('zignite.config').setup({
         x = 0.5,
         y = 0.5,
         border_hl = "FloatBorder",
-        close_key = "q",
-        startinsert = true,       -- Enter insert mode automatically (useful for interactive scripts)
+        close_key = "<Esc>",
+        startinsert = false,      -- Float opens in normal mode by default
     },
     
-    spinner = "dots",             -- "dots", "line", "bar", "clock", etc.
+    spinner = "dots",             -- "dots", "line", "bar", "arrows", etc.
     enable_animations = true,     -- Show spinner in window title
     close_behavior = "stop",      -- "stop" (default) or "hide" for :RunClose / float close key
 
     term = {
         position = "bot",         -- split: top|bot, vsplit: left|right
+        size = 15,
         focus = true,
         startinsert = true,
     },
@@ -314,7 +315,7 @@ You can use these variables in your custom runner commands:
 ## Troubleshooting
 
 ### "Zig executable not found"
-Run `zig build` inside the plugin's `zig/` directory manually.
+Run `zig build -Doptimize=ReleaseFast` inside the plugin's `zig/` directory manually.
 
 ### "No runner configured"
 Add it to your setup:
