@@ -1,4 +1,5 @@
 local bazel = require("zignite.build.parsers.bazel")
+local cargo = require("zignite.build.parsers.cargo")
 local cmake = require("zignite.build.parsers.cmake")
 local jvm = require("zignite.build.parsers.jvm")
 local make = require("zignite.build.parsers.make")
@@ -14,5 +15,6 @@ M.detect_makefile_targets = make.detect_makefile_targets
 M.detect_package_scripts = package_json.detect_package_scripts
 M.detect_java_like_project_commands = jvm.detect_java_like_project_commands
 M.detect_bazel_project_commands = bazel.detect_bazel_project_commands
+M.detect_cargo_project_commands = cargo.detect_cargo_project_commands
 
 return M

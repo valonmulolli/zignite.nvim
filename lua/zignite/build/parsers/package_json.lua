@@ -1,5 +1,6 @@
 local common = require("zignite.build.parsers.common")
 local config = require("zignite.config")
+local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local utils = require("zignite.utils")
 
@@ -34,6 +35,25 @@ function M.detect_package_scripts(filepath)
 	)
 	if cached and cached.mtime_key == mtime_key and cached.package_manager == package_manager then
 		return state.copy_string_map(cached.commands)
+	end
+
+	local zig_names = detect_backend.parse_project_names_once("package-json", package_json_path)
+	if type(zig_names) == "table" and #zig_names > 0 then
+		---@type table<string, string>
+		local commands = {}
+		for _, script_name in ipairs(zig_names) do
+			if type(script_name) == "string" and script_name ~= "" then
+				commands[script_name] = utils.format_package_script_command(package_manager, script_name)
+			end
+		end
+		state.set_bounded_cache_entry(
+			state.package_script_cache,
+			state.package_script_cache_order,
+			state.PACKAGE_SCRIPT_CACHE_MAX,
+			package_json_path,
+			{ mtime_key = mtime_key, package_manager = package_manager, commands = state.copy_string_map(commands) }
+		)
+		return commands
 	end
 
 	local lines = vim.fn.readfile(package_json_path)

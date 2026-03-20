@@ -1,12 +1,11 @@
 local command_helpers = require("zignite.build.picker.commands")
 local filter_helpers = require("zignite.build.picker.filter")
+local input = require("zignite.build.picker.input")
+local keymaps = require("zignite.build.picker.keymaps")
 local layout = require("zignite.build.picker.layout")
 
 ---@type table
 local M = {}
-
-local BUILD_ARG_PLACEHOLDER = "$zignite_args"
-local BUILD_ARG_DISPLAY_PLACEHOLDER = "<args>"
 
 ---@class ZigniteBuildPickerOpts
 ---@field filetype string
@@ -106,35 +105,6 @@ function M.open(opts)
 	---@type { prompt: string, value: string, command: string, name: string }|nil
 	local argument_state = nil
 
-	---@param command string
-	---@param value string|nil
-	---@return string
-	local function command_for_argument_display(command, value)
-		local replacement = value ~= nil and value ~= "" and value or BUILD_ARG_DISPLAY_PLACEHOLDER
-		local escaped = BUILD_ARG_PLACEHOLDER:gsub("(%W)", "%%%1")
-		return command:gsub(escaped, function()
-			return replacement
-		end)
-	end
-
-	---@param command_name string
-	---@return string
-	local function get_argument_help_text(command_name)
-		if filetype == "zig" and command_name == "fetch" then
-			return "Paste GitHub URL only | Enter: run | Esc: cancel | Backspace: edit"
-		end
-		return "Type URL/path | Enter: run | Esc: cancel | Backspace: edit"
-	end
-
-	---@param command_name string
-	---@return string
-	local function get_prompt_buffer_help_line(command_name)
-		if filetype == "zig" and command_name == "fetch" then
-			return " Paste GitHub URL only and press Enter "
-		end
-		return " Type URL/path and press Enter "
-	end
-
 	---@return nil
 	local function apply_filter()
 		filtered_commands, selected_index = filter_helpers.apply_filter(
@@ -226,9 +196,9 @@ function M.open(opts)
 		header_label = argument_state and argument_state.prompt or nil,
 		header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
 		argument_mode = argument_state ~= nil,
-		help_text = argument_state and get_argument_help_text(argument_state.name) or nil,
+		help_text = argument_state and input.get_argument_help_text(filetype, argument_state.name) or nil,
 		preview_text = argument_state and opts.command_for_display(
-			command_for_argument_display(argument_state.command, argument_state.value)
+			input.command_for_argument_display(argument_state.command, argument_state.value)
 		) or nil,
 	})
 	command_lines = initial_command_lines
@@ -263,9 +233,9 @@ function M.open(opts)
 			header_label = argument_state and argument_state.prompt or nil,
 			header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
 			argument_mode = argument_state ~= nil,
-			help_text = argument_state and get_argument_help_text(argument_state.name) or nil,
+			help_text = argument_state and input.get_argument_help_text(filetype, argument_state.name) or nil,
 			preview_text = argument_state and opts.command_for_display(
-				command_for_argument_display(argument_state.command, argument_state.value)
+				input.command_for_argument_display(argument_state.command, argument_state.value)
 			) or nil,
 		})
 		command_lines = updated_command_lines
@@ -323,97 +293,18 @@ function M.open(opts)
 		render_picker()
 	end
 
-	---@return nil
 	local function open_filter_prompt()
-		---@param input string
-		---@return nil
-		local function apply_input(input)
-			if input == nil then
-				return
-			end
-			filter_query = input
-			apply_filter()
-			render_picker()
-		end
-
-		---@return boolean
-		local function run_inline_filter()
-			if type(vim.fn.getcharstr) ~= "function" then
-				return false
-			end
-
-			local original_query = filter_query
-			local current_query = filter_query
-			while true do
-				filter_query = current_query
-				apply_filter()
-				render_picker()
-
-				local ok, key = pcall(vim.fn.getcharstr)
-				if not ok or key == nil then
-					break
-				end
-				if key == "\r" or key == "\n" then
-					break
-				end
-				if key == "\027" then
-					filter_query = original_query
-					apply_filter()
-					render_picker()
-					return true
-				end
-
-				local key_byte = string.byte(key, 1)
-				if key == "\127" or key == "\008" then
-					current_query = current_query:sub(1, math.max(0, #current_query - 1))
-				elseif key == "\021" then
-					current_query = ""
-				elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
-					current_query = current_query .. key
-				end
-			end
-
-			filter_query = current_query
-			apply_filter()
-			render_picker()
-			return true
-		end
-
-		---@return boolean
-		local function run_ui_filter()
-			if not (vim.ui and type(vim.ui.input) == "function") then
-				return false
-			end
-			vim.ui.input({ prompt = "Build filter: ", default = filter_query }, apply_input)
-			return true
-		end
-
-		---@return boolean
-		local function run_cmdline_filter()
-			if type(vim.fn.input) ~= "function" then
-				return false
-			end
-			local entered = vim.fn.input("Build filter: ", filter_query)
-			apply_input(entered)
-			return true
-		end
-
-		local filter_input_mode = picker_config.filter_input or "inline"
-		if filter_input_mode == "inline" then
-			if run_inline_filter() or run_ui_filter() or run_cmdline_filter() then
-				return
-			end
-		elseif filter_input_mode == "ui" then
-			if run_ui_filter() or run_cmdline_filter() then
-				return
-			end
-		else
-			if run_cmdline_filter() then
-				return
-			end
-		end
-
-		vim.notify("Build filter prompt is unavailable in this environment", vim.log.levels.WARN)
+		input.open_filter_prompt({
+			filter_input_mode = picker_config.filter_input or "inline",
+			get_filter_query = function()
+				return filter_query
+			end,
+			set_filter_query = function(value)
+				filter_query = value
+			end,
+			apply_filter = apply_filter,
+			render_picker = render_picker,
+		})
 	end
 
 	---@return nil
@@ -427,65 +318,6 @@ function M.open(opts)
 		end
 	end
 
-	---@param selected table
-	---@return boolean
-	local function open_prompt_buffer_argument_entry(selected)
-		if type(vim.fn.prompt_setprompt) ~= "function" or type(vim.fn.prompt_setcallback) ~= "function" then
-			return false
-		end
-		if not win or not vim.api.nvim_win_is_valid(win) then
-			return false
-		end
-
-		local prompt_buf = vim.api.nvim_create_buf(false, true)
-		local prompt_label = opts.get_command_argument_prompt(filetype, selected.name)
-		local help_line = get_prompt_buffer_help_line(selected.name)
-		local preview_line = " cmd: " .. opts.command_for_display(selected.command)
-
-		vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = prompt_buf })
-		vim.api.nvim_set_option_value("buftype", "prompt", { buf = prompt_buf })
-		vim.api.nvim_set_option_value("modifiable", true, { buf = prompt_buf })
-		vim.api.nvim_buf_set_lines(prompt_buf, 0, -1, false, {
-			" " .. prompt_label .. " ",
-			help_line,
-			preview_line,
-			"",
-		})
-		vim.fn.prompt_setprompt(prompt_buf, "> ")
-
-		local restored = false
-		local function restore_picker_view()
-			if restored then
-				return
-			end
-			restored = true
-			if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_buf_is_valid(buf) then
-				vim.api.nvim_win_set_buf(win, buf)
-				render_picker()
-			end
-		end
-
-		vim.fn.prompt_setcallback(prompt_buf, function(text)
-			local entered = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
-			if entered == "" then
-				restore_picker_view()
-				return
-			end
-			close_picker()
-			opts.run_build_command(selected.name, mode, entered)
-		end)
-
-		vim.api.nvim_win_set_buf(win, prompt_buf)
-		vim.api.nvim_set_option_value("wrap", false, { win = win })
-		vim.api.nvim_set_option_value("cursorline", true, { win = win })
-		vim.keymap.set({ "i", "n" }, "<Esc>", function()
-			restore_picker_view()
-		end, { buffer = prompt_buf, nowait = true })
-		vim.api.nvim_win_set_cursor(win, { 4, 0 })
-		vim.cmd("startinsert")
-		return true
-	end
-
 	---@param index integer
 	---@return nil
 	local function select_command(index)
@@ -493,52 +325,35 @@ function M.open(opts)
 		if not selected then
 			return
 		end
-		if opts.command_requires_arguments(selected.command) and open_prompt_buffer_argument_entry(selected) then
+		if opts.command_requires_arguments(selected.command) and input.open_prompt_buffer_argument_entry({
+			selected = selected,
+			filetype = filetype,
+			win = win,
+			buf = buf,
+			mode = mode,
+			render_picker = render_picker,
+			close_picker = close_picker,
+			run_build_command = opts.run_build_command,
+			command_for_display = opts.command_for_display,
+			get_command_argument_prompt = opts.get_command_argument_prompt,
+		}) then
 			return
 		end
-		if opts.command_requires_arguments(selected.command) and type(vim.fn.getcharstr) == "function" then
-			local current_value = ""
-			argument_state = {
-				prompt = opts.get_command_argument_prompt(filetype, selected.name),
-				value = current_value,
-				command = selected.command,
-				name = selected.name,
-			}
-			while true do
-				render_picker()
-
-				local ok, key = pcall(vim.fn.getcharstr)
-				if not ok or key == nil then
-					break
-				end
-				if key == "\r" or key == "\n" then
-					if current_value:match("^%s*$") then
-						argument_state.value = ""
-						render_picker()
-					else
-						argument_state = nil
-						close_picker()
-						opts.run_build_command(selected.name, mode, current_value)
-						return
-					end
-				elseif key == "\027" then
-					argument_state = nil
-					render_picker()
-					return
-				else
-					local key_byte = string.byte(key, 1)
-					if key == "\127" or key == "\008" then
-						current_value = current_value:sub(1, math.max(0, #current_value - 1))
-					elseif key == "\021" then
-						current_value = ""
-					elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
-						current_value = current_value .. key
-					end
-					argument_state.value = current_value
-				end
-			end
-			argument_state = nil
-			render_picker()
+		if opts.command_requires_arguments(selected.command) and input.run_inline_argument_entry({
+			selected = selected,
+			filetype = filetype,
+			mode = mode,
+			render_picker = render_picker,
+			close_picker = close_picker,
+			run_build_command = opts.run_build_command,
+			get_command_argument_prompt = opts.get_command_argument_prompt,
+			get_argument_state = function()
+				return argument_state
+			end,
+			set_argument_state = function(value)
+				argument_state = value
+			end,
+		}) then
 			return
 		end
 		close_picker()
@@ -556,39 +371,25 @@ function M.open(opts)
 		opts.run_build_command(command_name, mode)
 	end
 
-	vim.keymap.set("n", "j", function()
-		move_selection(1)
-	end, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "k", function()
-		move_selection(-1)
-	end, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "<Down>", function()
-		move_selection(1)
-	end, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "<Up>", function()
-		move_selection(-1)
-	end, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "<CR>", function()
-		if selected_index >= 1 and selected_index <= #filtered_commands then
-			select_command(selected_index)
-		end
-	end, { buffer = buf, nowait = true })
-
-	for index = 1, 9 do
-		vim.keymap.set("n", tostring(index), function()
-			select_command(index)
-		end, { buffer = buf, nowait = true })
-	end
-
-	vim.keymap.set("n", "/", open_filter_prompt, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "c", function()
-		filter_query = ""
-		apply_filter()
-		render_picker()
-	end, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "r", run_last_selected, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "<Esc>", close_picker, { buffer = buf, nowait = true })
-	vim.keymap.set("n", "q", close_picker, { buffer = buf, nowait = true })
+	keymaps.bind({
+		buf = buf,
+		move_selection = move_selection,
+		selected_index = function()
+			return selected_index
+		end,
+		filtered_commands = function()
+			return filtered_commands
+		end,
+		select_command = select_command,
+		open_filter_prompt = open_filter_prompt,
+		clear_filter = function()
+			filter_query = ""
+			apply_filter()
+			render_picker()
+		end,
+		run_last_selected = run_last_selected,
+		close_picker = close_picker,
+	})
 
 	picker_ready = true
 	if pending_refresh_commands then

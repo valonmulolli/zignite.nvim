@@ -215,6 +215,12 @@ local function write_tempfile(text)
 	return path
 end
 
+local function write_file(path, text)
+	local f = assert(io.open(path, "wb"))
+	f:write(text)
+	f:close()
+end
+
 now_ms() -- prime timer source detection
 print(string.format("Zignite benchmark (iterations=%d)", iterations))
 print(string.format("Timer source: %s", time_source))
@@ -369,6 +375,70 @@ if file_exists(backend_path) then
 
 	os.remove(large_input)
 	os.remove(diag_input)
+
+	local parser_root = os.tmpname() .. "_zignite_parser_bench"
+	local parser_src_dir = parser_root .. "/src"
+	assert(command_ok(os.execute("mkdir -p " .. shell_quote(parser_src_dir))), "failed to create parser benchmark dir")
+
+	local makefile_path = parser_root .. "/Makefile"
+	local package_json_path = parser_root .. "/package.json"
+	local cmake_lists_path = parser_root .. "/CMakeLists.txt"
+	local cmake_match_path = parser_src_dir .. "/main.cpp"
+
+	write_file(makefile_path, "all: app\nbench test: app\n")
+	write_file(package_json_path, '{ "scripts": { "dev": "vite", "build": "vite build" } }\n')
+	write_file(cmake_lists_path, 'project(demo)\nadd_executable(app src/main.cpp)\n')
+	write_file(cmake_match_path, "int main() { return 0; }\n")
+
+	local parser_iters = math.max(1, math.floor(iterations / 50))
+	local make_cmd = string.format(
+		"%s --project-parse --kind=make --path=%s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(makefile_path),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+	local package_cmd = string.format(
+		"%s --project-parse --kind=package-json --path=%s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(package_json_path),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+	local cmake_cmd = string.format(
+		"%s --project-parse --kind=cmake --path=%s --match-path=%s > %s 2> %s",
+		shell_quote(backend_path),
+		shell_quote(cmake_lists_path),
+		shell_quote(cmake_match_path),
+		shell_quote(null_sink),
+		shell_quote(null_sink)
+	)
+
+	local parser_make_ms = bench_ms(function()
+		for _ = 1, parser_iters do
+			assert(command_ok(os.execute(make_cmd)), "zig make parser command failed")
+		end
+	end)
+	print(string.format("%-34s %10.2f ms", "project parse make (real):", parser_make_ms))
+	print(string.format("%-34s %10.2f ms", "project parse make avg/run:", parser_make_ms / parser_iters))
+
+	local parser_package_ms = bench_ms(function()
+		for _ = 1, parser_iters do
+			assert(command_ok(os.execute(package_cmd)), "zig package-json parser command failed")
+		end
+	end)
+	print(string.format("%-34s %10.2f ms", "project parse package-json:", parser_package_ms))
+	print(string.format("%-34s %10.2f ms", "project parse package avg/run:", parser_package_ms / parser_iters))
+
+	local parser_cmake_ms = bench_ms(function()
+		for _ = 1, parser_iters do
+			assert(command_ok(os.execute(cmake_cmd)), "zig cmake parser command failed")
+		end
+	end)
+	print(string.format("%-34s %10.2f ms", "project parse cmake (real):", parser_cmake_ms))
+	print(string.format("%-34s %10.2f ms", "project parse cmake avg/run:", parser_cmake_ms / parser_iters))
+
+	assert(command_ok(os.execute("rm -rf " .. shell_quote(parser_root))), "failed to clean parser benchmark dir")
 else
 	print("NOTE: zig backend binary not found; skipping real backend benchmark")
 end
