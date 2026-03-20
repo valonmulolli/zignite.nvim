@@ -158,9 +158,8 @@ COMMANDS                                                    *zignite-commands*
 	    When Zig backend is available, detection parsing runs through a persistent
 	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
 	    `zig fetch` prompts for URL/path input when selected. You can paste a
-	    plain GitHub repo URL, `owner/repo`, or a ref such as `#devel` /
-	    `/tree/devel`, and Zignite expands it to the saved Zig form
-	    automatically.
+	    plain GitHub repo URL or `owner/repo`, and Zignite expands it to the
+	    saved Zig form automatically.
 	    Any build command template can use `$zignite_args` to prompt for arguments.
 
 	    Bazel workspace commands:

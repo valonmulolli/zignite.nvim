@@ -281,9 +281,8 @@ detect_runtime = {
 
 `zig fetch` is included and prompts for URL/path input when selected.
 In the picker, you can paste a plain GitHub repo URL such as
-`https://github.com/raylib-zig/raylib-zig`, a shorthand like
-`raylib-zig/raylib-zig`, or a ref such as `#devel` / `/tree/devel`, and
-Zignite will expand it to the saved Zig form automatically.
+`https://github.com/<owner>/<repo>` or a shorthand like `<owner>/<repo>`,
+and Zignite will expand it to the saved Zig form automatically.
 
 Any build command can request runtime arguments by using `$zignite_args` in the
 command template. Example:
@@ -300,13 +299,13 @@ When selected, the picker asks for the argument and runs the expanded command.
 For example, pasting:
 
 ```text
-https://github.com/raylib-zig/raylib-zig#devel
+https://github.com/<owner>/<repo>
 ```
 
 expands to:
 
 ```text
-zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel
+zig fetch --save git+https://github.com/<owner>/<repo>
 ```
 
 For Bazel workspaces, detected commands look like:
