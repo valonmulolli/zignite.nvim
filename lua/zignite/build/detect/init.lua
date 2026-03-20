@@ -1,5 +1,5 @@
-local backend = require("zignite.build.detect_backend")
-local parsers = require("zignite.build.detect_parsers")
+local backend = require("zignite.build.detect.backend")
+local parsers = require("zignite.build.detect.parsers")
 
 ---@type table
 local M = {}

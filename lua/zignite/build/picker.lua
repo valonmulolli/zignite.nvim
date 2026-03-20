@@ -1,4 +1,6 @@
-local utils = require("zignite.utils")
+local command_helpers = require("zignite.build.picker.commands")
+local filter_helpers = require("zignite.build.picker.filter")
+local layout = require("zignite.build.picker.layout")
 
 ---@type table
 local M = {}
@@ -30,25 +32,8 @@ function M.open(opts)
 	local float_config = config_options.float or {}
 	local picker_config = config_options.picker or {}
 
-	local root = utils.get_project_root(filepath, config_options.project)
-	if not root then
-		root = vim.fn.fnamemodify(filepath, ":h")
-	end
-
-	local has_cmake = vim.fn.filereadable(vim.fs.joinpath(root, "CMakeLists.txt")) == 1
-	local has_meson = vim.fn.filereadable(vim.fs.joinpath(root, "meson.build")) == 1
-	local has_makefile = vim.fn.filereadable(vim.fs.joinpath(root, "Makefile")) == 1
 	local is_c_family = filetype == "c" or filetype == "cpp"
-	local filtering = has_cmake or has_meson or has_makefile
 	local last_selected_name = opts.get_last_build_command(filetype)
-	local make_like_defaults = {
-		build = true,
-		run = true,
-		clean = true,
-		test = true,
-		install = true,
-		debug = true,
-	}
 	local common_command_order = {
 		build = 1,
 		run = 2,
@@ -83,221 +68,23 @@ function M.open(opts)
 		other = "other",
 	}
 
-	---@param text string
-	---@param max_width integer
-	---@return string
-	local function truncate_text(text, max_width)
-		local value = tostring(text or "")
-		if max_width <= 0 then
-			return ""
-		end
-		if vim.fn.strdisplaywidth(value) <= max_width then
-			return value
-		end
-		if max_width <= 3 then
-			return value:sub(1, max_width)
-		end
-
-		local truncated = value
-		while #truncated > 0 and vim.fn.strdisplaywidth(truncated) > (max_width - 3) do
-			truncated = truncated:sub(1, #truncated - 1)
-		end
-		return truncated .. "..."
-	end
-
-	---@return "compact"|"detailed"
-	local function resolve_picker_layout()
-		local requested_layout = picker_config.layout or "auto"
-		if requested_layout == "compact" or requested_layout == "detailed" then
-			return requested_layout
-		end
-
-		local compact_breakpoint = tonumber(picker_config.compact_breakpoint) or 96
-		if vim.o.columns <= compact_breakpoint then
-			return "compact"
-		end
-		return "detailed"
-	end
-
-	---@param layout_mode "compact"|"detailed"
-	---@return integer, integer
-	local function resolve_picker_caps(layout_mode)
-		local min_width = layout_mode == "compact" and 24 or 34
-		local width_ratio = layout_mode == "compact" and 0.50 or 0.68
-		local min_height = layout_mode == "compact" and 7 or 8
-		local height_ratio = layout_mode == "compact" and 0.50 or 0.60
-		local width_cap = math.max(min_width, math.floor(vim.o.columns * width_ratio))
-		local height_cap = math.max(min_height, math.floor(vim.o.lines * height_ratio))
-		return width_cap, height_cap
-	end
-
-	---@param cmd_name string
-	---@param cmd_string string
-	---@return string
-	local function classify_build_command(cmd_name, cmd_string)
-		local name = tostring(cmd_name or "")
-		local command = tostring(cmd_string or "")
-		if name:match("^cmake%-") or command:match("^%s*cmake%s") then
-			return "cmake"
-		end
-		if name:match("^meson%-") or command:match("^%s*meson%s") then
-			return "meson"
-		end
-		if make_like_defaults[name] or command:match("^%s*make%s") then
-			return "make"
-		end
-		return "generic"
-	end
-
-	---@param cmd_name string
-	---@return string|nil, string|nil
-	local function split_command_prefix(cmd_name)
-		local name = tostring(cmd_name or "")
-		local prefix, rest = name:match("^(%w+)%-(.+)$")
-		if not prefix or not rest then
-			return nil, nil
-		end
-		return prefix, rest
-	end
-
-	---@param command_map table<string, string>|nil
-	---@param cmd_name string
-	---@param cmd_string string
-	---@return boolean
-	local function is_redundant_system_alias(command_map, cmd_name, cmd_string)
-		if not is_c_family then
-			return false
-		end
-		local name = tostring(cmd_name or "")
-		local base_name = name:match("^cmake%-(.+)$") or name:match("^meson%-(.+)$")
-		if not base_name then
-			return false
-		end
-		if not base_name or base_name:find("%-") then
-			return false
-		end
-		local generic_command = command_map and command_map[base_name] or nil
-		return type(generic_command) == "string" and generic_command == cmd_string
-	end
-
 	---@param cmd table
 	---@return string
 	local function command_section(cmd)
-		local name = tostring(cmd.name or "")
-		local prefix, rest = split_command_prefix(name)
-		local semantic_name = name
-		if rest then
-			semantic_name = rest
-		end
-
-		if prefix and (prefix == "cmake" or prefix == "meson") then
-			if rest and (rest:match("^build%-.+$") or rest:match("^run%-.+$")) then
-				return "targets"
-			end
-			if common_command_order[rest] then
-				return "common"
-			end
-			if profile_command_order[rest] then
-				return "profiles"
-			end
-		end
-
-		if common_command_order[semantic_name] then
-			return "common"
-		end
-		if profile_command_order[semantic_name] then
-			return "profiles"
-		end
-		return "other"
-	end
-
-	---@param cmd table
-	---@return integer
-	local function command_sort_rank(cmd)
-		local section = command_section(cmd)
-		local name = tostring(cmd.name or "")
-		local _, rest = split_command_prefix(name)
-		local semantic_name = rest or name
-		if last_selected_name and name == last_selected_name then
-			return -1000
-		end
-		local section_rank = section_order[section] or 99
-		local name_rank = common_command_order[semantic_name]
-			or profile_command_order[semantic_name]
-			or 999
-		return section_rank * 1000 + name_rank
+		return command_helpers.command_section(cmd, common_command_order, profile_command_order)
 	end
 
 	---@param command_map table<string, string>|nil
 	---@return table[]
 	local function build_command_list(command_map)
-		local entries = {}
-		for cmd_name, cmd_string in pairs(command_map or {}) do
-			local include = true
-
-			if is_c_family then
-				local command_type = classify_build_command(cmd_name, cmd_string)
-				if command_type == "cmake" then
-					include = has_cmake
-				elseif command_type == "meson" then
-					include = has_meson
-				elseif command_type == "make" then
-					include = has_makefile
-				end
-			elseif filtering then
-				if cmd_name:match("^cmake%-") then
-					include = has_cmake
-				elseif cmd_name:match("^meson%-") then
-					include = has_meson
-				elseif tostring(cmd_string or ""):match("^%s*make%s") then
-					include = has_makefile
-				else
-					include = true
-				end
-			end
-
-			if include and not is_redundant_system_alias(command_map, cmd_name, cmd_string) then
-				entries[#entries + 1] = { name = cmd_name, command = cmd_string }
-			end
-		end
-
-		table.sort(entries, function(a, b)
-			local rank_a = command_sort_rank(a)
-			local rank_b = command_sort_rank(b)
-			if rank_a == rank_b then
-				return a.name < b.name
-			end
-			return rank_a < rank_b
-		end)
-
-		if not is_c_family then
-			return entries
-		end
-
-		---@type table<string, table>
-		local by_name = {}
-		for _, entry in ipairs(entries) do
-			by_name[entry.name] = entry
-		end
-
-		---@type table[]
-		local pruned = {}
-		for _, entry in ipairs(entries) do
-			local base_name = entry.name:match("^cmake%-(.+)$") or entry.name:match("^meson%-(.+)$")
-			local generic_entry = base_name and by_name[base_name] or nil
-			local is_target_specific = type(base_name) == "string" and base_name:find("%-") ~= nil
-			if
-				not (
-					base_name
-					and not is_target_specific
-					and generic_entry
-					and generic_entry.command == entry.command
-				)
-			then
-				pruned[#pruned + 1] = entry
-			end
-		end
-		return pruned
+		return command_helpers.build_command_list(
+			command_map,
+			is_c_family,
+			last_selected_name,
+			common_command_order,
+			profile_command_order,
+			section_order
+		)
 	end
 
 	---@type table[]
@@ -310,40 +97,16 @@ function M.open(opts)
 	---@type table<string, string>|nil
 	local pending_refresh_commands = nil
 	---@type table<integer, integer>
-	local command_lines = {}
-
-	---@param commands table[]
-	---@param command_name string
-	---@return integer|nil
-	local function find_command_index(commands, command_name)
-		for idx, cmd in ipairs(commands) do
-			if cmd.name == command_name then
-				return idx
-			end
-		end
-		return nil
-	end
+	local command_lines
 
 	---@return nil
 	local function apply_filter()
-		local query = filter_query:lower()
-		filtered_commands = {}
-		for _, cmd in ipairs(all_commands) do
-			local display_command = opts.command_for_display(cmd.command)
-			local name_match = cmd.name:lower():find(query, 1, true) ~= nil
-			local command_match = display_command:lower():find(query, 1, true) ~= nil
-			if query == "" or name_match or command_match then
-				filtered_commands[#filtered_commands + 1] = cmd
-			end
-		end
-
-		if #filtered_commands == 0 then
-			selected_index = 0
-		elseif selected_index < 1 then
-			selected_index = 1
-		elseif selected_index > #filtered_commands then
-			selected_index = #filtered_commands
-		end
+		filtered_commands, selected_index = filter_helpers.apply_filter(
+			all_commands,
+			filter_query,
+			selected_index,
+			opts.command_for_display
+		)
 	end
 
 	---@param command_map table<string, string>
@@ -353,7 +116,7 @@ function M.open(opts)
 		all_commands = build_command_list(command_map)
 		apply_filter()
 		if preferred_name and #filtered_commands > 0 then
-			local preferred_idx = find_command_index(filtered_commands, preferred_name)
+			local preferred_idx = filter_helpers.find_command_index(filtered_commands, preferred_name)
 			if preferred_idx then
 				selected_index = preferred_idx
 			end
@@ -414,126 +177,18 @@ function M.open(opts)
 
 	local buf = vim.api.nvim_create_buf(false, true)
 	local ns_id = vim.api.nvim_create_namespace("zignite_picker")
-
-	---@param layout_mode "compact"|"detailed"
-	---@param width_cap integer
-	---@return string
-	local function picker_help_line(layout_mode, width_cap)
-		if layout_mode == "compact" then
-			if width_cap < 42 then
-				return "Enter | / filter | r repeat | q close"
-			end
-			return "Enter: select | /: filter | r: repeat | q: close"
-		end
-		if width_cap < 58 then
-			return "j/k | Enter | / filter | r repeat | Esc"
-		end
-		return "j/k: navigate | Enter: select | /: filter | c: clear | r: repeat | Esc: cancel"
-	end
-
-	---@param cmd table
-	---@param layout_mode "compact"|"detailed"
-	---@param width_cap integer
-	---@return string
-	local function format_command_line(cmd, layout_mode, width_cap)
-		if layout_mode == "compact" then
-			local name_limit = math.max(10, width_cap - 5)
-			return "  " .. truncate_text(cmd.name, name_limit)
-		end
-
-		local display_command = opts.command_for_display(cmd.command)
-		local name_width = math.max(12, math.min(18, math.floor(width_cap * 0.28)))
-		local preview_limit = math.max(14, width_cap - name_width - 8)
-		return string.format(
-			"  %-" .. tostring(name_width) .. "s → %s",
-			truncate_text(cmd.name, name_width),
-			truncate_text(display_command, preview_limit)
-		)
-	end
-
-	---@param layout_mode "compact"|"detailed"
-	---@param width_cap integer
-	---@return string[]
-	local function build_lines(layout_mode, width_cap)
-		command_lines = {}
-		local lines = {
-			string.format(" Filter: %s ", filter_query ~= "" and filter_query or "(none)"),
-		}
-
-		if #filtered_commands == 0 then
-			lines[#lines + 1] = "  (no commands match current filter)"
-		else
-			local last_section = nil
-			for index, cmd in ipairs(filtered_commands) do
-				local section = command_section(cmd)
-				if section ~= last_section then
-					lines[#lines + 1] = " " .. (section_labels[section] or section_labels.other)
-					last_section = section
-				end
-				lines[#lines + 1] = format_command_line(cmd, layout_mode, width_cap)
-				command_lines[index] = #lines
-			end
-		end
-
-		lines[#lines + 1] = truncate_text(picker_help_line(layout_mode, width_cap), math.max(20, width_cap - 2))
-		local preview_text = "(none)"
-		if #filtered_commands > 0 and selected_index >= 1 then
-			local preview_prefix = " cmd: "
-			local preview_limit = math.max(12, width_cap - vim.fn.strdisplaywidth(preview_prefix) - 2)
-			preview_text = truncate_text(
-				opts.command_for_display(filtered_commands[selected_index].command),
-				preview_limit
-			)
-			lines[#lines + 1] = preview_prefix .. preview_text
-			return lines
-		end
-		lines[#lines + 1] = " cmd: " .. preview_text
-		return lines
-	end
-
-	---@param lines string[]
-	---@param layout_mode "compact"|"detailed"
-	---@param width_cap integer
-	---@param height_cap integer
-	---@return table
-	local function build_window_opts(lines, layout_mode, width_cap, height_cap)
-		local max_width = 0
-		for _, line in ipairs(lines) do
-			max_width = math.max(max_width, vim.fn.strdisplaywidth(line))
-		end
-		local width = math.min(max_width + 4, width_cap)
-		local height = math.min(#lines + 1, height_cap)
-
-		local preferred_row
-		local preferred_col
-		preferred_row = math.floor(vim.o.lines * (float_config.y or 0.90)) - height
-		preferred_col = vim.o.columns - width - 2
-
-		local max_row = math.max(0, vim.o.lines - height)
-		local max_col = math.max(0, vim.o.columns - width)
-		return {
-			relative = "editor",
-			width = width,
-			height = height,
-			row = math.max(0, math.min(preferred_row, max_row)),
-			col = math.max(0, math.min(preferred_col, max_col)),
-			style = "minimal",
-			border = float_config.border or "rounded",
-			title = layout_mode == "compact" and (" " .. filetype .. " build ") or (" " .. filetype .. " "),
-			title_pos = "center",
-		}
-	end
-
-	---@return string[], table
-	local function build_render_state()
-		local layout_mode = resolve_picker_layout()
-		local width_cap, height_cap = resolve_picker_caps(layout_mode)
-		local lines = build_lines(layout_mode, width_cap)
-		local win_opts = build_window_opts(lines, layout_mode, width_cap, height_cap)
-		return lines, win_opts
-	end
-
-	local lines, initial_win_opts = build_render_state()
+	local lines, initial_win_opts, initial_command_lines = layout.build_render_state({
+		filetype = filetype,
+		float_config = float_config,
+		picker_config = picker_config,
+		filter_query = filter_query,
+		filtered_commands = filtered_commands,
+		selected_index = selected_index,
+		command_section = command_section,
+		section_labels = section_labels,
+		command_for_display = opts.command_for_display,
+	})
+	command_lines = initial_command_lines
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
@@ -552,7 +207,18 @@ function M.open(opts)
 			return
 		end
 
-		local updated_lines, updated_win_opts = build_render_state()
+		local updated_lines, updated_win_opts, updated_command_lines = layout.build_render_state({
+			filetype = filetype,
+			float_config = float_config,
+			picker_config = picker_config,
+			filter_query = filter_query,
+			filtered_commands = filtered_commands,
+			selected_index = selected_index,
+			command_section = command_section,
+			section_labels = section_labels,
+			command_for_display = opts.command_for_display,
+		})
+		command_lines = updated_command_lines
 		if vim.api.nvim_win_set_config then
 			vim.api.nvim_win_set_config(win, updated_win_opts)
 		end
@@ -747,9 +413,9 @@ function M.open(opts)
 		end
 	end, { buffer = buf, nowait = true })
 
-	for i = 1, 9 do
-		vim.keymap.set("n", tostring(i), function()
-			select_command(i)
+	for index = 1, 9 do
+		vim.keymap.set("n", tostring(index), function()
+			select_command(index)
 		end, { buffer = buf, nowait = true })
 	end
 
