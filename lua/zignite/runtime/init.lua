@@ -11,6 +11,8 @@ M.resolve_supported_filetype = filetype.resolve_supported_filetype
 M.build_temp_execution_path = filetype.build_temp_execution_path
 
 M.resolve_command_arguments = command.resolve_command_arguments
+M.get_command_argument_prompt = command.get_command_argument_prompt
+M.command_requires_arguments = command.command_requires_arguments
 M.get_normalized_runner_command = command.get_normalized_runner_command
 M.is_reserved_argv_command = command.is_reserved_argv_command
 M.command_for_display = command.command_for_display

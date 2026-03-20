@@ -91,9 +91,16 @@ end
 ---@param command_name string
 ---@param command_template string
 ---@param mode string
+---@param provided_args string|nil
 ---@return nil
-local function execute_build_command(filetype, filepath, command_name, command_template, mode)
-	local resolved_template = runtime.resolve_command_arguments(filetype, command_name, command_template, mode)
+local function execute_build_command(filetype, filepath, command_name, command_template, mode, provided_args)
+	local resolved_template = runtime.resolve_command_arguments(
+		filetype,
+		command_name,
+		command_template,
+		mode,
+		provided_args
+	)
 	if not resolved_template then
 		return
 	end
@@ -304,8 +311,9 @@ end
 
 ---@param command_name string
 ---@param mode string
+---@param provided_args string|nil
 ---@return nil
-function M.run_build_command(command_name, mode)
+function M.run_build_command(command_name, mode, provided_args)
 	ensure_config()
 
 	local filepath = vim.fn.expand("%:p")
@@ -323,7 +331,7 @@ function M.run_build_command(command_name, mode)
 			return false
 		end
 		settled = true
-		execute_build_command(filetype, filepath, command_name, command_template, mode)
+		execute_build_command(filetype, filepath, command_name, command_template, mode, provided_args)
 		return true
 	end
 
@@ -436,6 +444,8 @@ function M.select_build_command(mode)
 		can_detect_build_commands_for_filetype = build.can_detect_build_commands_for_filetype,
 		run_build_command = M.run_build_command,
 		get_last_build_command = build.get_last_build_command,
+		command_requires_arguments = runtime.command_requires_arguments,
+		get_command_argument_prompt = runtime.get_command_argument_prompt,
 	})
 end
 
