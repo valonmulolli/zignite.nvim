@@ -32,10 +32,11 @@ function M.detect_meson_project_commands(filepath)
 		state.get_file_mtime_key(meson_build_path) or "missing",
 		meson_build_ready
 	)
+	local cache_key = meson_build_path .. "::" .. common.normalize_path_text(filepath)
 	local cached = state.get_bounded_cache_entry(
 		state.meson_target_cache,
 		state.meson_target_cache_order,
-		meson_build_path
+		cache_key
 	)
 	if cached and cached.mtime_key == mtime_key then
 		return state.copy_string_map(cached.commands), cached.primary_target
@@ -72,7 +73,7 @@ function M.detect_meson_project_commands(filepath)
 			state.meson_target_cache,
 			state.meson_target_cache_order,
 			state.MESON_TARGET_CACHE_MAX,
-			meson_build_path,
+			cache_key,
 			{
 				mtime_key = mtime_key,
 				commands = state.copy_string_map(commands),
@@ -88,7 +89,7 @@ function M.detect_meson_project_commands(filepath)
 			state.meson_target_cache,
 			state.meson_target_cache_order,
 			state.MESON_TARGET_CACHE_MAX,
-			meson_build_path,
+			cache_key,
 			{ mtime_key = mtime_key, commands = {}, primary_target = nil }
 		)
 		return {}, nil
@@ -176,7 +177,7 @@ function M.detect_meson_project_commands(filepath)
 		state.meson_target_cache,
 		state.meson_target_cache_order,
 		state.MESON_TARGET_CACHE_MAX,
-		meson_build_path,
+		cache_key,
 		{
 			mtime_key = mtime_key,
 			commands = state.copy_string_map(commands),
