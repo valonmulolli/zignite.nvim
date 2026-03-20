@@ -1,0 +1,178 @@
+---@type table
+local M = {}
+
+---@class IntegrationSupportContext
+---@field state table
+---@field job_results table[]
+---@field quickfix_results table[]
+---@field notify_results table[]
+---@field mock_jobs table
+
+---@param ctx IntegrationSupportContext
+---@param simulation table
+---@return function
+function M.attach(ctx, simulation)
+	local original_jobstart = vim.fn.jobstart
+	local original_chansend = vim.fn.chansend
+	local original_chanclose = vim.fn.chanclose
+	local original_setqflist = vim.fn.setqflist
+	local original_cmd = vim.cmd
+	local original_schedule = vim.schedule
+	local original_notify = vim.notify
+	local original_log = vim.log
+
+	vim.fn.jobstart = function(cmd, opts)
+		local job_id = ctx.state.next_job_id
+		ctx.state.next_job_id = ctx.state.next_job_id + 1
+		table.insert(ctx.job_results, { cmd = cmd, opts = opts, job_id = job_id })
+		ctx.mock_jobs[job_id] = { cmd = cmd, opts = opts, input = "" }
+
+		if simulation.is_quickfix_backend_cmd(cmd) or simulation.is_detect_daemon_cmd(cmd) then
+			return job_id
+		end
+
+		local tool_lines = simulation.simulated_tool_help_output(cmd)
+		if tool_lines then
+			if opts.on_stdout then
+				vim.defer_fn(function()
+					opts.on_stdout(job_id, tool_lines)
+				end, 10)
+			end
+			if opts.on_exit then
+				local exit_code = ctx.state.next_exit_code
+				vim.defer_fn(function()
+					opts.on_exit(job_id, exit_code)
+				end, 10)
+			end
+			return job_id
+		end
+
+		if opts.on_exit then
+			local exit_code = ctx.state.next_exit_code
+			vim.defer_fn(function()
+				opts.on_exit(job_id, exit_code)
+			end, 10)
+		end
+		return job_id
+	end
+
+	vim.fn.chansend = function(job_id, data)
+		local job = ctx.mock_jobs[job_id]
+		if not job then
+			return 0
+		end
+
+		if simulation.is_quickfix_daemon_cmd(job.cmd) then
+			if ctx.state.next_quickfix_backend_exit_code ~= 0 then
+				local exit_code = ctx.state.next_quickfix_backend_exit_code
+				ctx.state.next_quickfix_backend_exit_code = 0
+				if job.opts and job.opts.on_exit then
+					vim.defer_fn(function()
+						job.opts.on_exit(job_id, exit_code)
+					end, 10)
+				end
+				return 1
+			end
+
+			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+			local response = simulation.parse_daemon_request(text)
+			if response and job.opts and job.opts.on_stdout then
+				ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
+				vim.defer_fn(function()
+					job.opts.on_stdout(job_id, response)
+				end, 10)
+			end
+			return 1
+		end
+
+		if simulation.is_detect_daemon_cmd(job.cmd) then
+			ctx.state.detect_backend_request_count = ctx.state.detect_backend_request_count + 1
+			if ctx.state.next_detect_backend_exit_code ~= 0 then
+				local exit_code = ctx.state.next_detect_backend_exit_code
+				ctx.state.next_detect_backend_exit_code = 0
+				if job.opts and job.opts.on_exit then
+					vim.defer_fn(function()
+						job.opts.on_exit(job_id, exit_code)
+					end, 10)
+				end
+				return 1
+			end
+
+			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+			local response = simulation.parse_detect_daemon_request(text)
+			if response and job.opts and job.opts.on_stdout then
+				ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
+				vim.defer_fn(function()
+					job.opts.on_stdout(job_id, response)
+				end, 10)
+			end
+			return 1
+		end
+
+		if type(data) == "table" then
+			for _, part in ipairs(data) do
+				job.input = job.input .. tostring(part)
+			end
+		else
+			job.input = job.input .. tostring(data or "")
+		end
+		return 1
+	end
+
+	vim.fn.chanclose = function(job_id, stream)
+		local job = ctx.mock_jobs[job_id]
+		if not job or stream ~= "stdin" or not simulation.is_quickfix_backend_cmd(job.cmd) then
+			return 0
+		end
+
+		if ctx.state.next_quickfix_backend_exit_code ~= 0 then
+			local exit_code = ctx.state.next_quickfix_backend_exit_code
+			ctx.state.next_quickfix_backend_exit_code = 0
+			if job.opts and job.opts.on_exit then
+				vim.defer_fn(function()
+					job.opts.on_exit(job_id, exit_code)
+				end, 10)
+			end
+			return 1
+		end
+
+		local lines = simulation.simulate_quickfix_backend(job.input, job.cmd)
+		if job.opts and job.opts.on_stdout then
+			ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
+			vim.defer_fn(function()
+				job.opts.on_stdout(job_id, lines)
+			end, 10)
+		end
+		if job.opts and job.opts.on_exit then
+			vim.defer_fn(function()
+				job.opts.on_exit(job_id, 0)
+			end, 10)
+		end
+		return 1
+	end
+
+	vim.fn.setqflist = function(_, _, qf_opts)
+		table.insert(ctx.quickfix_results, qf_opts)
+	end
+	vim.cmd = function() end
+	vim.schedule = function(func)
+		func()
+	end
+	vim.log = { levels = { INFO = 1, WARN = 2, ERROR = 3 } }
+	vim.notify = function(msg, level, opts)
+		table.insert(ctx.notify_results, { msg = tostring(msg), level = level, opts = opts })
+	end
+
+	return function()
+		vim.fn.jobstart = original_jobstart
+		vim.fn.chansend = original_chansend
+		vim.fn.chanclose = original_chanclose
+		vim.fn.setqflist = original_setqflist
+		vim.cmd = original_cmd
+		vim.schedule = original_schedule
+		vim.notify = original_notify
+		vim.log = original_log
+	end
+end
+
+return M
