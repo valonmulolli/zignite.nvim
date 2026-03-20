@@ -7,6 +7,7 @@ local utils = require("zignite.utils")
 
 ---@type table
 local M = {}
+local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "preview" }
 
 ---@param configured table<string, string>
 ---@return table<string, string>
@@ -324,7 +325,14 @@ function M.get_preferred_project_command(filetype, filepath)
 	end
 
 	local preferred_name = build_cmds.run and "run"
-		or M.select_live_command_name(build_cmds)
+		or M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, function(flag)
+			local detect_options = config.options.detect or {}
+			local value = detect_options[flag]
+			if value == nil then
+				return true
+			end
+			return value == true
+		end)
 		or build_cmds.start and "start"
 		or build_cmds.build and "build"
 		or nil
@@ -338,10 +346,48 @@ function M.get_preferred_project_command(filetype, filepath)
 	}
 end
 
+---@param filetype string
+---@param filepath string
+---@param build_cmds table<string, string>
+---@param is_detection_enabled fun(flag: string): boolean
+---@return string|nil
+function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
+	if
+		(filetype == "javascript" or filetype == "typescript")
+		and type(is_detection_enabled) == "function"
+		and is_detection_enabled("js_package_scripts")
+	then
+		local detected_scripts = parsers.detect_package_scripts(filepath)
+		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
+			if type(detected_scripts[candidate]) == "string" then
+				return candidate
+			end
+		end
+
+		local configured = M.get_configured_build_commands(filetype, filepath)
+		local default_commands = config.defaults.build_commands[filetype] or {}
+		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
+			local command = build_cmds[candidate]
+			if type(command) == "string" then
+				local configured_command = configured[candidate]
+				local is_default_fallback = configured_command ~= nil
+					and command == configured_command
+					and configured_command == default_commands[candidate]
+				if not is_default_fallback then
+					return candidate
+				end
+			end
+		end
+		return nil
+	end
+
+	return M.select_live_command_name(build_cmds)
+end
+
 ---@param build_cmds table<string, string>
 ---@return string|nil
 function M.select_live_command_name(build_cmds)
-	for _, candidate in ipairs({ "live", "dev", "watch", "serve", "start", "preview" }) do
+	for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
 		if build_cmds[candidate] then
 			return candidate
 		end

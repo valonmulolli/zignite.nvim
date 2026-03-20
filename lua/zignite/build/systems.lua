@@ -27,6 +27,38 @@ M.BAZEL_PROJECT_FILETYPES = {
 	zig = true,
 }
 
+---@param value string
+---@return string
+local function shellescape_text(value)
+	if vim.fn and type(vim.fn.shellescape) == "function" then
+		return vim.fn.shellescape(value)
+	end
+	return tostring(value or "")
+end
+
+---@param target string
+---@return string
+local function build_discovered_run_suffix(target)
+	local target_name = tostring(target or "")
+	local target_exe = target_name .. ".exe"
+	local fallback_path = "./build/" .. target_name
+	local fallback_exe_path = fallback_path .. ".exe"
+	local find_clause = string.format(
+		"find build -type f \\( -name %s -o -name %s \\) "
+			.. "! -path '*/CMakeFiles/*' ! -path '*/meson-private/*' "
+			.. "! -path '*/meson-logs/*' | head -n 1",
+		shellescape_text(target_name),
+		shellescape_text(target_exe)
+	)
+	return string.format(
+		"ZIGNITE_BIN=$(%s) && if [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; elif [ -x %s ]; then %s; else %s; fi",
+		find_clause,
+		shellescape_text(fallback_path),
+		shellescape_text(fallback_path),
+		shellescape_text(fallback_exe_path)
+	)
+end
+
 ---@param filepath string
 ---@return string
 function M.resolve_project_root_for_detection(filepath)
@@ -162,7 +194,7 @@ end
 ---@param target string
 ---@return string
 function M.cmake_run_command(root, target)
-	return M.cmake_build_command(root, target) .. " && ./build/" .. target
+	return M.cmake_build_command(root, target) .. " && " .. build_discovered_run_suffix(target)
 end
 
 ---@param root string|nil
@@ -199,7 +231,7 @@ end
 ---@param target string
 ---@return string
 function M.meson_run_command(root, target)
-	return M.meson_build_command(root, target) .. " && ./build/" .. target
+	return M.meson_build_command(root, target) .. " && " .. build_discovered_run_suffix(target)
 end
 
 ---@param root string|nil

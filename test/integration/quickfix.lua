@@ -123,6 +123,86 @@ local function test_quickfix_zig_processor()
     print("✓ Quickfix zig processor test passed")
 end
 
+-- Test setup resets cached quickfix backend availability after the Zig binary becomes available.
+local function test_quickfix_backend_availability_resets_on_setup()
+    local quickfix_config = {
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 2,
+            max_bytes = 1024,
+            strip_ansi = true,
+            strip_ansi_max_lines = 2,
+            parse_diagnostics = false,
+        },
+    }
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.fn.executable = function(path)
+        if type(path) == "string" and path:match("zig/zig%-out/bin/zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    init.setup(quickfix_config)
+    state.next_exit_code = 1
+    init.run_code(0, "float")
+    assert(count_quickfix_backend_jobs() == 0, "Quickfix should fall back when backend is unavailable")
+
+    reset_job_results()
+    reset_quickfix_results()
+    vim.fn.executable = function(path)
+        if type(path) == "string" and path:match("zig/zig%-out/bin/zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 1
+    end
+
+    init.setup(quickfix_config)
+    init.run_code(0, "float")
+    assert(count_quickfix_backend_jobs() > 0, "Setup should reset cached quickfix backend availability")
+
+    state.next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix backend reset test passed")
+end
+
 -- Test zig quickfix processor keeps newest lines when max_bytes truncates input.
 local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
     config.setup({
@@ -364,6 +444,7 @@ end
 
 test_quickfix_on_error_lua_processor()
 test_quickfix_zig_processor()
+test_quickfix_backend_availability_resets_on_setup()
 test_quickfix_zig_processor_keeps_tail_on_byte_cap()
 test_quickfix_auto_threshold_behavior()
 test_quickfix_zig_fallback()

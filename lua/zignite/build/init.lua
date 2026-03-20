@@ -6,6 +6,7 @@ local M = {}
 
 M.get_detect_runtime_options = resolve.get_detect_runtime_options
 M.select_live_command_name = resolve.select_live_command_name
+M.select_live_command_name_for_filetype = resolve.select_live_command_name_for_filetype
 M.can_detect_build_commands_for_filetype = resolve.can_detect_build_commands_for_filetype
 M.get_build_commands_for_filetype = resolve.get_build_commands_for_filetype
 M.get_build_commands_for_cached_lookup = resolve.get_build_commands_for_cached_lookup

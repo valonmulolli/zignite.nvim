@@ -307,6 +307,56 @@ local function test_project_execution()
     print("✓ Project fallback execution test passed")
 end
 
+-- Test marker-only Node projects keep root detection without inventing a fallback command.
+local function test_marker_project_without_command_does_not_run()
+    config.setup({})
+
+    vim.bo.filetype = "plain"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/nodefallback/main.txt" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/nodefallback/package.json" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.run_code(0, "float")
+
+    assert(#job_results == 0, "Marker-only Node project should not run an invented fallback command")
+    assert(#output_messages > 0, "Marker-only Node project should surface a missing-runner message")
+    assert(
+        output_messages[#output_messages]:match("No runner configured"),
+        "Marker-only Node project should report that no runner exists"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    reset_job_results()
+
+    print("✓ Marker-only project fallback test passed")
+end
+
 -- Test build command execution uses cwd and argv mode for simple commands.
 local function test_build_command_uses_cwd()
     config.setup({
@@ -434,6 +484,7 @@ test_uv_python_runner_uses_uv()
 test_language_detected_from_extension()
 test_language_detected_from_shebang()
 test_project_execution()
+test_marker_project_without_command_does_not_run()
 test_build_command_uses_cwd()
 test_uv_python_build_defaults()
 test_build_command_filetype_alias()
