@@ -124,7 +124,6 @@ require('zignite').setup({
         { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
         { "n", "<leader>rl", ":RunLive<CR>", { desc = "Run live/watch command" } },
         { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
-        { "n", "<leader>rp", ":RunProject<CR>", { desc = "Run project" } },
     },
 
     -- UI configuration for the floating window
@@ -153,6 +152,8 @@ require('zignite').setup({
     picker = {
         focus = true,             -- Focus build picker on open
         filter_input = "inline",  -- "inline" | "ui" (vim.ui.input) | "cmdline" (vim.fn.input)
+        layout = "auto",          -- "auto" | "detailed" | "compact"
+        compact_breakpoint = 96,  -- Auto-switch to compact picker on narrow screens
     },
 
     detect_runtime = {
@@ -183,7 +184,6 @@ require('zignite').setup({
 
 - `:RunFile`: Run the current file using the filetype runner (single-file flow).
 - `:RunCode`: Run the current visual selection, or the current file when used without a visual range.
-- `:RunProject`: Run the detected project command from project root (e.g., `npm start`, `cargo run`, `go run .`).
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunBuildLast`: Repeat the most recent `:RunBuild`/picker command for the current filetype.
 - `:RunLive`: Run the best live/watch command for current filetype (`live`, `dev`, `watch`, `serve`, `start`, `preview`).
@@ -210,12 +210,15 @@ Use:
 - `c` to clear filter
 - `r` to run the previous build command for current filetype
 
+On narrower screens the picker automatically switches to a smaller compact layout while staying in a single window. The selected command still appears on the bottom command line.
+
 To use external prompt modes instead of inline filtering, set:
 ```lua
 picker = {
     filter_input = "ui",      -- use vim.ui.input popup
     -- or
     filter_input = "cmdline",
+    layout = "compact",       -- optional: force compact picker layout
 }
 ```
 
@@ -226,8 +229,10 @@ auto-detected commands when available:
 - `rust`: parsed from `cargo --list`
 - `odin`: parsed from `odin help`
 - `c` / `cpp`: parsed from `Makefile` targets when `Makefile` is present
-- `javascript` / `typescript`: project `package.json` scripts
+- `javascript` / `typescript`: project `package.json` scripts with automatic `npm` / `pnpm` / `yarn` / `bun` command selection
 - `java` / `kotlin`: Maven/Gradle project tasks inferred from project files
+- `python`: default build/file commands automatically prefer `uv` in uv-managed projects
+- Bazel workspaces (`MODULE.bazel`, `WORKSPACE.bazel`, `WORKSPACE`): `bazel-*` commands are added for target-aware build/run/test/query flows
 
 Configured commands always take priority when names overlap.
 
@@ -238,6 +243,7 @@ detect = {
     go = false,
     rust = false,
     c_cpp_make = false,
+    bazel_project = false,
 }
 ```
 
@@ -279,10 +285,20 @@ build_commands = {
 
 When selected, the picker asks for the argument and runs the expanded command.
 
-### RunFile vs RunProject
+For Bazel workspaces, detected commands look like:
+
+```text
+bazel-build      → bazel build <args>
+bazel-run        → bazel run <args>
+bazel-test       → bazel test <args>
+bazel-query      → bazel query <args>
+bazel-clean      → bazel clean
+bazel-build-all  → bazel build //...
+bazel-test-all   → bazel test //...
+```
 
 - Use `:RunFile` for fast single-file feedback.
-- Use `:RunProject` when you explicitly want project-wide startup/build behavior.
+- Use `:RunBuild run` when you explicitly want project-wide startup/build behavior.
 - For Zig, `:RunFile` prefers project build execution (`zig build ...`) when `build.zig` exists.
 
 ### Quickfix Pipeline
@@ -342,7 +358,7 @@ runners = {
 ```
 
 ### Go `:RunFile` feels slow or hangs
-`go run .` compiles/runs the whole module. For single-file execution use `:RunFile` (runner `go run $file`). Use `:RunProject` only when you want full module execution.
+`go run .` compiles/runs the whole module. For single-file execution use `:RunFile` (runner `go run $file`). Use `:RunBuild run` only when you want full module execution.
 
 ### `zsh: no such option: argv`
 Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.

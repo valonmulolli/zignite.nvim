@@ -23,9 +23,6 @@ require("zignite").setup({
         { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
         { "n", "<leader>rl", ":RunLive<CR>",        { desc = "Run live/watch command" } },
 
-        -- Project execution
-        { "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
-
         -- Output modes
         { "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
         { "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
@@ -103,6 +100,7 @@ require("zignite").setup({
     --   • Auto-discovery: First executable in build/ is run automatically
     --   • LSP support: CMake generates compile_commands.json
     --   • Smart filtering: Picker shows only relevant commands for detected build system
+    --   • Bazel workspace commands are auto-detected as `bazel-*` entries
     -- ========================================================================
     build_commands = {
         -- Rust
@@ -160,11 +158,13 @@ require("zignite").setup({
         -- Fortran
         fortran = {
             build = "gfortran *.f90 -o main",
-            run = "gfortran *.f90 -o main && ./main",
-            clean = "rm main",
+            run = "./main",
+            clean = "rm -f main",
         },
 
         -- JavaScript/TypeScript
+        -- If these stay at their default values, Zignite auto-switches
+        -- to pnpm/yarn/bun based on the project lockfile or packageManager field.
         javascript = {
             start = "npm start",
             dev = "npm run dev",
@@ -181,6 +181,8 @@ require("zignite").setup({
         },
 
         -- Python
+        -- If these stay at their default values, Zignite auto-switches
+        -- to uv in uv-managed projects (`uv.lock` or `[tool.uv]`).
         python = {
             run = "python -m main",
             test = "pytest",
@@ -191,8 +193,9 @@ require("zignite").setup({
         -- C/C++ with Make, CMake, and Meson support
         -- ====================================================================
         -- These commands include:
-        --   • Auto-setup: Automatically runs cmake/meson setup if build dir is missing
-        --   • Auto-discovery: Finds and runs the first executable in build/
+        --   • Explicit setup commands for configured build directories
+        --   • Direct build/clean commands for lower shell overhead
+        --   • Target-aware run commands are inferred by the plugin when possible
         --   • LSP support: Generates compile_commands.json for clangd
         -- ====================================================================
         c = {
@@ -204,24 +207,21 @@ require("zignite").setup({
             install = "make install",
             debug = "make debug",
 
-            -- CMake commands (auto-setup, auto-discovery, LSP support)
+            -- CMake commands (direct build path, LSP support)
             ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-            ["cmake-build"] =
-            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
-            ["cmake-run"] =
-            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-            ["cmake-clean"] = "rm -rf build",
+            ["cmake-build"] = "cmake --build build",
+            ["cmake-run"] = "cmake --build build && ./build/main",
+            ["cmake-clean"] = "cmake --build build --target clean",
             ["cmake-debug"] =
             "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
             ["cmake-release"] =
             "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
 
-            -- Meson commands (auto-setup, auto-discovery)
+            -- Meson commands (explicit setup, direct build path)
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
-            ["meson-run"] =
-            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-            ["meson-clean"] = "rm -rf build",
+            ["meson-build"] = "meson compile -C build",
+            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-clean"] = "meson compile -C build --clean",
             ["meson-test"] = "meson test -C build",
         },
 
@@ -234,25 +234,22 @@ require("zignite").setup({
             install = "make install",
             debug = "make debug",
 
-            -- CMake commands (auto-setup, auto-discovery, LSP support)
+            -- CMake commands (direct build path, LSP support)
             ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-            ["cmake-build"] =
-            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
-            ["cmake-run"] =
-            "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-            ["cmake-clean"] = "rm -rf build",
+            ["cmake-build"] = "cmake --build build",
+            ["cmake-run"] = "cmake --build build && ./build/main",
+            ["cmake-clean"] = "cmake --build build --target clean",
             ["cmake-debug"] =
             "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
             ["cmake-release"] =
             "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
             ["cmake-test"] = "ctest --test-dir build",
 
-            -- Meson commands (auto-setup, auto-discovery)
+            -- Meson commands (explicit setup, direct build path)
             ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
-            ["meson-run"] =
-            "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-            ["meson-clean"] = "rm -rf build",
+            ["meson-build"] = "meson compile -C build",
+            ["meson-run"] = "meson compile -C build && ./build/main",
+            ["meson-clean"] = "meson compile -C build --clean",
             ["meson-test"] = "meson test -C build",
         },
     },
@@ -322,6 +319,14 @@ require("zignite").setup({
 
     -- Execution configuration
     timeout = nil, -- Timeout in ms (e.g. 5000). nil = disabled.
+
+    -- Build picker behavior
+    picker = {
+        focus = true, -- Focus the picker when it opens
+        filter_input = "inline", -- "inline", "ui", or "cmdline"
+        layout = "auto", -- "auto", "detailed", or "compact"
+        compact_breakpoint = 96, -- Auto-switch to compact mode on narrow screens
+    },
 
     -- Picker detection runtime (cache-first + async refresh)
     detect_runtime = {
@@ -416,15 +421,17 @@ vim.api.nvim_create_autocmd("FileType", {
 --   <leader>rl            → Runs live/dev/watch command for current filetype
 --   Select and run!
 
--- Project execution:
+-- Build execution:
 --   nvim ~/Dev/myzig/src/main.zig
---   :RunProject           → Runs zig build run (from project root)
---   <leader>rp            → Same as above
+--   :RunBuild run         → Runs zig build run (from project root)
+--   Bazel workspaces also expose `bazel-build`, `bazel-run`, `bazel-test`,
+--   and `bazel-query`, prompting for the target when needed.
+--   <leader>rb            → Shows picker with all detected/configured commands
 
 -- Odin single-file execution:
 --   nvim lesson.odin
 --   :RunFile              → Runs odin run lesson.odin -file
---   :RunProject           → Runs project command (e.g. odin run .)
+--   :RunBuild run         → Runs project-style build command (e.g. odin run .)
 
 -- Different output modes:
 --   :RunFile split        → Run in horizontal split
@@ -442,7 +449,6 @@ vim.api.nvim_create_autocmd("FileType", {
 
 -- :RunFile [mode]           - Run current file
 -- :RunCode                  - Run visual selection
--- :RunProject [mode]        - Run project command
 -- :RunBuild <command>       - Run specific build command
 -- :RunBuildSelect [mode]    - Show command picker
 -- :RunClose                 - Close output window
@@ -467,7 +473,6 @@ vim.api.nvim_create_autocmd("FileType", {
 -- Default Keymaps:
 --   <leader>r   → Run file
 --   <leader>rb  → Show build command picker
---   <leader>rp  → Run project
 --   <leader>rq  → Close runner
 --   <leader>rt  → Run in tab
 --   <leader>rv  → Run in vsplit
