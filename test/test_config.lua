@@ -1,5 +1,8 @@
 -- Tests for zignite.config module
 
+package.path = package.path .. ";./lua/?.lua"
+package.path = package.path .. ";./lua/?/init.lua"
+
 -- Mock vim functions for testing
 _G.vim = {
     tbl_isempty = function(tbl)
@@ -53,6 +56,11 @@ local function test_config_setup()
     assert(config.options.runners, "Default runners not set")
     assert(config.options.runners.python, "Python runner not set")
     assert(config.options.float, "Float config not set")
+    assert(config.options.picker.layout == "auto", "Picker should default to auto layout")
+    assert(config.options.picker.compact_breakpoint == 96, "Picker compact breakpoint default should be set")
+    assert(config.options.build_commands.fortran.run == "./main", "Fortran run should be direct by default")
+    assert(config.options.build_commands.cpp["cmake-build"] == "cmake --build build", "CMake build should be direct by default")
+    assert(config.options.build_commands.cpp["meson-build"] == "meson compile -C build", "Meson build should be direct by default")
 
     -- Test custom setup
     config.setup({
