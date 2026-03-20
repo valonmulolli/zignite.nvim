@@ -9,10 +9,52 @@ local utils = require("zignite.utils")
 local M = {}
 local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "preview" }
 
+---@param filetype string
+---@return table<string, string>
+local function get_default_build_commands(filetype)
+	return config.defaults.build_commands[filetype] or {}
+end
+
 ---@param configured table<string, string>
 ---@return table<string, string>
 local function copy_commands(configured)
 	return state.copy_string_map(configured or {})
+end
+
+---@param updated table<string, string>
+---@param default_commands table<string, string>
+---@param key string
+---@param value string|nil
+---@return nil
+local function replace_default_command(updated, default_commands, key, value)
+	if type(value) ~= "string" or value == "" then
+		return
+	end
+	if updated[key] ~= nil and updated[key] == default_commands[key] then
+		updated[key] = value
+	end
+end
+
+---@param target table<string, string>
+---@param alias string
+---@param source_key string
+---@return nil
+local function mirror_command(target, alias, source_key)
+	if target[source_key] then
+		target[alias] = target[source_key]
+	end
+end
+
+---@return fun(flag: string): boolean
+local function config_detection_enabled()
+	local detect_options = config.options.detect or {}
+	return function(flag)
+		local value = detect_options[flag]
+		if value == nil then
+			return true
+		end
+		return value == true
+	end
 end
 
 ---@param filetype string
@@ -29,17 +71,13 @@ local function apply_node_package_manager_defaults(filetype, filepath, configure
 		return configured
 	end
 
-	local default_commands = config.defaults.build_commands[filetype] or {}
+	local default_commands = get_default_build_commands(filetype)
 	local updated = copy_commands(configured)
 
 	for _, key in ipairs({ "start", "dev", "build", "test" }) do
-		if updated[key] ~= nil and updated[key] == default_commands[key] then
-			updated[key] = utils.format_package_script_command(package_manager, key)
-		end
+		replace_default_command(updated, default_commands, key, utils.format_package_script_command(package_manager, key))
 	end
-	if updated.install ~= nil and updated.install == default_commands.install then
-		updated.install = utils.format_package_install_command(package_manager)
-	end
+	replace_default_command(updated, default_commands, "install", utils.format_package_install_command(package_manager))
 
 	return updated
 end
@@ -53,18 +91,12 @@ local function apply_python_tool_defaults(filepath, configured)
 		return configured
 	end
 
-	local default_commands = config.defaults.build_commands.python or {}
+	local default_commands = get_default_build_commands("python")
 	local updated = copy_commands(configured)
 
-	if updated.run ~= nil and updated.run == default_commands.run then
-		updated.run = "uv run -m main"
-	end
-	if updated.test ~= nil and updated.test == default_commands.test then
-		updated.test = "uv run pytest"
-	end
-	if updated.install ~= nil and updated.install == default_commands.install then
-		updated.install = "uv sync"
-	end
+	replace_default_command(updated, default_commands, "run", "uv run -m main")
+	replace_default_command(updated, default_commands, "test", "uv run pytest")
+	replace_default_command(updated, default_commands, "install", "uv sync")
 
 	return updated
 end
@@ -194,17 +226,11 @@ function M.get_configured_build_commands(filetype, filepath)
 		local updated = copy_commands(configured)
 		local go_commands, primary_selector = parsers.detect_go_project_commands(filepath)
 		M.extend_string_map(updated, go_commands)
-		local default_commands = config.defaults.build_commands.go or {}
+		local default_commands = get_default_build_commands("go")
 		if primary_selector and primary_selector ~= "." then
-			if updated.build == default_commands.build then
-				updated.build = go_commands["go-build-package"] or updated.build
-			end
-			if updated.run == default_commands.run then
-				updated.run = go_commands["go-run-package"] or updated.run
-			end
-			if updated.test == default_commands.test then
-				updated.test = go_commands["go-test-package"] or updated.test
-			end
+			replace_default_command(updated, default_commands, "build", go_commands["go-build-package"])
+			replace_default_command(updated, default_commands, "run", go_commands["go-run-package"])
+			replace_default_command(updated, default_commands, "test", go_commands["go-test-package"])
 		end
 		return updated
 	end
@@ -216,7 +242,7 @@ function M.get_configured_build_commands(filetype, filepath)
 		local updated = copy_commands(configured)
 		local cargo_commands, primary_bin = parsers.detect_cargo_project_commands(filepath)
 		M.extend_string_map(updated, cargo_commands)
-		local default_commands = config.defaults.build_commands.rust or {}
+		local default_commands = get_default_build_commands("rust")
 		if primary_bin and updated.run == default_commands.run then
 			local run_command = cargo_commands["cargo-run-" .. primary_bin]
 			if type(run_command) == "string" and run_command ~= "" then
@@ -260,24 +286,12 @@ function M.get_configured_build_commands(filetype, filepath)
 		filtered["cmake-release"] = configured["cmake-release"]
 			or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
 		filtered["cmake-test"] = configured["cmake-test"] or "ctest --test-dir build"
-		if filtered["cmake-build"] then
-			filtered.build = filtered["cmake-build"]
-		end
-		if filtered["cmake-clean"] then
-			filtered.clean = filtered["cmake-clean"]
-		end
-		if filtered["cmake-debug"] then
-			filtered.debug = filtered["cmake-debug"]
-		end
-		if filtered["cmake-release"] then
-			filtered.release = filtered["cmake-release"]
-		end
-		if filtered["cmake-test"] then
-			filtered.test = filtered["cmake-test"]
-		end
-		if filtered["cmake-config"] then
-			filtered.config = filtered["cmake-config"]
-		end
+		mirror_command(filtered, "build", "cmake-build")
+		mirror_command(filtered, "clean", "cmake-clean")
+		mirror_command(filtered, "debug", "cmake-debug")
+		mirror_command(filtered, "release", "cmake-release")
+		mirror_command(filtered, "test", "cmake-test")
+		mirror_command(filtered, "config", "cmake-config")
 		filtered.install = "cmake --build build --target install"
 		local _, primary_target = parsers.detect_cmake_project_commands(filepath)
 		if primary_target and primary_target ~= "" then
@@ -297,18 +311,10 @@ function M.get_configured_build_commands(filetype, filepath)
 		filtered["meson-build"] = systems.meson_build_command(root, nil)
 		filtered["meson-clean"] = systems.meson_clean_command(root)
 		filtered["meson-test"] = configured["meson-test"] or "meson test -C build"
-		if filtered["meson-build"] then
-			filtered.build = filtered["meson-build"]
-		end
-		if filtered["meson-clean"] then
-			filtered.clean = filtered["meson-clean"]
-		end
-		if filtered["meson-test"] then
-			filtered.test = filtered["meson-test"]
-		end
-		if filtered["meson-setup"] then
-			filtered.setup = filtered["meson-setup"]
-		end
+		mirror_command(filtered, "build", "meson-build")
+		mirror_command(filtered, "clean", "meson-clean")
+		mirror_command(filtered, "test", "meson-test")
+		mirror_command(filtered, "setup", "meson-setup")
 		local _, primary_target = parsers.detect_meson_project_commands(filepath)
 		if primary_target and primary_target ~= "" then
 			filtered["meson-run"] = systems.meson_run_command(root, primary_target)
@@ -345,17 +351,11 @@ end
 ---@param filepath string
 ---@return table|nil
 function M.get_preferred_project_command(filetype, filepath)
+	local is_detection_enabled = config_detection_enabled()
 	local build_cmds = M.merge_build_commands(
 		filetype,
 		filepath,
-		M.detect_tool_commands_for_filetype(filetype, filepath, function(flag)
-			local detect_options = config.options.detect or {}
-			local value = detect_options[flag]
-			if value == nil then
-				return true
-			end
-			return value == true
-		end)
+		M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
 	)
 	local root = utils.get_project_root(filepath, config.options.project)
 	if not root then
@@ -363,14 +363,7 @@ function M.get_preferred_project_command(filetype, filepath)
 	end
 
 	local preferred_name = build_cmds.run and "run"
-		or M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, function(flag)
-			local detect_options = config.options.detect or {}
-			local value = detect_options[flag]
-			if value == nil then
-				return true
-			end
-			return value == true
-		end)
+		or M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
 		or build_cmds.start and "start"
 		or build_cmds.build and "build"
 		or nil
@@ -403,7 +396,7 @@ function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds,
 		end
 
 		local configured = M.get_configured_build_commands(filetype, filepath)
-		local default_commands = config.defaults.build_commands[filetype] or {}
+		local default_commands = get_default_build_commands(filetype)
 		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
 			local command = build_cmds[candidate]
 			if type(command) == "string" then
