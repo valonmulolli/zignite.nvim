@@ -8,7 +8,8 @@ local DETECT_RES_END = "@@ZDET_RES_END"
 local DETECT_WORKER_WAIT_MS = 1200
 local DETECT_WORKER_REQUEST_TIMEOUT_MS = 3000
 
-local ZIG_EXECUTABLE = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h") .. "/zig/zig-out/bin/zignite"
+local ZIG_EXECUTABLE = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h:h:h")
+	.. "/zig/zig-out/bin/zignite"
 
 ---@type table|nil
 local detect_worker = nil
