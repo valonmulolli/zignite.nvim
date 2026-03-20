@@ -32,10 +32,11 @@ function M.detect_cmake_project_commands(filepath)
 		state.get_file_mtime_key(cmake_lists_path) or "missing",
 		cmake_build_ready
 	)
+	local cache_key = cmake_lists_path .. "::" .. common.normalize_path_text(filepath)
 	local cached = state.get_bounded_cache_entry(
 		state.cmake_target_cache,
 		state.cmake_target_cache_order,
-		cmake_lists_path
+		cache_key
 	)
 	if cached and cached.mtime_key == mtime_key then
 		return state.copy_string_map(cached.commands), cached.primary_target
@@ -72,7 +73,7 @@ function M.detect_cmake_project_commands(filepath)
 			state.cmake_target_cache,
 			state.cmake_target_cache_order,
 			state.CMAKE_TARGET_CACHE_MAX,
-			cmake_lists_path,
+			cache_key,
 			{
 				mtime_key = mtime_key,
 				commands = state.copy_string_map(commands),
@@ -88,7 +89,7 @@ function M.detect_cmake_project_commands(filepath)
 			state.cmake_target_cache,
 			state.cmake_target_cache_order,
 			state.CMAKE_TARGET_CACHE_MAX,
-			cmake_lists_path,
+			cache_key,
 			{ mtime_key = mtime_key, commands = {}, primary_target = nil }
 		)
 		return {}, nil
@@ -192,7 +193,7 @@ function M.detect_cmake_project_commands(filepath)
 		state.cmake_target_cache,
 		state.cmake_target_cache_order,
 		state.CMAKE_TARGET_CACHE_MAX,
-		cmake_lists_path,
+		cache_key,
 		{
 			mtime_key = mtime_key,
 			commands = state.copy_string_map(commands),
