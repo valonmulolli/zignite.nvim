@@ -390,6 +390,76 @@ local function test_pyproject_tools_use_zig_project_parser()
     print("✓ Zig pyproject parser test passed")
 end
 
+-- Test Go project parsing can use the Zig go.work / go.mod parser path.
+local function test_go_project_commands_use_zig_project_parser()
+    init.setup({
+        build_commands = {},
+    })
+
+    local go_parser = require("zignite.build.parsers.go")
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        assert(type(cmd) == "table", "Zig Go parser should execute via argv")
+        assert(cmd[2] == "--project-parse", "Go parser should call the Zig project parser mode")
+        if cmd[3] == "--kind=go-work" then
+            return { "USE\t/tmp/gowork/app\t1" }
+        end
+        if cmd[3] == "--kind=go-mod" then
+            return { "MODULE\texample.com/app" }
+        end
+        error("Unexpected Zig Go parser kind: " .. tostring(cmd[3]))
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/gowork/go.work" or path == "/tmp/gowork/app/go.mod" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/gowork/go.work" or path == "/tmp/gowork/app/go.mod" then
+            error("Lua Go parsers should not be used when Zig parser succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands, primary_selector, module_name =
+        go_parser.detect_go_project_commands("/tmp/gowork/app/cmd/web/main.go")
+    assert(
+        commands["go-run-package"] == "go run ./app/cmd/web",
+        "Zig Go parser should build package-relative run commands from go.work"
+    )
+    assert(primary_selector == "./app/cmd/web", "Zig Go parser should preserve the primary package selector")
+    assert(module_name == "example.com/app", "Zig Go parser should preserve the matched module name")
+
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.v.shell_error = 0
+
+    print("✓ Zig Go parser test passed")
+end
+
 -- Test project parsing can reuse the Zig project daemon instead of spawning
 -- one-shot parser processes repeatedly.
 local function test_make_targets_use_zig_project_daemon()
@@ -476,4 +546,5 @@ test_cmake_targets_use_zig_project_parser()
 test_meson_targets_use_zig_project_parser()
 test_cargo_targets_use_zig_project_parser()
 test_pyproject_tools_use_zig_project_parser()
+test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
