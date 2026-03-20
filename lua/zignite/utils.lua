@@ -6,6 +6,56 @@ local detect_cache = {}
 local detect_cache_order = {}
 local DETECT_CACHE_MAX = 256
 
+---@param root string
+---@param name string
+---@return string
+local function join_path(root, name)
+	if vim.fs and type(vim.fs.joinpath) == "function" then
+		return vim.fs.joinpath(root, name)
+	end
+	return tostring(root or "") .. "/" .. tostring(name or "")
+end
+
+---@param path string
+---@return boolean
+local function file_exists(path)
+	return type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1
+end
+
+---@param path string
+---@return string|nil
+local function read_text_file(path)
+	if type(vim.fn.readfile) ~= "function" or not file_exists(path) then
+		return nil
+	end
+	local lines = vim.fn.readfile(path)
+	if type(lines) ~= "table" then
+		return nil
+	end
+	return table.concat(lines, "\n")
+end
+
+---@param payload string
+---@return table|nil
+local function decode_json_payload(payload)
+	if type(payload) ~= "string" or payload == "" then
+		return nil
+	end
+	if vim.json and type(vim.json.decode) == "function" then
+		local ok, decoded = pcall(vim.json.decode, payload)
+		if ok then
+			return decoded
+		end
+	end
+	if vim.fn and type(vim.fn.json_decode) == "function" then
+		local ok, decoded = pcall(vim.fn.json_decode, payload)
+		if ok then
+			return decoded
+		end
+	end
+	return nil
+end
+
 ---@param filepath string
 ---@param project_config table|nil
 ---@return string
@@ -38,6 +88,123 @@ end
 function M.clear_project_cache()
 	detect_cache = {}
 	detect_cache_order = {}
+end
+
+---@param package_manager string
+---@param script_name string
+---@return string
+function M.format_package_script_command(package_manager, script_name)
+	local manager = tostring(package_manager or "npm")
+	local script = tostring(script_name or "")
+	if manager == "bun" then
+		return "bun run " .. script
+	end
+	if manager == "yarn" then
+		return "yarn " .. script
+	end
+	if manager == "pnpm" then
+		if script == "start" then
+			return "pnpm start"
+		end
+		if script == "test" then
+			return "pnpm test"
+		end
+		return "pnpm run " .. script
+	end
+	if script == "start" then
+		return "npm start"
+	end
+	if script == "test" then
+		return "npm test"
+	end
+	return "npm run " .. script
+end
+
+---@param package_manager string
+---@return string
+function M.format_package_install_command(package_manager)
+	local manager = tostring(package_manager or "npm")
+	if manager == "bun" then
+		return "bun install"
+	end
+	if manager == "yarn" then
+		return "yarn install"
+	end
+	if manager == "pnpm" then
+		return "pnpm install"
+	end
+	return "npm install"
+end
+
+---@param root string|nil
+---@return string
+function M.detect_node_package_manager_root(root)
+	if type(root) ~= "string" or root == "" then
+		return "npm"
+	end
+
+	local package_json_path = join_path(root, "package.json")
+	local payload = read_text_file(package_json_path)
+	local parsed = decode_json_payload(payload or "")
+	if type(parsed) == "table" and type(parsed.packageManager) == "string" then
+		local manager_name = tostring(parsed.packageManager):match("^([%w_%-]+)@")
+			or tostring(parsed.packageManager):match("^([%w_%-]+)")
+		if manager_name == "npm" or manager_name == "pnpm" or manager_name == "yarn" or manager_name == "bun" then
+			return manager_name
+		end
+	end
+
+	if file_exists(join_path(root, "bun.lockb")) or file_exists(join_path(root, "bun.lock")) then
+		return "bun"
+	end
+	if file_exists(join_path(root, "pnpm-lock.yaml")) then
+		return "pnpm"
+	end
+	if file_exists(join_path(root, "yarn.lock")) then
+		return "yarn"
+	end
+	return "npm"
+end
+
+---@param filepath string
+---@param project_config table|nil
+---@return string
+function M.detect_node_package_manager(filepath, project_config)
+	local root = M.get_project_root(filepath, project_config)
+	if not root or root == "" then
+		root = vim.fn.fnamemodify(filepath, ":h")
+	end
+	return M.detect_node_package_manager_root(root)
+end
+
+---@param root string|nil
+---@return boolean
+function M.is_uv_project_root(root)
+	if type(root) ~= "string" or root == "" then
+		return false
+	end
+	if file_exists(join_path(root, "uv.lock")) then
+		return true
+	end
+	local pyproject_payload = read_text_file(join_path(root, "pyproject.toml"))
+	if type(pyproject_payload) == "string" and pyproject_payload:find("%[tool%.uv%]", 1, false) then
+		return true
+	end
+	return false
+end
+
+---@param filepath string
+---@param project_config table|nil
+---@return string
+function M.detect_python_project_tool(filepath, project_config)
+	local root = M.get_project_root(filepath, project_config)
+	if not root or root == "" then
+		root = vim.fn.fnamemodify(filepath, ":h")
+	end
+	if M.is_uv_project_root(root) then
+		return "uv"
+	end
+	return "python"
 end
 
 -- Substitute variables in command string
@@ -153,6 +320,9 @@ local default_project_markers = {
 	["Cargo.toml"] = { name = "Rust Project", command = "cargo run" },
 	["go.mod"] = { name = "Go Project", command = "go run ." },
 	["build.zig"] = { name = "Zig Project", command = "zig build run" },
+	["MODULE.bazel"] = { name = "Bazel Project", command = "bazel build //..." },
+	["WORKSPACE.bazel"] = { name = "Bazel Project", command = "bazel build //..." },
+	WORKSPACE = { name = "Bazel Project", command = "bazel build //..." },
 	["pyproject.toml"] = { name = "Python Project", command = "python -m main" },
 	["Makefile"] = { name = "Make Project", command = "make run" },
 	["CMakeLists.txt"] = { name = "CMake Project", command = "[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && { ./build/$fileNameWithoutExt || ./build/$dirName || ./build/main; }" },
@@ -169,6 +339,9 @@ local function detect_project_by_markers(filepath)
 	for _ = 1, 10 do -- Limit search to 10 levels up
 		-- Priority order for detection
 		local priority_markers = {
+			"MODULE.bazel",
+			"WORKSPACE.bazel",
+			"WORKSPACE",
 			"meson.build",
 			"CMakeLists.txt",
 			"build.zig",
@@ -181,7 +354,13 @@ local function detect_project_by_markers(filepath)
 
 		for _, marker in ipairs(priority_markers) do
 			if vim.fn.filereadable(current_dir .. "/" .. marker) == 1 then
-				return vim.tbl_extend("force", default_project_markers[marker], { root = current_dir })
+				local project = vim.tbl_extend("force", default_project_markers[marker], { root = current_dir })
+				if marker == "package.json" then
+					project.command = M.format_package_script_command(M.detect_node_package_manager_root(current_dir), "start")
+				elseif marker == "pyproject.toml" and M.is_uv_project_root(current_dir) then
+					project.command = "uv run -m main"
+				end
+				return project
 			end
 		end
 		local parent = vim.fn.fnamemodify(current_dir, ":h")
