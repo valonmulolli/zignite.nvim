@@ -43,10 +43,12 @@ and shebang detection.
 
 PROJECT EXECUTION~
 Auto-detects project type and runs appropriate commands:
-  • package.json → npm start
+  • package.json → start via detected package manager
   • Cargo.toml → cargo run
   • go.mod → go run .
   • build.zig → zig build run
+  • MODULE.bazel / WORKSPACE(.bazel) → bazel build //...
+  • pyproject.toml / uv.lock → uv run -m main when uv-managed
   • Makefile → make
 
 BUILD COMMANDS~
@@ -55,8 +57,8 @@ Execute language-specific build commands:
   • Zig: build, run, test, release
   • Go: build, run, test, clean, mod
   • C/C++: Make, CMake, Meson support (25+ commands)
-  • JavaScript/TypeScript: npm commands
-  • Python: pytest, pip
+  • JavaScript/TypeScript: package-manager-aware script commands
+  • Python: pytest/pip defaults with automatic uv upgrades in uv-managed projects
 
 INTERACTIVE PICKER~
 Visual command picker with:
@@ -113,18 +115,6 @@ COMMANDS                                                    *zignite-commands*
         :'<,'>RunCode
 <
 
-                                                                 *:RunProject*
-:RunProject [mode]
-    Execute project-level command (auto-detected).
-    
-    Arguments:
-      [mode]    Optional output mode: float, split, vsplit, tab
-    
-    Examples: >
-        :RunProject
-        :RunProject tab
-<
-
                                                                    *:RunBuild*
 :RunBuild <command> [mode]
     Execute specific build command for current language.
@@ -157,6 +147,7 @@ COMMANDS                                                    *zignite-commands*
       • c/cpp: Makefile targets
       • javascript/typescript: package.json scripts
       • java/kotlin: Maven/Gradle project tasks
+      • bazel workspaces: `bazel-*` commands with target prompts
 	    (configured names take precedence)
 	    Auto-detection is enabled by default and can be disabled per detector via
 	    `detect` config table (e.g. `detect.go = false`).
@@ -168,6 +159,15 @@ COMMANDS                                                    *zignite-commands*
 	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
 	    `zig fetch` prompts for URL/path input when selected.
 	    Any build command template can use `$zignite_args` to prompt for arguments.
+
+    Bazel workspace commands:
+      • bazel-build      → bazel build <args>
+      • bazel-run        → bazel run <args>
+      • bazel-test       → bazel test <args>
+      • bazel-query      → bazel query <args>
+      • bazel-clean      → bazel clean
+      • bazel-build-all  → bazel build //...
+      • bazel-test-all   → bazel test //...
     
     Arguments:
       [mode]    Optional output mode: float, split, vsplit, tab
@@ -236,7 +236,6 @@ Default keymaps:
   <leader>r       Run current file                          *<leader>r*
   <leader>rb      Show build command picker                 *<leader>rb*
   <leader>rl      Run live/watch command                    *<leader>rl*
-  <leader>rp      Run project                               *<leader>rp*
   <leader>rq      Close output window                       *<leader>rq*
   <leader>rt      Run file in new tab                       *<leader>rt*
   <leader>rv      Run file in vertical split                *<leader>rv*
@@ -327,8 +326,13 @@ Customize build picker: >lua
     picker = {
         focus = true,
         filter_input = "inline",  -- inline|ui|cmdline
+        layout = "auto",          -- auto|detailed|compact
+        compact_breakpoint = 96,  -- switch to compact layout on narrow screens
     }
 <
+
+    In auto mode, narrow editors use a compact single-window picker. The
+    selected command still appears on the bottom command line.
 
 Customize animations: >lua
     spinner = "dots",  -- dots, line, bar, arrows, etc.
@@ -425,29 +429,30 @@ C/C++ (CMAKE)~
   cmake-config      cmake -B build
   cmake-build       cmake --build build
   cmake-run         cmake --build build && ./build/main
-  cmake-clean       rm -rf build
+  cmake-clean       cmake --build build --target clean
   cmake-debug       cmake -B build -DCMAKE_BUILD_TYPE=Debug
   cmake-release     cmake -B build -DCMAKE_BUILD_TYPE=Release
-  cmake-test        cd build && ctest
+  cmake-test        ctest --test-dir build
 
 C/C++ (MESON)~
   meson-setup       meson setup build
   meson-build       meson compile -C build
   meson-run         meson compile -C build && ./build/main
-  meson-clean       rm -rf build
+  meson-clean       meson compile -C build --clean
   meson-test        meson test -C build
 
-JAVASCRIPT/TYPESCRIPT (NPM)~
-  start             npm start
-  dev               npm run dev
-  build             npm run build
-  test              npm test
-  install           npm install
+JAVASCRIPT/TYPESCRIPT (PACKAGE MANAGER AWARE)~
+  start             npm start          (auto-switches to pnpm/yarn/bun when detected)
+  dev               npm run dev        (auto-switches to pnpm/yarn/bun when detected)
+  build             npm run build      (auto-switches to pnpm/yarn/bun when detected)
+  test              npm test           (auto-switches to pnpm/yarn/bun when detected)
+  install           npm install        (auto-switches to pnpm/yarn/bun when detected)
 
 PYTHON~
-  run               python -m main
-  test              pytest
+  run               python -m main     (auto-switches to uv run -m main in uv projects)
+  test              pytest             (auto-switches to uv run pytest in uv projects)
   install           pip install -r requirements.txt
+                    (auto-switches to uv sync in uv projects)
 
 ==============================================================================
 LANGUAGES                                                  *zignite-languages*
@@ -486,12 +491,6 @@ INTERACTIVE PICKER~
     <leader>rb         " Show picker
     " Navigate with j/k
     " Press Enter to select
-<
-
-PROJECT EXECUTION~
->
-    nvim src/main.zig  " In a Zig project
-    <leader>rp         " Runs zig build run
 <
 
 DIFFERENT OUTPUT MODES~
