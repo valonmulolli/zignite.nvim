@@ -381,7 +381,7 @@ function M.run_live(mode)
 		if vim.tbl_isempty(build_cmds) then
 			return false
 		end
-		local command_name = build.select_live_command_name(build_cmds)
+		local command_name = build.select_live_command_name_for_filetype(filetype, filepath, build_cmds)
 		if not command_name then
 			return false
 		end
@@ -489,6 +489,7 @@ end
 function M.setup(opts)
 	runtime.reset()
 	build.reset()
+	ui.reset()
 	config.setup(opts)
 	utils.clear_project_cache()
 end

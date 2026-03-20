@@ -131,6 +131,80 @@ local function test_run_live_missing_command()
 	print("✓ RunLive missing command test passed")
 end
 
+-- Test RunLive does not use shipped JS defaults when package.json lacks live scripts.
+local function test_run_live_javascript_ignores_missing_default_scripts()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "javascript"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_vim_json = vim.json
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/jslive/src/main.js" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/jslive/package.json" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/jslive/package.json" then
+            return { '{"scripts":{"build":"vite build"}}' }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+    vim.json = {
+        decode = function(_)
+            return {
+                scripts = {
+                    build = "vite build",
+                },
+            }
+        end,
+    }
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.run_live("float")
+    assert(#job_results == 0, "RunLive should not use shipped JS defaults when package.json lacks live scripts")
+    assert(#output_messages > 0, "RunLive should show guidance when no real JS live script exists")
+    assert(
+        output_messages[#output_messages]:match("No live/watch command found"),
+        "RunLive missing-command message should mention live/watch command for JS projects without live scripts"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.json = original_vim_json
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    reset_job_results()
+
+    print("✓ RunLive JavaScript missing-script test passed")
+end
+
 test_run_build_last_behavior()
 test_run_live_priority_selection()
 test_run_live_missing_command()
+test_run_live_javascript_ignores_missing_default_scripts()
