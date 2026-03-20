@@ -106,6 +106,16 @@ local function append_truncation_notice(lines)
 end
 
 ---@param lines string[]
+---@param force_truncated boolean
+---@return string[]
+local function with_truncation_notice(lines, force_truncated)
+	if not force_truncated or lines[1] == "[zignite] quickfix output truncated" then
+		return lines
+	end
+	return append_truncation_notice(lines)
+end
+
+---@param lines string[]
 ---@param max_bytes integer
 ---@return string[], boolean
 local function tail_lines_by_bytes(lines, max_bytes)
@@ -278,6 +288,68 @@ local function quickfix_flag_values(quickfix_opts)
 	}
 end
 
+---@param flags table
+---@return string[]
+local function build_quickfix_backend_command(flags)
+	return {
+		QUICKFIX_BACKEND,
+		"--quickfix",
+		"--max-lines=" .. flags.max_lines,
+		"--max-bytes=" .. flags.max_bytes,
+		"--strip-ansi=" .. flags.strip_ansi,
+		"--strip-max-lines=" .. flags.strip_max_lines,
+		"--parse-diagnostics=" .. flags.parse_diagnostics,
+	}
+end
+
+---@param output_lines string[]
+---@param data string[]|nil
+---@return nil
+local function append_output_lines(output_lines, data)
+	if type(data) ~= "table" then
+		return
+	end
+	for _, line in ipairs(data) do
+		if line ~= nil and line ~= "" then
+			output_lines[#output_lines + 1] = line
+		end
+	end
+end
+
+---@param worker ZigniteQuickfixWorker|nil
+---@return nil
+local function release_quickfix_worker(worker)
+	if quickfix_worker == worker then
+		quickfix_worker = nil
+	end
+end
+
+---@param worker ZigniteQuickfixWorker|nil
+---@return nil
+local function stop_quickfix_worker_job(worker)
+	if worker and type(worker.job_id) == "number" and worker.job_id > 0 then
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, worker.job_id)
+		end
+	end
+	release_quickfix_worker(worker)
+end
+
+---@param worker ZigniteQuickfixWorker
+---@param request_id integer
+---@return ZigniteQuickfixWorkerRequest|nil, string[]
+local function finish_quickfix_worker_request(worker, request_id)
+	local request = worker.pending[request_id]
+	worker.pending[request_id] = nil
+	local completed_lines = worker.active_lines
+	worker.active_id = nil
+	worker.active_lines = {}
+	if request then
+		stop_request_timer(request.timer)
+	end
+	return request, completed_lines
+end
+
 ---@param raw_lines string[]
 ---@param quickfix_opts table
 ---@param force_truncated boolean
@@ -300,15 +372,7 @@ local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_trunca
 	end
 
 	local flags = quickfix_flag_values(quickfix_opts)
-	local cmd = {
-		QUICKFIX_BACKEND,
-		"--quickfix",
-		"--max-lines=" .. flags.max_lines,
-		"--max-bytes=" .. flags.max_bytes,
-		"--strip-ansi=" .. flags.strip_ansi,
-		"--strip-max-lines=" .. flags.strip_max_lines,
-		"--parse-diagnostics=" .. flags.parse_diagnostics,
-	}
+	local cmd = build_quickfix_backend_command(flags)
 
 	---@type string[]
 	local output_lines = {}
@@ -317,24 +381,14 @@ local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_trunca
 		stdout_buffered = true,
 		stderr_buffered = true,
 		on_stdout = function(_, data)
-			if type(data) ~= "table" then
-				return
-			end
-			for _, line in ipairs(data) do
-				if line ~= nil and line ~= "" then
-					output_lines[#output_lines + 1] = line
-				end
-			end
+			append_output_lines(output_lines, data)
 		end,
 		on_exit = function(_, exit_code)
 			if failed then
 				return
 			end
 			if exit_code == 0 then
-				if force_truncated and output_lines[1] ~= "[zignite] quickfix output truncated" then
-					table.insert(output_lines, 1, "[zignite] quickfix output truncated")
-				end
-				on_success(output_lines)
+				on_success(with_truncation_notice(output_lines, force_truncated))
 				return
 			end
 			failed = true
@@ -405,17 +459,9 @@ local function handle_quickfix_worker_stdout(worker, data)
 		if worker.active_id then
 			local end_id = line:match("^@@ZQF_RES_END%s+(%d+)$")
 			if end_id and tonumber(end_id) == worker.active_id then
-				local request = worker.pending[worker.active_id]
-				worker.pending[worker.active_id] = nil
-				local completed_lines = worker.active_lines
-				worker.active_id = nil
-				worker.active_lines = {}
+				local request, completed_lines = finish_quickfix_worker_request(worker, worker.active_id)
 				if request and request.on_success then
-					stop_request_timer(request.timer)
-					if request.force_truncated and completed_lines[1] ~= "[zignite] quickfix output truncated" then
-						table.insert(completed_lines, 1, "[zignite] quickfix output truncated")
-					end
-					request.on_success(completed_lines)
+					request.on_success(with_truncation_notice(completed_lines, request.force_truncated))
 				end
 				goto continue
 			end
@@ -460,9 +506,7 @@ local function ensure_quickfix_worker()
 			handle_quickfix_worker_stdout(worker, data)
 		end,
 		on_exit = function()
-			if quickfix_worker == worker then
-				quickfix_worker = nil
-			end
+			release_quickfix_worker(worker)
 			flush_quickfix_worker_fallbacks(worker)
 		end,
 	})
@@ -512,12 +556,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 		if request.on_fallback then
 			request.on_fallback()
 		end
-		if type(vim.fn.jobstop) == "function" then
-			pcall(vim.fn.jobstop, worker.job_id)
-		end
-		if quickfix_worker == worker then
-			quickfix_worker = nil
-		end
+		stop_quickfix_worker_job(worker)
 	end)
 
 	local payload = {
@@ -540,12 +579,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 	if not ok_send then
 		stop_request_timer(request.timer)
 		worker.pending[request_id] = nil
-		if type(vim.fn.jobstop) == "function" then
-			pcall(vim.fn.jobstop, worker.job_id)
-		end
-		if quickfix_worker == worker then
-			quickfix_worker = nil
-		end
+		stop_quickfix_worker_job(worker)
 		return false
 	end
 	return true
@@ -600,12 +634,7 @@ end
 ---@return nil
 function M.reset()
 	quickfix_backend_available = nil
-	if quickfix_worker and type(quickfix_worker.job_id) == "number" and quickfix_worker.job_id > 0 then
-		if type(vim.fn.jobstop) == "function" then
-			pcall(vim.fn.jobstop, quickfix_worker.job_id)
-		end
-	end
-	quickfix_worker = nil
+	stop_quickfix_worker_job(quickfix_worker)
 end
 
 return M

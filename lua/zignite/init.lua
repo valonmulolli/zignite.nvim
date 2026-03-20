@@ -27,6 +27,27 @@ local function ensure_config()
 	config.ensure()
 end
 
+---@param filepath string|nil
+---@param requested_filetype string|nil
+---@return string, string
+local function resolve_source_context(filepath, requested_filetype)
+	local source_path = filepath or vim.fn.expand("%:p")
+	local filetype = runtime.resolve_supported_filetype(requested_filetype or vim.bo.filetype, source_path)
+	return source_path, filetype
+end
+
+---@param filepath string
+---@return string
+local function resolve_project_cwd(filepath)
+	return utils.get_project_root(filepath, config.options.project) or vim.fn.fnamemodify(filepath, ":h")
+end
+
+---@param root string|nil
+---@return boolean
+local function has_build_zig(root)
+	return type(root) == "string" and root ~= "" and vim.fn.filereadable(vim.fs.joinpath(root, "build.zig")) == 1
+end
+
 ---@param filetype string
 ---@param filepath string
 ---@param runner string|string[]|table|nil
@@ -127,14 +148,10 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 		return
 	end
 
-	local cwd = utils.get_project_root(filepath, config.options.project)
-	if not cwd then
-		cwd = vim.fn.fnamemodify(filepath, ":h")
-	end
+	local cwd = resolve_project_cwd(filepath)
 
 	if filetype == "zig" and command_name == "run" then
-		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(cwd, "build.zig")) == 1
-		if not has_build_zig then
+		if not has_build_zig(cwd) then
 			local zig_runner = utils.normalize_command(config.options.runners.zig)
 			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
 				zig_runner = "zig run $file"
@@ -172,8 +189,7 @@ end
 function M.get_command(filepath, requested_filetype)
 	ensure_config()
 
-	local source_path = filepath or vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(requested_filetype or vim.bo.filetype, source_path)
+	local source_path, filetype = resolve_source_context(filepath, requested_filetype)
 	local ft_runner = apply_smart_runner_defaults(filetype, source_path, config.options.runners[filetype])
 	local legacy_project = utils.detect_project(source_path, config.options.project)
 
@@ -201,8 +217,7 @@ end
 function M.run_code(range, mode)
 	ensure_config()
 
-	local buffer_path = vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(vim.bo.filetype, buffer_path)
+	local buffer_path, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
 	local execution_path
 	local code_to_run
 
@@ -273,9 +288,8 @@ function M.run_code(range, mode)
 	local argv_command = runtime.command_to_argv(command_str, execution_path)
 
 	if filetype == "zig" and source == "filetype" then
-		local has_build_zig = vim.fn.filereadable(vim.fs.joinpath(vim.fn.fnamemodify(execution_path, ":h"), "build.zig")) == 1
 		local uses_zig_build = final_command:match("zig%s+build") ~= nil
-		if not has_build_zig and uses_zig_build then
+		if not has_build_zig(vim.fn.fnamemodify(execution_path, ":h")) and uses_zig_build then
 			final_command = utils.substitute_variables("zig run $file", execution_path)
 			argv_command = runtime.command_to_argv("zig run $file", execution_path)
 		end
@@ -337,8 +351,7 @@ end
 function M.run_build_command(command_name, mode, provided_args)
 	ensure_config()
 
-	local filepath = vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(vim.bo.filetype, filepath)
+	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
 	local settled = false
 
 	---@param build_cmds table<string, string>
@@ -385,8 +398,7 @@ end
 function M.run_live(mode)
 	ensure_config()
 
-	local filepath = vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(vim.bo.filetype, filepath)
+	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
 	local settled = false
 
 	---@return nil
@@ -452,8 +464,7 @@ end
 function M.select_build_command(mode)
 	ensure_config()
 
-	local filepath = vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(vim.bo.filetype, filepath)
+	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
 	build_picker.open({
 		filetype = filetype,
 		filepath = filepath,
@@ -475,8 +486,7 @@ end
 function M.run_last_build_command(mode)
 	ensure_config()
 
-	local filepath = vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(vim.bo.filetype, filepath)
+	local _, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
 	local command_name = build.get_last_build_command(filetype)
 	if not command_name then
 		ui.show_output(string.format("No previous build command for filetype: %s", filetype), mode)
@@ -489,8 +499,7 @@ end
 ---@return table<string, string>
 function M.get_build_commands_for_filetype(filetype)
 	ensure_config()
-	local filepath = vim.fn.expand("%:p")
-	local ft = runtime.resolve_supported_filetype(filetype or vim.bo.filetype, filepath)
+	local filepath, ft = resolve_source_context(vim.fn.expand("%:p"), filetype)
 	return build.get_build_commands_for_filetype(ft, filepath)
 end
 
@@ -498,8 +507,7 @@ end
 ---@return table<string, string>
 function M.get_build_commands_for_completion(filetype)
 	ensure_config()
-	local filepath = vim.fn.expand("%:p")
-	local ft = runtime.resolve_supported_filetype(filetype or vim.bo.filetype, filepath)
+	local filepath, ft = resolve_source_context(vim.fn.expand("%:p"), filetype)
 	local build_cmds = build.get_build_commands_for_cached_lookup(ft, filepath, nil)
 	return build_cmds
 end
