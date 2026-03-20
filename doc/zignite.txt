@@ -157,17 +157,23 @@ COMMANDS                                                    *zignite-commands*
 	    configured/cached commands first to avoid blocking on detection.
 	    When Zig backend is available, detection parsing runs through a persistent
 	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
-	    `zig fetch` prompts for URL/path input when selected.
+	    `zig fetch` prompts for URL/path input when selected. You can paste a
+	    plain GitHub repo URL, `owner/repo`, or a ref such as `#devel` /
+	    `/tree/devel`, and Zignite expands it to the saved Zig form
+	    automatically.
 	    Any build command template can use `$zignite_args` to prompt for arguments.
 
-    Bazel workspace commands:
-      • bazel-build      → bazel build <args>
-      • bazel-run        → bazel run <args>
-      • bazel-test       → bazel test <args>
-      • bazel-query      → bazel query <args>
-      • bazel-clean      → bazel clean
-      • bazel-build-all  → bazel build //...
-      • bazel-test-all   → bazel test //...
+	    Bazel workspace commands:
+	      • bazel-build      → bazel build <args>
+	      • bazel-run        → bazel run <args>
+	      • bazel-test       → bazel test <args>
+	      • bazel-query      → bazel query <args>
+	      • bazel-clean      → bazel clean
+	      • bazel-build-all  → bazel build //...
+	      • bazel-test-all   → bazel test //...
+	    When Zignite can infer the matching target for the current file,
+	    `bazel-build`, `bazel-run`, and `bazel-test` resolve to that concrete
+	    label automatically. Otherwise they still prompt for the label/args.
     
     Arguments:
       [mode]    Optional output mode: float, split, vsplit, tab

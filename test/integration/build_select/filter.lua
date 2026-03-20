@@ -207,6 +207,93 @@ local function test_build_picker_filter_inline_mode()
 	print("✓ Build picker inline filter mode test passed")
 end
 
+-- Test picker captures required command args inline instead of using vim.fn.input.
+local function test_build_picker_inline_argument_entry()
+	local original_expand = vim.fn.expand
+	local original_keymap = vim.keymap
+	local original_getcharstr = vim.fn.getcharstr
+	local original_input = vim.fn.input
+	local original_buf_set_lines = vim.api.nvim_buf_set_lines
+	local mapped = {}
+	local latest_lines = {}
+	local input_calls = 0
+	local idx = 1
+	local keys = {
+		"f",
+		"e",
+		"t",
+		"c",
+		"h",
+		"\r",
+		"p",
+		"k",
+		"g",
+		"\r",
+	}
+
+	config.setup({
+		picker = {
+			filter_input = "inline",
+		},
+	})
+
+	vim.bo.filetype = "zig"
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then return "/tmp/picker/main.zig" end
+		return original_expand(expr)
+	end
+	vim.fn.getcharstr = function()
+		local key = keys[idx]
+		idx = idx + 1
+		return key
+	end
+	vim.fn.input = function(_, default)
+		input_calls = input_calls + 1
+		return default or ""
+	end
+	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+		latest_lines = lines or {}
+		if original_buf_set_lines then
+			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+		end
+	end
+	vim.keymap = {
+		set = function(_, lhs, rhs, _opts)
+			mapped[lhs] = rhs
+		end,
+	}
+
+	reset_job_results()
+	init.select_build_command("float")
+
+	assert(type(mapped["/"]) == "function", "Picker should map '/' for filtering")
+	assert(type(mapped["<CR>"]) == "function", "Picker should map Enter for selection")
+	mapped["/"]()
+	mapped["<CR>"]()
+
+	assert(input_calls == 0, "Inline argument entry should not use vim.fn.input")
+	assert(#job_results > 0, "Inline argument entry should execute the selected command")
+	local command = command_to_string(job_results[#job_results].cmd)
+	assert(command:match("zig fetch"), "Inline argument entry should execute zig fetch")
+	assert(command:match("pkg"), "Inline argument entry should include typed argument")
+	assert(latest_lines[1]:match("zig fetch url/path"), "Inline argument entry should render the args header in-picker")
+	assert(latest_lines[2]:match("^ %> "), "Inline argument entry should render a dedicated input row")
+	assert(
+		table.concat(latest_lines, "\n"):match("Paste GitHub URL only"),
+		"Inline argument entry should explain that a plain GitHub URL is enough"
+	)
+
+	vim.fn.expand = original_expand
+	vim.fn.getcharstr = original_getcharstr
+	vim.fn.input = original_input
+	vim.api.nvim_buf_set_lines = original_buf_set_lines
+	vim.keymap = original_keymap
+	reset_job_results()
+
+	print("✓ Build picker inline argument entry test passed")
+end
+
 test_build_picker_filter_and_preview()
 test_build_picker_filter_cmdline_mode()
 test_build_picker_filter_inline_mode()
+test_build_picker_inline_argument_entry()

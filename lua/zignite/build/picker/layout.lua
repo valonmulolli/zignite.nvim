@@ -92,8 +92,28 @@ end
 function M.build_lines(args)
 	---@type table<integer, integer>
 	local command_lines = {}
+	if args.argument_mode then
+		local prompt = tostring(args.header_label or "Command arguments")
+		local value = tostring(args.header_value or "")
+		local shown_value = value ~= "" and value or "(required)"
+		local lines = {
+			" " .. prompt .. " ",
+			" > " .. M.truncate_text(shown_value, math.max(12, args.width_cap - 4)),
+		}
+		local help_text = args.help_text or "Type arguments, then press Enter to run"
+		lines[#lines + 1] = ""
+		lines[#lines + 1] = M.truncate_text(help_text, math.max(20, args.width_cap - 2))
+		local preview_text = M.truncate_text(args.preview_text or "(none)", math.max(12, args.width_cap - 8))
+		lines[#lines + 1] = " cmd: " .. preview_text
+		return lines, command_lines
+	end
+
+	local header_label = tostring(args.header_label or "Filter")
+	local header_value = tostring(
+		args.header_value or (args.filter_query ~= "" and args.filter_query or "(none)")
+	)
 	local lines = {
-		string.format(" Filter: %s ", args.filter_query ~= "" and args.filter_query or "(none)"),
+		string.format(" %s: %s ", header_label, header_value),
 	}
 
 	if #args.filtered_commands == 0 then
@@ -116,21 +136,14 @@ function M.build_lines(args)
 		end
 	end
 
-	lines[#lines + 1] = M.truncate_text(
-		M.picker_help_line(args.layout_mode, args.width_cap),
-		math.max(20, args.width_cap - 2)
-	)
-	local preview_text = "(none)"
-	if #args.filtered_commands > 0 and args.selected_index >= 1 then
-		local preview_prefix = " cmd: "
-		local preview_limit = math.max(12, args.width_cap - vim.fn.strdisplaywidth(preview_prefix) - 2)
-		preview_text = M.truncate_text(
-			args.command_for_display(args.filtered_commands[args.selected_index].command),
-			preview_limit
-		)
-		lines[#lines + 1] = preview_prefix .. preview_text
-		return lines, command_lines
+	local help_text = args.help_text or M.picker_help_line(args.layout_mode, args.width_cap)
+	lines[#lines + 1] = M.truncate_text(help_text, math.max(20, args.width_cap - 2))
+
+	local preview_text = args.preview_text
+	if preview_text == nil and #args.filtered_commands > 0 and args.selected_index >= 1 then
+		preview_text = args.command_for_display(args.filtered_commands[args.selected_index].command)
 	end
+	preview_text = M.truncate_text(preview_text or "(none)", math.max(12, args.width_cap - 8))
 	lines[#lines + 1] = " cmd: " .. preview_text
 	return lines, command_lines
 end
@@ -172,13 +185,18 @@ function M.build_render_state(args)
 	local lines, command_lines = M.build_lines({
 		layout_mode = layout_mode,
 		width_cap = width_cap,
-		filter_query = args.filter_query,
-		filtered_commands = args.filtered_commands,
-		selected_index = args.selected_index,
-		command_section = args.command_section,
-		section_labels = args.section_labels,
-		command_for_display = args.command_for_display,
-	})
+			filter_query = args.filter_query,
+			filtered_commands = args.filtered_commands,
+			selected_index = args.selected_index,
+			command_section = args.command_section,
+			section_labels = args.section_labels,
+			command_for_display = args.command_for_display,
+			header_label = args.header_label,
+			header_value = args.header_value,
+			argument_mode = args.argument_mode,
+			help_text = args.help_text,
+			preview_text = args.preview_text,
+		})
 	local win_opts = M.build_window_opts(lines, {
 		layout_mode = layout_mode,
 		width_cap = width_cap,

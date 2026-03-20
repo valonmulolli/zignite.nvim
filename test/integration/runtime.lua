@@ -53,6 +53,130 @@ local function test_run_build_command_with_detected_zig_fetch_prompt()
     print("✓ RunBuild with detected zig fetch prompt test passed")
 end
 
+-- Test zig fetch expands a plain GitHub repo URL into the saved git form.
+local function test_run_build_command_with_zig_fetch_github_url()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_input = vim.fn.input
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigfetch/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function()
+        vim.v.shell_error = 0
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "  fetch            Copy a package into global cache and print its hash",
+            "",
+            "General Options:",
+        }
+    end
+    vim.fn.input = function()
+        return "https://github.com/raylib-zig/raylib-zig"
+    end
+
+    reset_job_results()
+    init.run_build_command("fetch", "float")
+    assert(#job_results > 0, "GitHub zig fetch should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(
+        command:match("zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig"),
+        "Plain GitHub URL should expand to --save git+https://github.com/<owner>/<repo>"
+    )
+    local runtime = require("zignite.runtime")
+    local argv = runtime.command_to_argv(
+        "zig fetch --save git+https://github.com/raylib-zig/raylib-zig",
+        "/tmp/zigfetch/main.zig"
+    )
+    assert(
+        type(argv) == "table" and #argv >= 4,
+        "zig fetch GitHub URL should tokenize into separate argv items"
+    )
+    assert(argv[3] == "--save", "zig fetch should keep --save as a separate argv token")
+    assert(
+        argv[4] == "git+https://github.com/raylib-zig/raylib-zig",
+        "zig fetch should keep the git URL as a separate argv token"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.fn.input = original_input
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ Zig fetch GitHub URL expansion test passed")
+end
+
+-- Test zig fetch keeps a GitHub ref and converts /tree/<ref> URLs.
+local function test_run_build_command_with_zig_fetch_github_ref()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_input = vim.fn.input
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigfetch-ref/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function()
+        vim.v.shell_error = 0
+        return {
+            "Usage: zig [command] [options]",
+            "",
+            "Commands:",
+            "  fetch            Copy a package into global cache and print its hash",
+            "",
+            "General Options:",
+        }
+    end
+    vim.fn.input = function()
+        return "https://github.com/raylib-zig/raylib-zig/tree/devel"
+    end
+
+    reset_job_results()
+    init.run_build_command("fetch", "float")
+    assert(#job_results > 0, "GitHub ref zig fetch should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(
+        command:match("zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig#devel"),
+        "GitHub tree URL should expand to a saved git dependency with #ref"
+    )
+    local runtime = require("zignite.runtime")
+    local argv = runtime.command_to_argv(
+        "zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel",
+        "/tmp/zigfetch-ref/main.zig"
+    )
+    assert(
+        type(argv) == "table" and #argv >= 4,
+        "zig fetch GitHub ref should tokenize into separate argv items"
+    )
+    assert(argv[3] == "--save", "zig fetch ref should keep --save as a separate argv token")
+    assert(
+        argv[4] == "git+https://github.com/raylib-zig/raylib-zig#devel",
+        "zig fetch ref should keep the git URL and ref as a separate argv token"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.fn.input = original_input
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ Zig fetch GitHub ref expansion test passed")
+end
+
 -- Test show_output respects split mode and renders in-window (not notify fallback).
 local function test_show_output_respects_mode()
     config.setup({
@@ -351,6 +475,8 @@ local function test_odin_single_file_mode()
 end
 
 test_run_build_command_with_detected_zig_fetch_prompt()
+test_run_build_command_with_zig_fetch_github_url()
+test_run_build_command_with_zig_fetch_github_ref()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
 test_vsplit_respects_configured_width()
