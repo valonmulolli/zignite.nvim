@@ -299,39 +299,6 @@ local function test_zig_project_runfile()
     print("✓ Zig project RunFile test passed")
 end
 
--- Test precedence: RunFile keeps filetype runner, RunProject uses project command.
-local function test_runfile_vs_runproject_precedence()
-    config.setup({
-        project = {
-            ["/tmp/app/.*"] = { name = "App Project", command = "echo project-cmd" },
-        },
-    })
-
-    vim.bo.filetype = "python"
-    local original_expand = vim.fn.expand
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/app/src/main.py" end
-        return original_expand(expr)
-    end
-
-    init.run_code(0, "float")
-    assert(#job_results > 0, "RunFile job was not started")
-    local runfile_cmd = command_to_string(job_results[#job_results].cmd)
-    assert(runfile_cmd:match("python3"), "RunFile should prefer python filetype runner")
-    assert(not runfile_cmd:match("project%-cmd"), "RunFile should not use project command in subdir when runner exists")
-
-    reset_job_results()
-    init.run_project("float")
-    assert(#job_results > 0, "RunProject job was not started")
-    local runproject_cmd = command_to_string(job_results[#job_results].cmd)
-    assert(runproject_cmd:match("project%-cmd"), "RunProject should use project command")
-
-    vim.fn.expand = original_expand
-    reset_job_results()
-
-	print("✓ RunFile vs RunProject precedence test passed")
-end
-
 -- Test Go RunFile in project root prefers filetype runner (single-file), not go run .
 local function test_go_runfile_prefers_file_runner_at_root()
     config.setup({ mode = "float" })
@@ -391,6 +358,5 @@ test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()
 test_zig_project_runfile()
-test_runfile_vs_runproject_precedence()
 test_go_runfile_prefers_file_runner_at_root()
 test_odin_single_file_mode()

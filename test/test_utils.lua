@@ -1,5 +1,8 @@
 -- Tests for zignite.utils module
 
+package.path = package.path .. ";./lua/?.lua"
+package.path = package.path .. ";./lua/?/init.lua"
+
 -- Mock vim functions for testing
 _G.vim = {
     fn = {
@@ -141,10 +144,114 @@ local function test_project_marker_detection()
     print("✓ Project marker detection test passed")
 end
 
+-- Test Bazel project marker detection
+local function test_bazel_project_marker_detection()
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.filereadable = function(path)
+        if path:match("MODULE%.bazel$") then return 1 end
+        return 0
+    end
+
+    local filepath = "/home/user/bazel-app/app/main.cc"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Bazel project not detected by marker")
+    assert(project.name == "Bazel Project", "Bazel project name not correct")
+    assert(project.command == "bazel build //...", "Bazel project command not correct")
+
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Bazel project marker detection test passed")
+end
+
+-- Test Node project marker detection uses the detected package manager.
+local function test_node_project_marker_uses_detected_package_manager()
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_vim_json = vim.json
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = function(path)
+        if path == "/home/user/project/package.json" or path == "/home/user/project/pnpm-lock.yaml" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path)
+        if path == "/home/user/project/package.json" then
+            return { '{"scripts":{"start":"vite"},"packageManager":"pnpm@9.0.0"}' }
+        end
+        return {}
+    end
+    vim.json = {
+        decode = function(_)
+            return {
+                scripts = {
+                    start = "vite",
+                },
+                packageManager = "pnpm@9.0.0",
+            }
+        end,
+    }
+
+    local filepath = "/home/user/project/src/main.js"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Node project should still be detected by marker")
+    assert(project.command == "pnpm start", "Node marker command should use detected pnpm package manager")
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.json = original_vim_json
+
+    print("✓ Node project package manager marker test passed")
+end
+
+-- Test Python project marker detection prefers uv when uv markers are present.
+local function test_python_project_marker_uses_uv()
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = function(path)
+        if path == "/home/user/pythonapp/pyproject.toml" or path == "/home/user/pythonapp/uv.lock" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path)
+        if path == "/home/user/pythonapp/pyproject.toml" then
+            return {
+                "[project]",
+                'name = "pythonapp"',
+                "",
+                "[tool.uv]",
+            }
+        end
+        return {}
+    end
+
+    local filepath = "/home/user/pythonapp/src/main.py"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Python project should still be detected by marker")
+    assert(project.command == "uv run -m main", "Python marker command should prefer uv when project is uv-managed")
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ Python project uv marker test passed")
+end
+
 -- Run all tests
 test_substitute_variables()
 test_normalize_command()
 test_project_detection()
 test_project_marker_detection()
+test_bazel_project_marker_detection()
+test_node_project_marker_uses_detected_package_manager()
+test_python_project_marker_uses_uv()
 
 print("All utils tests passed!")

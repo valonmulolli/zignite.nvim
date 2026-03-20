@@ -68,19 +68,33 @@ vim.loop = vim.loop or {
     end,
 }
 vim.schedule_wrap = vim.schedule_wrap or function(func) return func end
+local next_buf_id = 1
+local next_win_id = 1
+local win_to_buf = {}
 vim.api = vim.api or {
-    nvim_create_buf = function() return 1 end,
+    nvim_create_buf = function()
+        local id = next_buf_id
+        next_buf_id = next_buf_id + 1
+        return id
+    end,
     nvim_buf_set_lines = function() end,
     nvim_buf_set_option = function() end,
-    nvim_open_win = function() return 1 end,
+    nvim_open_win = function(buf)
+        local id = next_win_id
+        next_win_id = next_win_id + 1
+        win_to_buf[id] = buf
+        return id
+    end,
     nvim_win_set_option = function() end,
     nvim_win_close = function() end,
     nvim_buf_is_valid = function() return true end,
     nvim_win_is_valid = function() return true end,
-    nvim_win_get_buf = function() return 1 end,
+    nvim_win_get_buf = function(win) return win_to_buf[win] or 1 end,
     nvim_buf_get_lines = function() return {} end,
     nvim_get_current_win = function() return 1 end,
-    nvim_win_set_buf = function() end,
+    nvim_win_set_buf = function(win, buf)
+        win_to_buf[win] = buf
+    end,
     nvim_win_set_height = function() end,
     nvim_win_set_width = function() end,
     nvim_buf_set_keymap = function() end,

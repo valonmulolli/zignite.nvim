@@ -137,6 +137,60 @@ local function test_timeout_uses_zig_wrapper()
     print("✓ Timeout wrapper runtime test passed")
 end
 
+-- Test Python RunFile prefers uv when the project is uv-managed.
+local function test_uv_python_runner_uses_uv()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/uvapp/main.py" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/uvapp/pyproject.toml" or path == "/tmp/uvapp/uv.lock" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/uvapp/pyproject.toml" then
+            return {
+                "[project]",
+                'name = "uvapp"',
+                "",
+                "[tool.uv]",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "uv-managed Python RunFile should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("%-%-argv"), "uv-managed Python runner should stay in argv mode")
+    assert(command:match("uv"), "uv-managed Python runner should execute via uv")
+    assert(command:match("python"), "uv-managed Python runner should still invoke python explicitly")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    reset_job_results()
+
+    print("✓ uv Python RunFile test passed")
+end
+
 -- Test filetype fallback by extension when vim.bo.filetype is empty.
 local function test_language_detected_from_extension()
     config.setup({ mode = "float" })
@@ -221,7 +275,7 @@ local function test_language_detected_from_shebang()
     print("✓ Shebang-based language detection test passed")
 end
 
--- Test project detection
+-- Test project detection still works as a RunFile fallback when no filetype runner exists.
 local function test_project_execution()
     config.setup({
         project = {
@@ -232,11 +286,11 @@ local function test_project_execution()
     vim.bo.filetype = "plain"
     local original_expand = vim.fn.expand
     vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/test/main.py" end
+        if expr == "%:p" then return "/tmp/test/main.unknown" end
         return original_expand(expr)
     end
 
-    init.run_project("float")
+    init.run_code(0, "float")
 
     assert(#job_results > 0, "Project job was not started")
     local last_job = job_results[#job_results]
@@ -250,7 +304,7 @@ local function test_project_execution()
     vim.fn.expand = original_expand
     reset_job_results()
 
-    print("✓ Project execution test passed")
+    print("✓ Project fallback execution test passed")
 end
 
 -- Test build command execution uses cwd and argv mode for simple commands.
@@ -286,7 +340,67 @@ local function test_build_command_uses_cwd()
     vim.fn.expand = original_expand
     reset_job_results()
 
-    print("✓ Build command cwd test passed")
+	print("✓ Build command cwd test passed")
+end
+
+-- Test Python build defaults switch to uv in uv-managed projects.
+local function test_uv_python_build_defaults()
+    config.setup({
+        build_commands = {
+            python = {
+                run = "python -m main",
+                test = "pytest",
+                install = "pip install -r requirements.txt",
+            },
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/uvbuild/main.py" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/uvbuild/pyproject.toml" or path == "/tmp/uvbuild/uv.lock" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/uvbuild/pyproject.toml" then
+            return {
+                "[project]",
+                'name = "uvbuild"',
+                "",
+                "[tool.uv]",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_build_command("test", "float")
+
+    assert(#job_results > 0, "uv-managed Python build command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("uv run pytest"), "uv-managed Python test should execute via uv run pytest")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    reset_job_results()
+
+    print("✓ uv Python build defaults test passed")
 end
 
 -- Test build command detection maps related filetypes (e.g. typescriptreact -> typescript).
@@ -316,8 +430,10 @@ test_basic_execution()
 test_interpreted_runner_uses_argv_mode()
 test_visual_run_code_preserves_extension()
 test_timeout_uses_zig_wrapper()
+test_uv_python_runner_uses_uv()
 test_language_detected_from_extension()
 test_language_detected_from_shebang()
 test_project_execution()
 test_build_command_uses_cwd()
+test_uv_python_build_defaults()
 test_build_command_filetype_alias()
