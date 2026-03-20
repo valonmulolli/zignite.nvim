@@ -337,8 +337,106 @@ local function test_cpp_meson_project_bootstraps_missing_build_dir()
     print("✓ C++ Meson bootstrap test passed")
 end
 
+---@return nil
+local function test_cpp_cmake_target_cache_is_file_specific()
+    local build = require("zignite.build")
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    init.setup({})
+    build.reset()
+    vim.bo.filetype = "cpp"
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/cmakecache/hello_c.c" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cmakecache/CMakeLists.txt" or path == "/tmp/cmakecache/build/CMakeCache.txt" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, ...)
+        if path == "/tmp/cmakecache/CMakeLists.txt" then
+            return {
+                "project(cache)",
+                "add_executable(hello_c hello_c.c)",
+                "add_executable(hello_cpp hello_cpp.cpp)",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path, ...)
+        end
+        return {}
+    end
+
+    local first = build.get_build_commands_for_filetype("cpp", "/tmp/cmakecache/hello_c.c")
+    local second = build.get_build_commands_for_filetype("cpp", "/tmp/cmakecache/hello_cpp.cpp")
+
+    assert(first.run == first["cmake-run-hello_c"], "First CMake lookup should target hello_c")
+    assert(second.run == second["cmake-run-hello_cpp"], "Second CMake lookup should target hello_cpp")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ C++ CMake file-specific cache test passed")
+end
+
+---@return nil
+local function test_cpp_meson_target_cache_is_file_specific()
+    local build = require("zignite.build")
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    init.setup({})
+    build.reset()
+    vim.bo.filetype = "cpp"
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/mesoncache/hello_c.c" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/mesoncache/meson.build" or path == "/tmp/mesoncache/build/build.ninja" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, ...)
+        if path == "/tmp/mesoncache/meson.build" then
+            return {
+                "project('cache', 'c', 'cpp')",
+                "executable('hello_c', 'hello_c.c')",
+                "executable('hello_cpp', 'hello_cpp.cpp')",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path, ...)
+        end
+        return {}
+    end
+
+    local first = build.get_build_commands_for_filetype("cpp", "/tmp/mesoncache/hello_c.c")
+    local second = build.get_build_commands_for_filetype("cpp", "/tmp/mesoncache/hello_cpp.cpp")
+
+    assert(first.run == first["meson-run-hello_c"], "First Meson lookup should target hello_c")
+    assert(second.run == second["meson-run-hello_cpp"], "Second Meson lookup should target hello_cpp")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ C++ Meson file-specific cache test passed")
+end
+
 test_cpp_make_project_filters_irrelevant_commands()
 test_cpp_cmake_project_parses_targets_and_ignores_generated_makefiles()
 test_cpp_cmake_project_bootstraps_missing_build_dir()
+test_cpp_cmake_target_cache_is_file_specific()
 test_cpp_meson_project_parses_targets()
 test_cpp_meson_project_bootstraps_missing_build_dir()
+test_cpp_meson_target_cache_is_file_specific()

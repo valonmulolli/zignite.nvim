@@ -125,6 +125,7 @@ local function flush_project_worker_fallbacks(worker)
 	worker.active_id = nil
 	worker.active_lines = {}
 	worker.active_error = nil
+	worker.stdout_buffer = ""
 end
 
 ---@param worker table
@@ -205,8 +206,24 @@ local function handle_project_worker_stdout(worker, data)
 		return
 	end
 
+	worker.stdout_buffer = worker.stdout_buffer or ""
+	local chunk = worker.stdout_buffer
 	for _, raw_line in ipairs(data) do
-		local line = tostring(raw_line or "")
+		chunk = chunk .. tostring(raw_line or "")
+	end
+	local trailing_newline = chunk:sub(-1) == "\n"
+	---@type string[]
+	local lines = {}
+	for line in (chunk .. "\n"):gmatch("(.-)\n") do
+		lines[#lines + 1] = line
+	end
+	if not trailing_newline then
+		worker.stdout_buffer = table.remove(lines) or ""
+	else
+		worker.stdout_buffer = ""
+	end
+
+	for _, line in ipairs(lines) do
 		if line == "" then
 			goto continue
 		end
@@ -323,6 +340,7 @@ local function ensure_project_worker()
 		active_id = nil,
 		active_lines = {},
 		active_error = nil,
+		stdout_buffer = "",
 	}
 
 	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--project-parse-daemon" }, {
