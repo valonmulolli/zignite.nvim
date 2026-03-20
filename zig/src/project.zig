@@ -3,6 +3,8 @@ const bazel = @import("project/bazel.zig");
 const cargo = @import("project/cargo.zig");
 const cmake = @import("project/cmake.zig");
 const common = @import("project/common.zig");
+const go_mod = @import("project/go_mod.zig");
+const go_work = @import("project/go_work.zig");
 const make = @import("project/make.zig");
 const meson = @import("project/meson.zig");
 const package_json = @import("project/package_json.zig");
@@ -16,6 +18,8 @@ pub const Kind = enum {
     meson,
     cargo,
     pyproject,
+    go_mod,
+    go_work,
 };
 
 pub const Options = struct {
@@ -140,6 +144,8 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
+    if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
+    if (std.ascii.eqlIgnoreCase(value, "go-work")) return .go_work;
     return error.InvalidProjectParseKind;
 }
 
@@ -218,6 +224,24 @@ fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, 
         return;
     }
 
+    if (options.kind == .go_mod) {
+        const maybe_name = try go_mod.parseModuleName(allocator, contents);
+        defer if (maybe_name) |name| allocator.free(name);
+        if (maybe_name) |name| {
+            try stdout.print("MODULE\t{s}\n", .{name});
+        }
+        return;
+    }
+
+    if (options.kind == .go_work) {
+        const items = try go_work.parseUses(allocator, contents, options.path, options.match_path);
+        defer go_work.freeOwnedUses(allocator, items);
+        for (items) |item| {
+            try stdout.print("USE\t{s}\t{d}\n", .{ item.path, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        }
+        return;
+    }
+
     if (options.kind == .bazel) {
         const items = try bazel.parseTargets(allocator, contents);
         defer bazel.freeOwnedTargets(allocator, items);
@@ -261,6 +285,8 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .meson => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,
+        .go_mod => return error.InvalidProjectParseKind,
+        .go_work => return error.InvalidProjectParseKind,
     }
 
     return try names.toOwnedSlice(allocator);
