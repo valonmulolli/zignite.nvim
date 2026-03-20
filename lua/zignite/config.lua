@@ -10,7 +10,6 @@ M.defaults = {
 		{ "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
 		{ "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
 		{ "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
-		{ "n", "<leader>rp", ":RunProject<CR>",     { desc = "Run project" } },
 		{ "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
 		{ "n", "<leader>rl", ":RunLive<CR>",        { desc = "Run live/watch command" } },
 	},
@@ -136,8 +135,8 @@ M.defaults = {
 		},
 		fortran = {
 			build = "gfortran *.f90 -o main",
-			run = "gfortran *.f90 -o main && ./main",
-			clean = "rm main",
+			run = "./main",
+			clean = "rm -f main",
 		},
 		go = {
 			build = "go build",
@@ -175,11 +174,9 @@ M.defaults = {
 
 			-- CMake commands
 			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-			["cmake-build"] =
-			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
-			["cmake-run"] =
-			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-			["cmake-clean"] = "rm -rf build",
+			["cmake-build"] = "cmake --build build",
+			["cmake-run"] = "cmake --build build && ./build/main",
+			["cmake-clean"] = "cmake --build build --target clean",
 			["cmake-debug"] =
 			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
 			["cmake-release"] =
@@ -187,10 +184,9 @@ M.defaults = {
 
 			-- Meson commands
 			["meson-setup"] = "meson setup build",
-			["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
-			["meson-run"] =
-			"[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-			["meson-clean"] = "rm -rf build",
+			["meson-build"] = "meson compile -C build",
+			["meson-run"] = "meson compile -C build && ./build/main",
+			["meson-clean"] = "meson compile -C build --clean",
 			["meson-test"] = "meson test -C build",
 		},
 		cpp = {
@@ -204,11 +200,9 @@ M.defaults = {
 
 			-- CMake commands
 			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-			["cmake-build"] =
-			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build",
-			["cmake-run"] =
-			"[ ! -f build/Makefile ] && [ ! -f build/build.ninja ] && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1; cmake --build build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-			["cmake-clean"] = "rm -rf build",
+			["cmake-build"] = "cmake --build build",
+			["cmake-run"] = "cmake --build build && ./build/main",
+			["cmake-clean"] = "cmake --build build --target clean",
 			["cmake-debug"] =
 			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
 			["cmake-release"] =
@@ -217,10 +211,9 @@ M.defaults = {
 
 			-- Meson commands
 			["meson-setup"] = "meson setup build",
-			["meson-build"] = "[ ! -f build/build.ninja ] && meson setup build; meson compile -C build",
-			["meson-run"] =
-			"[ ! -f build/build.ninja ] && meson setup build; meson compile -C build && \"$(find ./build -maxdepth 1 -type f -executable ! -name '*.so' | head -1)\"",
-			["meson-clean"] = "rm -rf build",
+			["meson-build"] = "meson compile -C build",
+			["meson-run"] = "meson compile -C build && ./build/main",
+			["meson-clean"] = "meson compile -C build --clean",
 			["meson-test"] = "meson test -C build",
 			},
 		},
@@ -235,6 +228,7 @@ M.defaults = {
 			c_cpp_make = true, -- Parse Makefile targets for c/cpp
 			js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
 			java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects
+			bazel_project = true, -- Add Bazel workspace commands when workspace markers exist
 		},
 
 		-- Detection runtime behavior for picker responsiveness.
@@ -298,6 +292,8 @@ M.defaults = {
 	picker = {
 		focus = true, -- Focus the interactive build picker window when opening
 		filter_input = "inline", -- Filter prompt mode: "inline", "ui", or "cmdline"
+		layout = "auto", -- Picker layout: "auto", "detailed", or "compact"
+		compact_breakpoint = 96, -- In auto mode, switch to compact layout at or below this editor width
 	},
 
 	-- Execution behavior
@@ -349,6 +345,24 @@ local function validate_config(opts)
 					.. ". Valid values: inline, ui, cmdline",
 				vim.log.levels.WARN
 			)
+		end
+		if picker.layout and not vim.tbl_contains({ "auto", "detailed", "compact" }, picker.layout) then
+			vim.notify(
+				"Invalid picker.layout: "
+					.. tostring(picker.layout)
+					.. ". Valid values: auto, detailed, compact",
+				vim.log.levels.WARN
+			)
+		end
+		if picker.compact_breakpoint ~= nil then
+			local breakpoint = tonumber(picker.compact_breakpoint)
+			if not breakpoint or breakpoint < 40 then
+				vim.notify(
+					"Invalid picker.compact_breakpoint: expected number >= 40, got "
+						.. tostring(picker.compact_breakpoint),
+					vim.log.levels.WARN
+				)
+			end
 		end
 	end
 
