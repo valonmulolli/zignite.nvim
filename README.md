@@ -280,6 +280,10 @@ detect_runtime = {
 - `live_merge = true`: refreshed detected commands are merged into the open picker without closing it.
 
 `zig fetch` is included and prompts for URL/path input when selected.
+In the picker, you can paste a plain GitHub repo URL such as
+`https://github.com/raylib-zig/raylib-zig`, a shorthand like
+`raylib-zig/raylib-zig`, or a ref such as `#devel` / `/tree/devel`, and
+Zignite will expand it to the saved Zig form automatically.
 
 Any build command can request runtime arguments by using `$zignite_args` in the
 command template. Example:
@@ -293,6 +297,17 @@ build_commands = {
 ```
 
 When selected, the picker asks for the argument and runs the expanded command.
+For example, pasting:
+
+```text
+https://github.com/raylib-zig/raylib-zig#devel
+```
+
+expands to:
+
+```text
+zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel
+```
 
 For Bazel workspaces, detected commands look like:
 
@@ -305,6 +320,11 @@ bazel-clean      → bazel clean
 bazel-build-all  → bazel build //...
 bazel-test-all   → bazel test //...
 ```
+
+When Zignite can infer the matching Bazel target for the current file, generic
+`bazel-build`, `bazel-run`, and `bazel-test` resolve to that concrete label
+automatically. When it cannot infer the target safely, those commands still
+fall back to prompting for the label/args.
 
 - Use `:RunFile` for fast single-file feedback.
 - Use `:RunBuild run` when you explicitly want project-wide startup/build behavior.

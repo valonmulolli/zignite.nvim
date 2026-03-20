@@ -5,6 +5,9 @@ local layout = require("zignite.build.picker.layout")
 ---@type table
 local M = {}
 
+local BUILD_ARG_PLACEHOLDER = "$zignite_args"
+local BUILD_ARG_DISPLAY_PLACEHOLDER = "<args>"
+
 ---@class ZigniteBuildPickerOpts
 ---@field filetype string
 ---@field filepath string
@@ -18,8 +21,10 @@ local M = {}
 --- on_refresh: fun(commands: table<string, string>):nil
 ---): table<string, string>
 ---@field can_detect_build_commands_for_filetype fun(filetype: string): boolean
----@field run_build_command fun(command_name: string, mode: string): nil
+---@field run_build_command fun(command_name: string, mode: string, provided_args?: string): nil
 ---@field get_last_build_command fun(filetype: string): string|nil
+---@field command_requires_arguments fun(command_template: string): boolean
+---@field get_command_argument_prompt fun(filetype: string, command_name: string): string
 
 ---@param opts ZigniteBuildPickerOpts
 ---@return nil
@@ -98,6 +103,37 @@ function M.open(opts)
 	local pending_refresh_commands = nil
 	---@type table<integer, integer>
 	local command_lines
+	---@type { prompt: string, value: string, command: string, name: string }|nil
+	local argument_state = nil
+
+	---@param command string
+	---@param value string|nil
+	---@return string
+	local function command_for_argument_display(command, value)
+		local replacement = value ~= nil and value ~= "" and value or BUILD_ARG_DISPLAY_PLACEHOLDER
+		local escaped = BUILD_ARG_PLACEHOLDER:gsub("(%W)", "%%%1")
+		return command:gsub(escaped, function()
+			return replacement
+		end)
+	end
+
+	---@param command_name string
+	---@return string
+	local function get_argument_help_text(command_name)
+		if filetype == "zig" and command_name == "fetch" then
+			return "Paste GitHub URL only | Enter: run | Esc: cancel | Backspace: edit"
+		end
+		return "Type URL/path | Enter: run | Esc: cancel | Backspace: edit"
+	end
+
+	---@param command_name string
+	---@return string
+	local function get_prompt_buffer_help_line(command_name)
+		if filetype == "zig" and command_name == "fetch" then
+			return " Paste GitHub URL only and press Enter "
+		end
+		return " Type URL/path and press Enter "
+	end
 
 	---@return nil
 	local function apply_filter()
@@ -187,6 +223,13 @@ function M.open(opts)
 		command_section = command_section,
 		section_labels = section_labels,
 		command_for_display = opts.command_for_display,
+		header_label = argument_state and argument_state.prompt or nil,
+		header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
+		argument_mode = argument_state ~= nil,
+		help_text = argument_state and get_argument_help_text(argument_state.name) or nil,
+		preview_text = argument_state and opts.command_for_display(
+			command_for_argument_display(argument_state.command, argument_state.value)
+		) or nil,
 	})
 	command_lines = initial_command_lines
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
@@ -217,6 +260,13 @@ function M.open(opts)
 			command_section = command_section,
 			section_labels = section_labels,
 			command_for_display = opts.command_for_display,
+			header_label = argument_state and argument_state.prompt or nil,
+			header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
+			argument_mode = argument_state ~= nil,
+			help_text = argument_state and get_argument_help_text(argument_state.name) or nil,
+			preview_text = argument_state and opts.command_for_display(
+				command_for_argument_display(argument_state.command, argument_state.value)
+			) or nil,
 		})
 		command_lines = updated_command_lines
 		if vim.api.nvim_win_set_config then
@@ -227,6 +277,10 @@ function M.open(opts)
 		vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 
 		vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
+		if argument_state ~= nil then
+			vim.api.nvim_win_set_cursor(win, { 2, 0 })
+			return
+		end
 		if #filtered_commands == 0 or selected_index < 1 then
 			return
 		end
@@ -373,11 +427,118 @@ function M.open(opts)
 		end
 	end
 
+	---@param selected table
+	---@return boolean
+	local function open_prompt_buffer_argument_entry(selected)
+		if type(vim.fn.prompt_setprompt) ~= "function" or type(vim.fn.prompt_setcallback) ~= "function" then
+			return false
+		end
+		if not win or not vim.api.nvim_win_is_valid(win) then
+			return false
+		end
+
+		local prompt_buf = vim.api.nvim_create_buf(false, true)
+		local prompt_label = opts.get_command_argument_prompt(filetype, selected.name)
+		local help_line = get_prompt_buffer_help_line(selected.name)
+		local preview_line = " cmd: " .. opts.command_for_display(selected.command)
+
+		vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = prompt_buf })
+		vim.api.nvim_set_option_value("buftype", "prompt", { buf = prompt_buf })
+		vim.api.nvim_set_option_value("modifiable", true, { buf = prompt_buf })
+		vim.api.nvim_buf_set_lines(prompt_buf, 0, -1, false, {
+			" " .. prompt_label .. " ",
+			help_line,
+			preview_line,
+			"",
+		})
+		vim.fn.prompt_setprompt(prompt_buf, "> ")
+
+		local restored = false
+		local function restore_picker_view()
+			if restored then
+				return
+			end
+			restored = true
+			if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_buf_is_valid(buf) then
+				vim.api.nvim_win_set_buf(win, buf)
+				render_picker()
+			end
+		end
+
+		vim.fn.prompt_setcallback(prompt_buf, function(text)
+			local entered = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+			if entered == "" then
+				restore_picker_view()
+				return
+			end
+			close_picker()
+			opts.run_build_command(selected.name, mode, entered)
+		end)
+
+		vim.api.nvim_win_set_buf(win, prompt_buf)
+		vim.api.nvim_set_option_value("wrap", false, { win = win })
+		vim.api.nvim_set_option_value("cursorline", true, { win = win })
+		vim.keymap.set({ "i", "n" }, "<Esc>", function()
+			restore_picker_view()
+		end, { buffer = prompt_buf, nowait = true })
+		vim.api.nvim_win_set_cursor(win, { 4, 0 })
+		vim.cmd("startinsert")
+		return true
+	end
+
 	---@param index integer
 	---@return nil
 	local function select_command(index)
 		local selected = filtered_commands[index]
 		if not selected then
+			return
+		end
+		if opts.command_requires_arguments(selected.command) and open_prompt_buffer_argument_entry(selected) then
+			return
+		end
+		if opts.command_requires_arguments(selected.command) and type(vim.fn.getcharstr) == "function" then
+			local current_value = ""
+			argument_state = {
+				prompt = opts.get_command_argument_prompt(filetype, selected.name),
+				value = current_value,
+				command = selected.command,
+				name = selected.name,
+			}
+			while true do
+				render_picker()
+
+				local ok, key = pcall(vim.fn.getcharstr)
+				if not ok or key == nil then
+					break
+				end
+				if key == "\r" or key == "\n" then
+					if current_value:match("^%s*$") then
+						argument_state.value = ""
+						render_picker()
+					else
+						argument_state = nil
+						close_picker()
+						opts.run_build_command(selected.name, mode, current_value)
+						return
+					end
+				elseif key == "\027" then
+					argument_state = nil
+					render_picker()
+					return
+				else
+					local key_byte = string.byte(key, 1)
+					if key == "\127" or key == "\008" then
+						current_value = current_value:sub(1, math.max(0, #current_value - 1))
+					elseif key == "\021" then
+						current_value = ""
+					elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
+						current_value = current_value .. key
+					end
+					argument_state.value = current_value
+				end
+			end
+			argument_state = nil
+			render_picker()
 			return
 		end
 		close_picker()
