@@ -125,6 +125,7 @@ require("zignite").setup({
             build = "zig build",
             run = "zig build run",
             test = "zig build test",
+            check = "zig build check",
             release = "zig build -Doptimize=ReleaseFast",
             ["release-run"] = "zig build run -Doptimize=ReleaseFast",
 

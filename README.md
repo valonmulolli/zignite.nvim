@@ -203,6 +203,15 @@ Press `<leader>rb` (default) to open the Command Picker:
   clean              → cargo clean
 ```
 
+Zig now also ships a lightweight project-level check path:
+
+```text
+  build              → zig build
+  check              → zig build check
+  run                → zig build run
+  test               → zig build test
+```
+
 Use:
 - `j`/`k` (or arrow keys) to navigate
 - `Enter` to select
@@ -406,6 +415,16 @@ lua test/integration.lua
 
 ```sh
 lua test/benchmark.lua 10000
+```
+
+Or through the Zig build script:
+
+```sh
+cd zig
+zig build bench          # defaults to 3000 iterations
+zig build bench-fast     # defaults to 1000 iterations
+zig build bench-ci       # defaults to 3000 iterations + hard-fail guardrail
+zig build bench -- 10000
 ```
 
 The benchmark prints:

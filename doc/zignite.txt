@@ -407,6 +407,7 @@ ZIG~
   build             zig build
   run               zig build run
   test              zig build test
+  check             zig build check
   release           zig build -Doptimize=ReleaseFast
   release-run       zig build run -Doptimize=ReleaseFast
 
@@ -541,6 +542,16 @@ Build the Zig backend: >
     cd /path/to/zignite.nvim-v0/zig
     zig build
 <
+
+Run the backend benchmark: >
+    cd /path/to/zignite.nvim-v0/zig
+    zig build bench
+    zig build bench-fast
+    zig build bench-ci
+    zig build bench -- 10000
+<
+The default bench run uses 3000 iterations. `bench-fast` uses 1000.
+`bench-ci` also enables the hard-fail benchmark guardrail.
 
 QUICKFIX LATENCY IS HIGH~
 Tune quickfix limits to reduce processing cost: >

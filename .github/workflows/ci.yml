@@ -54,4 +54,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          lua test/benchmark.lua 3000
+          cd zig
+          zig build bench-ci
