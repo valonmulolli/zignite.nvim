@@ -597,4 +597,15 @@ function M.populate_from_buffer(buf, quickfix_opts)
 	populate_quickfix_lua(lua_lines, quickfix_opts, truncated)
 end
 
+---@return nil
+function M.reset()
+	quickfix_backend_available = nil
+	if quickfix_worker and type(quickfix_worker.job_id) == "number" and quickfix_worker.job_id > 0 then
+		if type(vim.fn.jobstop) == "function" then
+			pcall(vim.fn.jobstop, quickfix_worker.job_id)
+		end
+	end
+	quickfix_worker = nil
+end
+
 return M

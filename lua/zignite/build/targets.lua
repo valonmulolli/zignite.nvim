@@ -18,6 +18,7 @@ M.detect_tool_commands_for_filetype_async = commands.detect_tool_commands_for_fi
 M.get_configured_build_commands = commands.get_configured_build_commands
 M.merge_build_commands = commands.merge_build_commands
 M.get_preferred_project_command = commands.get_preferred_project_command
+M.select_live_command_name_for_filetype = commands.select_live_command_name_for_filetype
 M.select_live_command_name = commands.select_live_command_name
 
 return M

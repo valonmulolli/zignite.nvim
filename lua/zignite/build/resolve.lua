@@ -162,6 +162,14 @@ function M.select_live_command_name(build_cmds)
 end
 
 ---@param filetype string
+---@param filepath string
+---@param build_cmds table<string, string>
+---@return string|nil
+function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds)
+	return targets.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
+end
+
+---@param filetype string
 ---@return boolean
 function M.can_detect_build_commands_for_filetype(filetype)
 	if filetype == "zig" and is_detection_enabled("zig") then

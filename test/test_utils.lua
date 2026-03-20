@@ -136,7 +136,7 @@ local function test_project_marker_detection()
 
     assert(project, "Project not detected by marker")
     assert(project.name == "Node.js Project", "Project name not correct")
-    assert(project.command == "npm start", "Project command not correct")
+    assert(project.command == nil, "Node marker fallback should no longer invent a project command")
 
     -- Restore
     vim.fn.filereadable = original_filereadable
@@ -198,7 +198,7 @@ local function test_node_project_marker_uses_detected_package_manager()
     local project = utils.detect_project(filepath, {})
 
     assert(project, "Node project should still be detected by marker")
-    assert(project.command == "pnpm start", "Node marker command should use detected pnpm package manager")
+    assert(project.command == nil, "Node marker fallback should not invent a package-manager command")
 
     utils.clear_project_cache()
     vim.fn.filereadable = original_filereadable
@@ -236,7 +236,7 @@ local function test_python_project_marker_uses_uv()
     local project = utils.detect_project(filepath, {})
 
     assert(project, "Python project should still be detected by marker")
-    assert(project.command == "uv run -m main", "Python marker command should prefer uv when project is uv-managed")
+    assert(project.command == nil, "Python marker fallback should not invent a uv main-module command")
 
     utils.clear_project_cache()
     vim.fn.filereadable = original_filereadable

@@ -250,4 +250,9 @@ function M.show_output(message, mode)
 	end, { buffer = buf, silent = true, nowait = true })
 end
 
+---@return nil
+function M.reset()
+	quickfix.reset()
+end
+
 return M
