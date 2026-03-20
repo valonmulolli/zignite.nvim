@@ -22,6 +22,8 @@ local ZIG_EXECUTABLE = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), "
 local detect_worker = nil
 ---@type table|nil
 local project_worker = nil
+local handle_detect_worker_stdout
+local handle_project_worker_stdout
 
 ---@param value string
 ---@return string
@@ -87,19 +89,16 @@ local function copy_string_map(tbl)
 end
 
 ---@param worker table
+---@param callback_runner fun(request: table):nil
 ---@return nil
-local function flush_detect_worker_fallbacks(worker)
+local function flush_worker_fallbacks(worker, callback_runner)
 	if not worker or not worker.pending then
 		return
 	end
 	for _, request in pairs(worker.pending) do
 		stop_request_timer(request.timer)
-		if type(request.callbacks) == "table" then
-			for _, callback in ipairs(request.callbacks) do
-				if type(callback) == "function" then
-					pcall(callback, nil)
-				end
-			end
+		if type(callback_runner) == "function" then
+			callback_runner(request)
 		end
 		request.failed = true
 		request.completed = true
@@ -108,30 +107,161 @@ local function flush_detect_worker_fallbacks(worker)
 	worker.active_id = nil
 	worker.active_lines = {}
 	worker.active_error = nil
+	if worker.stdout_buffer ~= nil then
+		worker.stdout_buffer = ""
+	end
+end
+
+---@param worker table
+---@return nil
+local function flush_detect_worker_fallbacks(worker)
+	flush_worker_fallbacks(worker, function(request)
+		if type(request.callbacks) ~= "table" then
+			return
+		end
+		for _, callback in ipairs(request.callbacks) do
+			if type(callback) == "function" then
+				pcall(callback, nil)
+			end
+		end
+	end)
 end
 
 ---@param worker table
 ---@return nil
 local function flush_project_worker_fallbacks(worker)
-	if not worker or not worker.pending then
-		return
-	end
-	for _, request in pairs(worker.pending) do
-		stop_request_timer(request.timer)
-		request.failed = true
-		request.completed = true
-	end
-	worker.pending = {}
+	flush_worker_fallbacks(worker, nil)
+end
+
+---@param worker table
+---@param request_id integer
+---@return table|nil, string[], string|nil
+local function finish_active_request(worker, request_id)
+	local request = worker.pending[request_id]
+	worker.pending[request_id] = nil
+	local completed_lines = worker.active_lines
+	local completed_error = worker.active_error
 	worker.active_id = nil
 	worker.active_lines = {}
 	worker.active_error = nil
-	worker.stdout_buffer = ""
+	if request then
+		stop_request_timer(request.timer)
+		request.lines = completed_lines
+		request.completed = true
+		request.error = completed_error
+		request.failed = completed_error ~= nil and completed_error ~= ""
+	end
+	return request, completed_lines, completed_error
+end
+
+---@param worker table
+---@param build_from_names fun(tool: string, names: string[]): table<string, string>
+---@return table|nil
+local function start_detect_worker(build_from_names)
+	local worker = {
+		job_id = nil,
+		next_request_id = 0,
+		pending = {},
+		active_id = nil,
+		active_lines = {},
+		active_error = nil,
+		build_from_names = build_from_names,
+	}
+
+	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--detect-daemon" }, {
+		stdout_buffered = false,
+		on_stdout = function(_, data)
+			handle_detect_worker_stdout(worker, data)
+		end,
+		on_exit = function()
+			if detect_worker == worker then
+				detect_worker = nil
+			end
+			flush_detect_worker_fallbacks(worker)
+		end,
+	})
+
+	if type(job_id) ~= "number" or job_id <= 0 then
+		return nil
+	end
+	worker.job_id = job_id
+	return worker
+end
+
+---@return table|nil
+local function start_project_worker()
+	local worker = {
+		job_id = nil,
+		next_request_id = 0,
+		pending = {},
+		active_id = nil,
+		active_lines = {},
+		active_error = nil,
+		stdout_buffer = "",
+	}
+
+	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--project-parse-daemon" }, {
+		stdout_buffered = false,
+		on_stdout = function(_, data)
+			handle_project_worker_stdout(worker, data)
+		end,
+		on_exit = function()
+			if project_worker == worker then
+				project_worker = nil
+			end
+			flush_project_worker_fallbacks(worker)
+		end,
+	})
+
+	if type(job_id) ~= "number" or job_id <= 0 then
+		return nil
+	end
+	worker.job_id = job_id
+	return worker
+end
+
+---@param worker table
+---@param request_id integer
+---@param request table
+---@return nil
+local function cancel_worker_request(worker, request_id, request)
+	if worker.pending[request_id] == request then
+		worker.pending[request_id] = nil
+	end
+	if worker.active_id == request_id then
+		worker.active_id = nil
+		worker.active_lines = {}
+		worker.active_error = nil
+	end
+end
+
+---@param worker table
+---@param request_id integer
+---@return nil
+local function stop_failed_worker(worker, request_id)
+	worker.pending[request_id] = nil
+	if type(vim.fn.jobstop) == "function" then
+		pcall(vim.fn.jobstop, worker.job_id)
+	end
+	if detect_worker == worker then
+		detect_worker = nil
+	end
+	if project_worker == worker then
+		project_worker = nil
+	end
+end
+
+---@param worker table
+---@param payload string
+---@return boolean
+local function send_worker_payload(worker, payload)
+	return pcall(vim.fn.chansend, worker.job_id, payload)
 end
 
 ---@param worker table
 ---@param data string[]|nil
 ---@return nil
-local function handle_detect_worker_stdout(worker, data)
+function handle_detect_worker_stdout(worker, data)
 	if type(data) ~= "table" then
 		return
 	end
@@ -159,15 +289,8 @@ local function handle_detect_worker_stdout(worker, data)
 
 			local end_id = line:match("^" .. DETECT_RES_END .. "%s+(%d+)$")
 			if end_id and tonumber(end_id) == worker.active_id then
-				local request = worker.pending[worker.active_id]
-				worker.pending[worker.active_id] = nil
-				local completed_lines = worker.active_lines
-				local completed_error = worker.active_error
-				worker.active_id = nil
-				worker.active_lines = {}
-				worker.active_error = nil
+				local request, completed_lines, completed_error = finish_active_request(worker, worker.active_id)
 				if request then
-					stop_request_timer(request.timer)
 					if type(request.callbacks) == "table" then
 						for _, callback in ipairs(request.callbacks) do
 							if type(callback) == "function" then
@@ -180,10 +303,6 @@ local function handle_detect_worker_stdout(worker, data)
 							end
 						end
 					end
-					request.lines = completed_lines
-					request.completed = true
-					request.error = completed_error
-					request.failed = completed_error ~= nil and completed_error ~= ""
 				end
 			else
 				if line:sub(1, 1) == "\t" then
@@ -201,7 +320,7 @@ end
 ---@param worker table
 ---@param data string[]|nil
 ---@return nil
-local function handle_project_worker_stdout(worker, data)
+function handle_project_worker_stdout(worker, data)
 	if type(data) ~= "table" then
 		return
 	end
@@ -245,20 +364,7 @@ local function handle_project_worker_stdout(worker, data)
 
 			local end_id = line:match("^" .. PROJECT_RES_END .. "%s+(%d+)$")
 			if end_id and tonumber(end_id) == worker.active_id then
-				local request = worker.pending[worker.active_id]
-				worker.pending[worker.active_id] = nil
-				local completed_lines = worker.active_lines
-				local completed_error = worker.active_error
-				worker.active_id = nil
-				worker.active_lines = {}
-				worker.active_error = nil
-				if request then
-					stop_request_timer(request.timer)
-					request.lines = completed_lines
-					request.completed = true
-					request.error = completed_error
-					request.failed = completed_error ~= nil and completed_error ~= ""
-				end
+				finish_active_request(worker, worker.active_id)
 			else
 				if line:sub(1, 1) == "\t" then
 					worker.active_lines[#worker.active_lines + 1] = line:sub(2)
@@ -289,34 +395,10 @@ local function ensure_detect_worker(build_from_names)
 	if detect_worker and type(detect_worker.job_id) == "number" and detect_worker.job_id > 0 then
 		return detect_worker
 	end
-
-	local worker = {
-		job_id = nil,
-		next_request_id = 0,
-		pending = {},
-		active_id = nil,
-		active_lines = {},
-		active_error = nil,
-		build_from_names = build_from_names,
-	}
-
-	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--detect-daemon" }, {
-		stdout_buffered = false,
-		on_stdout = function(_, data)
-			handle_detect_worker_stdout(worker, data)
-		end,
-		on_exit = function()
-			if detect_worker == worker then
-				detect_worker = nil
-			end
-			flush_detect_worker_fallbacks(worker)
-		end,
-	})
-
-	if type(job_id) ~= "number" or job_id <= 0 then
+	local worker = start_detect_worker(build_from_names)
+	if not worker then
 		return nil
 	end
-	worker.job_id = job_id
 	detect_worker = worker
 	return worker
 end
@@ -332,34 +414,10 @@ local function ensure_project_worker()
 	if project_worker and type(project_worker.job_id) == "number" and project_worker.job_id > 0 then
 		return project_worker
 	end
-
-	local worker = {
-		job_id = nil,
-		next_request_id = 0,
-		pending = {},
-		active_id = nil,
-		active_lines = {},
-		active_error = nil,
-		stdout_buffer = "",
-	}
-
-	local job_id = vim.fn.jobstart({ ZIG_EXECUTABLE, "--project-parse-daemon" }, {
-		stdout_buffered = false,
-		on_stdout = function(_, data)
-			handle_project_worker_stdout(worker, data)
-		end,
-		on_exit = function()
-			if project_worker == worker then
-				project_worker = nil
-			end
-			flush_project_worker_fallbacks(worker)
-		end,
-	})
-
-	if type(job_id) ~= "number" or job_id <= 0 then
+	local worker = start_project_worker()
+	if not worker then
 		return nil
 	end
-	worker.job_id = job_id
 	project_worker = worker
 	return worker
 end
@@ -382,15 +440,9 @@ function M.detect_with_zig_worker(tool, build_from_names)
 	worker.pending[request_id] = request
 
 	local payload = string.format("%s %d %s\n%s %d\n", DETECT_REQ_BEGIN, request_id, tool, DETECT_REQ_END, request_id)
-	local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
+	local ok_send = send_worker_payload(worker, payload)
 	if not ok_send then
-		worker.pending[request_id] = nil
-		if type(vim.fn.jobstop) == "function" then
-			pcall(vim.fn.jobstop, worker.job_id)
-		end
-		if detect_worker == worker then
-			detect_worker = nil
-		end
+		stop_failed_worker(worker, request_id)
 		return nil
 	end
 
@@ -433,11 +485,7 @@ function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
 		if worker.pending[request_id] ~= request then
 			return
 		end
-		worker.pending[request_id] = nil
-		if worker.active_id == request_id then
-			worker.active_id = nil
-			worker.active_lines = {}
-		end
+		cancel_worker_request(worker, request_id, request)
 		if type(request.callbacks) == "table" then
 			for _, callback in ipairs(request.callbacks) do
 				if type(callback) == "function" then
@@ -455,16 +503,10 @@ function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
 	worker.pending[request_id] = request
 
 	local payload = string.format("%s %d %s\n%s %d\n", DETECT_REQ_BEGIN, request_id, tool, DETECT_REQ_END, request_id)
-	local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
+	local ok_send = send_worker_payload(worker, payload)
 	if not ok_send then
 		stop_request_timer(request.timer)
-		worker.pending[request_id] = nil
-		if type(vim.fn.jobstop) == "function" then
-			pcall(vim.fn.jobstop, worker.job_id)
-		end
-		if detect_worker == worker then
-			detect_worker = nil
-		end
+		stop_failed_worker(worker, request_id)
 		return false
 	end
 
@@ -560,7 +602,7 @@ function M.parse_project_lines_once(kind, path, extra_args)
 			end
 			payload_lines[#payload_lines + 1] = string.format("%s %d", PROJECT_REQ_END, request_id)
 			local payload = table.concat(payload_lines, "\n") .. "\n"
-			local ok_send = pcall(vim.fn.chansend, worker.job_id, payload)
+			local ok_send = send_worker_payload(worker, payload)
 			if ok_send then
 				local ok_wait = vim.wait(PROJECT_WORKER_WAIT_MS, function()
 					return request.completed == true
@@ -569,13 +611,7 @@ function M.parse_project_lines_once(kind, path, extra_args)
 					return request.lines
 				end
 			end
-			worker.pending[request_id] = nil
-			if type(vim.fn.jobstop) == "function" then
-				pcall(vim.fn.jobstop, worker.job_id)
-			end
-			if project_worker == worker then
-				project_worker = nil
-			end
+			stop_failed_worker(worker, request_id)
 		end
 	end
 	if type(vim.fn.systemlist) ~= "function" then

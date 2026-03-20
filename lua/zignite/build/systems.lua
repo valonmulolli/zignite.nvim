@@ -36,6 +36,50 @@ local function shellescape_text(value)
 	return tostring(value or "")
 end
 
+---@param root string|nil
+---@return string|nil
+local function get_build_dir(root)
+	if type(root) ~= "string" or root == "" then
+		return nil
+	end
+	return vim.fs.joinpath(root, "build")
+end
+
+---@param root string|nil
+---@param relative_path string
+---@return boolean
+local function build_dir_has_file(root, relative_path)
+	local build_dir = get_build_dir(root)
+	if not build_dir or type(vim.fn.filereadable) ~= "function" then
+		return false
+	end
+	return vim.fn.filereadable(vim.fs.joinpath(build_dir, relative_path)) == 1
+end
+
+---@param base_command string
+---@param target string|nil
+---@param target_prefix string
+---@return string
+local function append_target_argument(base_command, target, target_prefix)
+	if type(target) ~= "string" or target == "" then
+		return base_command
+	end
+	return base_command .. target_prefix .. target
+end
+
+---@param root string|nil
+---@param is_ready boolean
+---@param setup_command string
+---@param build_command string
+---@return string
+local function with_optional_setup(root, is_ready, setup_command, build_command)
+	local _ = root
+	if is_ready then
+		return build_command
+	end
+	return setup_command .. " && " .. build_command
+end
+
 ---@param target string
 ---@return string
 local function build_discovered_run_suffix(target)
@@ -178,24 +222,16 @@ end
 ---@param root string|nil
 ---@return boolean
 function M.has_cmake_build_tree(root)
-	if type(root) ~= "string" or root == "" or type(vim.fn.filereadable) ~= "function" then
-		return false
-	end
-	local build_dir = vim.fs.joinpath(root, "build")
-	return vim.fn.filereadable(vim.fs.joinpath(build_dir, "CMakeCache.txt")) == 1
+	return build_dir_has_file(root, "CMakeCache.txt")
 end
 
 ---@param root string|nil
 ---@return boolean
 function M.has_meson_build_tree(root)
-	if type(root) ~= "string" or root == "" or type(vim.fn.filereadable) ~= "function" then
-		return false
-	end
-	local build_dir = vim.fs.joinpath(root, "build")
-	if vim.fn.filereadable(vim.fs.joinpath(build_dir, "build.ninja")) == 1 then
+	if build_dir_has_file(root, "build.ninja") then
 		return true
 	end
-	return vim.fn.filereadable(vim.fs.joinpath(vim.fs.joinpath(build_dir, "meson-private"), "coredata.dat")) == 1
+	return build_dir_has_file(root, vim.fs.joinpath("meson-private", "coredata.dat"))
 end
 
 ---@param root string|nil
@@ -209,14 +245,8 @@ end
 ---@param target string|nil
 ---@return string
 function M.cmake_build_command(root, target)
-	local build_cmd = "cmake --build build"
-	if type(target) == "string" and target ~= "" then
-		build_cmd = build_cmd .. " --target " .. target
-	end
-	if M.has_cmake_build_tree(root) then
-		return build_cmd
-	end
-	return M.cmake_config_command(root) .. " && " .. build_cmd
+	local build_cmd = append_target_argument("cmake --build build", target, " --target ")
+	return with_optional_setup(root, M.has_cmake_build_tree(root), M.cmake_config_command(root), build_cmd)
 end
 
 ---@param root string|nil
@@ -246,14 +276,8 @@ end
 ---@param target string|nil
 ---@return string
 function M.meson_build_command(root, target)
-	local build_cmd = "meson compile -C build"
-	if type(target) == "string" and target ~= "" then
-		build_cmd = build_cmd .. " " .. target
-	end
-	if M.has_meson_build_tree(root) then
-		return build_cmd
-	end
-	return M.meson_setup_command(root) .. " && " .. build_cmd
+	local build_cmd = append_target_argument("meson compile -C build", target, " ")
+	return with_optional_setup(root, M.has_meson_build_tree(root), M.meson_setup_command(root), build_cmd)
 end
 
 ---@param root string|nil

@@ -8,6 +8,7 @@ local detect_cache = {}
 ---@type string[]
 local detect_cache_order = {}
 local DETECT_CACHE_MAX = 256
+local MAX_PROJECT_LOOKUP_UP = 10
 
 ---@type table<string, table>
 local default_project_markers = {
@@ -32,6 +33,26 @@ local default_project_markers = {
 		command = "[ ! -f build/build.ninja ] && meson setup build; "
 			.. "meson compile -C build && { ./build/$fileNameWithoutExt || ./build/$dirName || ./build/main; }",
 	},
+}
+
+local PROJECT_MARKER_PRIORITY = {
+	"MODULE.bazel",
+	"WORKSPACE.bazel",
+	"WORKSPACE",
+	"meson.build",
+	"CMakeLists.txt",
+	"build.zig",
+	"Cargo.toml",
+	"go.work",
+	"go.mod",
+	"package.json",
+	"pyproject.toml",
+	"Makefile",
+}
+
+local PROJECT_MARKERS_WITHOUT_FALLBACK_COMMAND = {
+	["package.json"] = true,
+	["pyproject.toml"] = true,
 }
 
 ---@param pattern string
@@ -66,6 +87,67 @@ local function make_detect_cache_key(filepath, project_config)
 	return tostring(project_config) .. "::" .. normalized_dir
 end
 
+---@param path string
+---@return boolean
+local function is_readable_file(path)
+	return vim.fn.filereadable(path) == 1
+end
+
+---@param start_dir string
+---@param max_up integer
+---@param callback fun(dir: string): table|nil
+---@return table|nil
+local function walk_parent_dirs(start_dir, max_up, callback)
+	local current_dir = start_dir
+	for _ = 1, max_up do
+		local result = callback(current_dir)
+		if result ~= nil then
+			return result
+		end
+		local parent = vim.fn.fnamemodify(current_dir, ":h")
+		if parent == current_dir then
+			break
+		end
+		current_dir = parent
+	end
+	return nil
+end
+
+---@param project_data table
+---@param root string
+---@return table
+local function build_project_from_data(project_data, root)
+	return vim.tbl_extend("force", project_data, { root = root })
+end
+
+---@param marker string
+---@param root string
+---@return table
+local function build_marker_project(marker, root)
+	local project = build_project_from_data(default_project_markers[marker], root)
+	if PROJECT_MARKERS_WITHOUT_FALLBACK_COMMAND[marker] then
+		project.command = nil
+	end
+	return project
+end
+
+---@param filepath string
+---@param pattern string
+---@param project_data table
+---@return table|nil, string|nil
+local function match_project_pattern(filepath, pattern, project_data)
+	local normalized_path = vim.fs.normalize(filepath)
+	local expanded_pattern = vim.fn.expand(pattern)
+	local normalized_pattern = vim.fs.normalize(expanded_pattern)
+
+	if normalized_path:match(normalized_pattern) or normalized_path:find(normalized_pattern, 1, true) then
+		local matched_project = build_project_from_data(project_data, infer_root_from_pattern(normalized_pattern))
+		return matched_project, pattern
+	end
+
+	return nil, nil
+end
+
 ---@param key string
 ---@param project table|nil
 ---@param pattern string|nil
@@ -91,52 +173,23 @@ local function detect_project_by_markers(filepath)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
 
 	if vim.fn.fnamemodify(filepath, ":e") == "go" then
-		local workspace_dir = dir
-		for _ = 1, 10 do
-			if vim.fn.filereadable(path_utils.join_path(workspace_dir, "go.work")) == 1 then
-				return vim.tbl_extend("force", default_project_markers["go.work"], { root = workspace_dir })
+		local workspace_project = walk_parent_dirs(dir, MAX_PROJECT_LOOKUP_UP, function(current_dir)
+			if is_readable_file(path_utils.join_path(current_dir, "go.work")) then
+				return build_marker_project("go.work", current_dir)
 			end
-			local parent = vim.fn.fnamemodify(workspace_dir, ":h")
-			if parent == workspace_dir then
-				break
-			end
-			workspace_dir = parent
+		end)
+		if workspace_project then
+			return workspace_project
 		end
 	end
 
-	local current_dir = dir
-	for _ = 1, 10 do
-		local priority_markers = {
-			"MODULE.bazel",
-			"WORKSPACE.bazel",
-			"WORKSPACE",
-			"meson.build",
-			"CMakeLists.txt",
-			"build.zig",
-			"Cargo.toml",
-			"go.work",
-			"go.mod",
-			"package.json",
-			"pyproject.toml",
-			"Makefile",
-		}
-
-		for _, marker in ipairs(priority_markers) do
-			if vim.fn.filereadable(path_utils.join_path(current_dir, marker)) == 1 then
-				local project = vim.tbl_extend("force", default_project_markers[marker], { root = current_dir })
-				if marker == "package.json" or marker == "pyproject.toml" then
-					project.command = nil
-				end
-				return project
+	return walk_parent_dirs(dir, MAX_PROJECT_LOOKUP_UP, function(current_dir)
+		for _, marker in ipairs(PROJECT_MARKER_PRIORITY) do
+			if is_readable_file(path_utils.join_path(current_dir, marker)) then
+				return build_marker_project(marker, current_dir)
 			end
 		end
-		local parent = vim.fn.fnamemodify(current_dir, ":h")
-		if parent == current_dir then
-			break
-		end
-		current_dir = parent
-	end
-	return nil
+	end)
 end
 
 ---@return nil
@@ -160,26 +213,11 @@ function M.detect_project(filepath, project_config)
 	end
 
 	if project_config and not vim.tbl_isempty(project_config) then
-		local normalized_path = vim.fs.normalize(filepath)
-
 		for pattern, project_data in pairs(project_config) do
-			local expanded_pattern = vim.fn.expand(pattern)
-			local normalized_pattern = vim.fs.normalize(expanded_pattern)
-
-			if normalized_path:match(normalized_pattern) then
-				local matched_project = vim.tbl_extend("force", project_data, {
-					root = infer_root_from_pattern(normalized_pattern),
-				})
+			local matched_project, matched_pattern = match_project_pattern(filepath, pattern, project_data)
+			if matched_project then
 				set_detect_cache(cache_key, matched_project, pattern)
-				return matched_project, pattern
-			end
-
-			if normalized_path:find(normalized_pattern, 1, true) then
-				local matched_project = vim.tbl_extend("force", project_data, {
-					root = infer_root_from_pattern(normalized_pattern),
-				})
-				set_detect_cache(cache_key, matched_project, pattern)
-				return matched_project, pattern
+				return matched_project, matched_pattern
 			end
 		end
 	end
