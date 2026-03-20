@@ -20,6 +20,7 @@ const DETECT_DAEMON_REQ_BEGIN = "@@ZDET_REQ_BEGIN";
 const DETECT_DAEMON_REQ_END = "@@ZDET_REQ_END";
 const DETECT_DAEMON_RES_BEGIN = "@@ZDET_RES_BEGIN";
 const DETECT_DAEMON_RES_END = "@@ZDET_RES_END";
+const DETECT_DAEMON_RES_ERR = "@@ZDET_RES_ERR";
 const DETECT_DAEMON_MAX_LINE = 4096;
 
 pub fn parseArgs(args: []const []const u8) !Options {
@@ -59,7 +60,6 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         if (maybe_begin == null) {
             break;
         }
-
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
         const begin_line = stripTrailingCR(begin_owned);
@@ -76,7 +76,6 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             if (maybe_line == null) {
                 break;
             }
-
             const line_owned = maybe_line.?;
             defer allocator.free(line_owned);
             const line = stripTrailingCR(line_owned);
@@ -91,14 +90,17 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             break;
         }
 
-        const commands = detectToolCommands(allocator, header.tool) catch try allocator.alloc([]u8, 0);
-        defer freeOwnedCommandList(allocator, commands);
-
         try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_BEGIN, header.request_id });
-        for (commands) |command| {
-            try stdout.writeByte('\t');
-            try stdout.writeAll(command);
-            try stdout.writeByte('\n');
+        const detect_result = detectToolCommands(allocator, header.tool);
+        if (detect_result) |commands| {
+            defer freeOwnedCommandList(allocator, commands);
+            for (commands) |command| {
+                try stdout.writeByte('\t');
+                try stdout.writeAll(command);
+                try stdout.writeByte('\n');
+            }
+        } else |err| {
+            try stdout.print("{s} {d} {s}\n", .{ DETECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
         }
         try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_END, header.request_id });
     }
@@ -287,7 +289,11 @@ fn parseCargoCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList
         }
 
         if (extractCommandToken(trimmed)) |token| {
-            if (token.len > 1 and !std.mem.eql(u8, token, "help")) {
+            if (
+                token.len > 1
+                and !std.mem.eql(u8, token, "help")
+                and !isCargoNoiseLine(trimmed, token)
+            ) {
                 try pushUniqueCommand(allocator, commands, token);
             }
         }
@@ -350,10 +356,38 @@ fn pushUniqueCommand(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8
     try commands.append(allocator, try allocator.dupe(u8, command));
 }
 
+fn isCargoNoiseLine(line: []const u8, token: []const u8) bool {
+    _ = token;
+    return std.mem.indexOf(u8, line, "alias:") != null
+        or std.mem.indexOf(u8, line, "DEPRECATED:") != null
+        or std.mem.indexOf(u8, line, "REMOVED:") != null;
+}
+
 fn trimSpaces(input: []const u8) []const u8 {
     var start: usize = 0;
     var end: usize = input.len;
     while (start < end and std.ascii.isWhitespace(input[start])) : (start += 1) {}
     while (end > start and std.ascii.isWhitespace(input[end - 1])) : (end -= 1) {}
     return input[start..end];
+}
+
+test "parse cargo commands skips aliases and removed entries" {
+    const allocator = std.testing.allocator;
+    const output =
+        \\Installed Commands:
+        \\    b                    alias: build
+        \\    build                Compile a local package and all of its dependencies
+        \\    check                Check a local package and all of its dependencies for errors
+        \\    git-checkout         REMOVED: This command has been removed
+        \\    read-manifest        DEPRECATED: Print a JSON representation of a Cargo.toml manifest.
+        \\    rm                   alias: remove
+        \\    test                 Execute all unit and integration tests and build examples of a local package
+    ;
+    const commands = try parseDetectCommandNames(allocator, .cargo, output);
+    defer freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 3), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
+    try std.testing.expectEqualStrings("check", commands[1]);
+    try std.testing.expectEqualStrings("test", commands[2]);
 }

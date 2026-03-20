@@ -5,6 +5,54 @@ local state = require("zignite.build.state")
 ---@type table
 local M = {}
 
+---@param line string
+---@return string[]
+local function split_tab_fields(line)
+	---@type string[]
+	local fields = {}
+	local start_idx = 1
+	while true do
+		local tab_idx = line:find("\t", start_idx, true)
+		if not tab_idx then
+			fields[#fields + 1] = line:sub(start_idx)
+			break
+		end
+		fields[#fields + 1] = line:sub(start_idx, tab_idx - 1)
+		start_idx = tab_idx + 1
+	end
+	return fields
+end
+
+---@param lines string[]
+---@return ZigniteBazelParsedTarget[]
+function M.parse_backend_target_lines(lines)
+	---@type ZigniteBazelParsedTarget[]
+	local targets = {}
+	for _, raw_line in ipairs(lines or {}) do
+		local line = tostring(raw_line or "")
+		if line ~= "" then
+			local fields = split_tab_fields(line)
+			if fields[1] == "TARGET" and type(fields[2]) == "string" and type(fields[3]) == "string" then
+				---@type string[]
+				local source_entries = {}
+				for index = 6, #fields do
+					if fields[index] ~= "" then
+						source_entries[#source_entries + 1] = fields[index]
+					end
+				end
+				targets[#targets + 1] = {
+					rule_name = fields[2],
+					target_name = fields[3],
+					source_entries = source_entries,
+					supports_run = fields[4] == "1",
+					supports_test = fields[5] == "1",
+				}
+			end
+		end
+	end
+	return targets
+end
+
 ---@param lines string[]
 ---@return ZigniteBazelParsedTarget[]
 function M.parse_build_targets(lines)

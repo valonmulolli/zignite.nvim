@@ -68,7 +68,6 @@ local cargo_detected_command_templates = {
 	package = "cargo package",
 	publish = "cargo publish",
 	remove = "cargo remove " .. BUILD_ARG_PLACEHOLDER,
-	rm = "cargo rm " .. BUILD_ARG_PLACEHOLDER,
 	run = "cargo run",
 	rustc = "cargo rustc",
 	rustdoc = "cargo rustdoc",
@@ -78,7 +77,6 @@ local cargo_detected_command_templates = {
 	uninstall = "cargo uninstall " .. BUILD_ARG_PLACEHOLDER,
 	update = "cargo update",
 	vendor = "cargo vendor",
-	["verify-project"] = "cargo verify-project",
 	version = "cargo version",
 }
 
@@ -117,6 +115,15 @@ local function normalize_detected_names(lines)
 		end
 	end
 	return normalized
+end
+
+---@param name string
+---@return boolean
+local function is_cargo_noise_name(name)
+	return name == "rm"
+		or name == "verify-project"
+		or name == "read-manifest"
+		or name == "git-checkout"
 end
 
 ---@param lines string[]|nil
@@ -186,7 +193,7 @@ function M.parse_cargo_commands(lines)
 			end
 		else
 			local cmd = line:match("^%s+([%w%-]+)%s+")
-			if cmd and #cmd > 1 and cmd ~= "help" then
+			if cmd and #cmd > 1 and cmd ~= "help" and not is_cargo_noise_name(cmd) then
 				commands[cmd] = cargo_detected_command_templates[cmd] or ("cargo " .. cmd)
 			end
 		end
@@ -244,7 +251,11 @@ function M.build_detected_templates_from_names(tool, names)
 	---@type table<string, string>
 	local commands = {}
 	for _, name in ipairs(normalize_detected_names(names)) do
+		if tool == "cargo" and is_cargo_noise_name(name) then
+			goto continue
+		end
 		commands[name] = templates[name] or (default_prefix .. name)
+		::continue::
 	end
 	return commands
 end

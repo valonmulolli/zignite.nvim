@@ -1,5 +1,6 @@
 local common = require("zignite.build.parsers.common")
 local bazel_common = require("zignite.build.parsers.bazel.common")
+local detect_backend = require("zignite.build.detect.backend")
 local parser = require("zignite.build.parsers.bazel.parser")
 local systems = require("zignite.build.systems")
 
@@ -46,7 +47,14 @@ function M.detect_bazel_project_commands(filepath)
 		local relative_filepath = common.normalize_path_text(
 			common.make_relative_to_root(build_info.package_dir, filepath)
 		)
-		for _, target in ipairs(parser.get_parsed_build_targets(build_info)) do
+		local zig_lines = detect_backend.parse_project_lines_once("bazel", build_info.build_file)
+		local parsed_targets
+		if type(zig_lines) == "table" and #zig_lines > 0 then
+			parsed_targets = parser.parse_backend_target_lines(zig_lines)
+		else
+			parsed_targets = parser.get_parsed_build_targets(build_info)
+		end
+		for _, target in ipairs(parsed_targets) do
 			local label = bazel_common.bazel_label(build_info.package_path, target.target_name)
 			local command_rule_name = target.rule_name
 

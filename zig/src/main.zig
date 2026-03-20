@@ -1,7 +1,8 @@
 const std = @import("std");
-const command_mode = @import("command_mode.zig");
+const command = @import("command.zig");
 const quickfix = @import("quickfix.zig");
 const detect = @import("detect.zig");
+const project = @import("project.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -24,6 +25,11 @@ pub fn main() !void {
         return;
     }
 
+    if (hasFlag(args[1..], "--project-parse-daemon")) {
+        try project.runDaemon(allocator);
+        return;
+    }
+
     if (hasFlag(args[1..], "--quickfix")) {
         const options = quickfix.parseArgs(args[1..]) catch |err| {
             std.log.err("Invalid quickfix options: {}", .{err});
@@ -42,7 +48,16 @@ pub fn main() !void {
         return;
     }
 
-    try command_mode.run(allocator, args);
+    if (hasFlag(args[1..], "--project-parse")) {
+        const options = project.parseArgs(args[1..]) catch |err| {
+            std.log.err("Invalid project-parse options: {}", .{err});
+            std.process.exit(1);
+        };
+        try project.runMode(allocator, options);
+        return;
+    }
+
+    try command.run(allocator, args);
 }
 
 fn printUsage() void {
@@ -55,6 +70,8 @@ fn printUsage() void {
         \\  zignite --quickfix-daemon
         \\  zignite --detect --tool=zig|go|cargo|odin
         \\  zignite --detect-daemon
+        \\  zignite --project-parse-daemon
+        \\  zignite --project-parse --kind=make|package-json|cmake|bazel|meson|cargo|pyproject --path=/abs/path
     , .{});
 }
 

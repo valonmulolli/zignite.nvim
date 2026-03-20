@@ -788,6 +788,70 @@ local function test_bazel_build_file_cache_reuses_parsed_targets()
 	print("✓ Bazel parsed BUILD cache reuse test passed")
 end
 
+-- Test Bazel BUILD parsing can use the Zig project parser path.
+local function test_bazel_targets_use_zig_project_parser()
+	init.setup({
+		build_commands = {},
+	})
+
+	local bazel_parser = require("zignite.build.parsers.bazel")
+	local original_executable = vim.fn.executable
+	local original_systemlist = vim.fn.systemlist
+	local original_filereadable = vim.fn.filereadable
+	local original_readfile = vim.fn.readfile
+
+	vim.fn.executable = function(path)
+		if tostring(path):match("zignite$") then
+			return 1
+		end
+		if original_executable then
+			return original_executable(path)
+		end
+		return 0
+	end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		assert(type(cmd) == "table", "Zig Bazel parser should execute via argv")
+		assert(cmd[2] == "--project-parse", "Bazel parser should call the Zig project parser mode")
+		assert(cmd[3] == "--kind=bazel", "Bazel parser should use the bazel parser kind")
+		return {
+			"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
+			"TARGET\tcc_test\tmain_test\t0\t1\tmain_test.cc",
+		}
+	end
+	vim.fn.filereadable = function(path)
+		if path == "/tmp/bazelzig/MODULE.bazel" or path == "/tmp/bazelzig/app/BUILD.bazel" then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+	vim.fn.readfile = function(path)
+		if path == "/tmp/bazelzig/app/BUILD.bazel" then
+			error("Lua Bazel parser should not be used when Zig parser succeeds")
+		end
+		if original_readfile then
+			return original_readfile(path)
+		end
+		return {}
+	end
+
+	local commands = bazel_parser.detect_bazel_project_commands("/tmp/bazelzig/app/main.cc")
+	assert(commands["bazel-build-main"] == "bazel build //app:main", "Zig Bazel parser should build inferred target")
+	assert(commands["bazel-run"] == "bazel run //app:main", "Zig Bazel parser should infer primary run target")
+	assert(commands["bazel-test-main_test"] == "bazel test //app:main_test", "Zig Bazel parser should expose test target")
+
+	vim.fn.executable = original_executable
+	vim.fn.systemlist = original_systemlist
+	vim.fn.filereadable = original_filereadable
+	vim.fn.readfile = original_readfile
+	vim.v.shell_error = 0
+
+	print("✓ Zig Bazel parser test passed")
+end
+
 test_bazel_target_inference_in_picker()
 test_bazel_glob_target_inference()
 test_bazel_parent_package_inference()
@@ -797,6 +861,7 @@ test_bazel_go_test_relationship_inference()
 test_bazel_python_test_relationship_inference()
 test_bazel_jvm_test_relationship_inference()
 test_bazel_build_file_cache_reuses_parsed_targets()
+test_bazel_targets_use_zig_project_parser()
 test_bazel_related_test_inference()
 test_run_build_command_with_inferred_bazel_target()
 test_run_build_command_with_detected_bazel_command()

@@ -8,6 +8,16 @@ M.detect_backend_tool_commands = {
 	odin = { "build", "run", "test" },
 }
 
+M.project_backend_lines = {
+	make = { "bench", "test" },
+	["package-json"] = { "dev", "build" },
+	cmake = { "TARGET\tapp\t1" },
+	bazel = { "TARGET\tcc_binary\tapp\t1\t0\tmain.cc" },
+	meson = { "TARGET\tapp\t1" },
+	cargo = { "BIN\tapp\t1" },
+	pyproject = { "TOOL\tuv" },
+}
+
 ---@param text string
 ---@return string[]
 local function split_lines(text)
@@ -183,6 +193,20 @@ end
 
 ---@param cmd string[]|string
 ---@return boolean
+function M.is_project_daemon_cmd(cmd)
+	if type(cmd) ~= "table" then
+		return false
+	end
+	for _, arg in ipairs(cmd) do
+		if arg == "--project-parse-daemon" then
+			return true
+		end
+	end
+	return false
+end
+
+---@param cmd string[]|string
+---@return boolean
 function M.is_quickfix_backend_cmd(cmd)
 	if type(cmd) ~= "table" then
 		return false
@@ -271,6 +295,51 @@ function M.parse_detect_daemon_request(request_text)
 		response[#response + 1] = "\t" .. command
 	end
 	response[#response + 1] = "@@ZDET_RES_END " .. request_id
+	return response
+end
+
+---@param request_text string
+---@return string[]|nil
+function M.parse_project_daemon_request(request_text)
+	local req_lines = split_lines(request_text or "")
+	if #req_lines < 3 then
+		return nil
+	end
+
+	local begin_line = req_lines[1]
+	local request_id = begin_line:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)$")
+	if not request_id then
+		return nil
+	end
+
+	local end_line = req_lines[#req_lines]
+	local end_id = end_line:match("^@@ZPRJ_REQ_END%s+(%d+)$")
+	if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+		return nil
+	end
+
+	local kind = nil
+	for index = 2, #req_lines - 1 do
+		local line = req_lines[index]
+		if line:sub(1, 1) == "\t" then
+			line = line:sub(2)
+		end
+		local parsed_kind = line:match("^%-%-kind=(.+)$")
+		if parsed_kind and parsed_kind ~= "" then
+			kind = parsed_kind
+			break
+		end
+	end
+	if not kind then
+		return nil
+	end
+
+	local response = { "@@ZPRJ_RES_BEGIN " .. request_id }
+	local lines = M.project_backend_lines[kind] or {}
+	for _, line in ipairs(lines) do
+		response[#response + 1] = "\t" .. line
+	end
+	response[#response + 1] = "@@ZPRJ_RES_END " .. request_id
 	return response
 end
 

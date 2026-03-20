@@ -190,6 +190,26 @@ function M.get_configured_build_commands(filetype, filepath)
 	if filetype == "python" then
 		return apply_python_tool_defaults(filepath, configured)
 	end
+	if filetype == "rust" then
+		local detect_options = config.options.detect or {}
+		if detect_options.rust == false then
+			return configured
+		end
+		local updated = copy_commands(configured)
+		local cargo_commands, primary_bin = parsers.detect_cargo_project_commands(filepath)
+		M.extend_string_map(updated, cargo_commands)
+		local default_commands = config.defaults.build_commands.rust or {}
+		if primary_bin and updated.run == default_commands.run then
+			local run_command = cargo_commands["cargo-run-" .. primary_bin]
+			if type(run_command) == "string" and run_command ~= "" then
+				updated.run = run_command
+			end
+		end
+		if primary_bin and updated["release-run"] == default_commands["release-run"] then
+			updated["release-run"] = "cargo run --release --bin " .. primary_bin
+		end
+		return updated
+	end
 	if filetype ~= "c" and filetype ~= "cpp" then
 		return configured
 	end

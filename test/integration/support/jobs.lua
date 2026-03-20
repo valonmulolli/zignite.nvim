@@ -27,7 +27,10 @@ function M.attach(ctx, simulation)
 		table.insert(ctx.job_results, { cmd = cmd, opts = opts, job_id = job_id })
 		ctx.mock_jobs[job_id] = { cmd = cmd, opts = opts, input = "" }
 
-		if simulation.is_quickfix_backend_cmd(cmd) or simulation.is_detect_daemon_cmd(cmd) then
+		if simulation.is_quickfix_backend_cmd(cmd)
+			or simulation.is_detect_daemon_cmd(cmd)
+			or simulation.is_project_daemon_cmd(cmd)
+		then
 			return job_id
 		end
 
@@ -97,11 +100,42 @@ function M.attach(ctx, simulation)
 				end
 				return 1
 			end
+			if type(ctx.state.next_detect_backend_error) == "string" and ctx.state.next_detect_backend_error ~= "" then
+				local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+				local request_id = text:match("^@@ZDET_REQ_BEGIN%s+(%d+)%s+[%w_%-]+")
+				local error_message = ctx.state.next_detect_backend_error
+				ctx.state.next_detect_backend_error = nil
+				if request_id and job.opts and job.opts.on_stdout then
+					local response = {
+						"@@ZDET_RES_BEGIN " .. request_id,
+						"@@ZDET_RES_ERR " .. request_id .. " " .. error_message,
+						"@@ZDET_RES_END " .. request_id,
+					}
+					ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, response)
+					end, 10)
+				end
+				return 1
+			end
 
 			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
 			local response = simulation.parse_detect_daemon_request(text)
 			if response and job.opts and job.opts.on_stdout then
 				ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
+				vim.defer_fn(function()
+					job.opts.on_stdout(job_id, response)
+				end, 10)
+			end
+			return 1
+		end
+
+		if simulation.is_project_daemon_cmd(job.cmd) then
+			ctx.state.project_backend_request_count = ctx.state.project_backend_request_count + 1
+			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+			local response = simulation.parse_project_daemon_request(text)
+			if response and job.opts and job.opts.on_stdout then
+				ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
 				vim.defer_fn(function()
 					job.opts.on_stdout(job_id, response)
 				end, 10)

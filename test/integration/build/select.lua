@@ -4,6 +4,6 @@
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 
-require('integration.build_select.layout')
-require('integration.build_select.filter')
-require('integration.build_select.systems')
+require("integration.build.select.layout")
+require("integration.build.select.filter")
+require("integration.build.select.systems")
