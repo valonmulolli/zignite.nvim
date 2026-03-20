@@ -190,6 +190,24 @@ function M.get_configured_build_commands(filetype, filepath)
 	if filetype == "python" then
 		return apply_python_tool_defaults(filepath, configured)
 	end
+	if filetype == "go" then
+		local updated = copy_commands(configured)
+		local go_commands, primary_selector = parsers.detect_go_project_commands(filepath)
+		M.extend_string_map(updated, go_commands)
+		local default_commands = config.defaults.build_commands.go or {}
+		if primary_selector and primary_selector ~= "." then
+			if updated.build == default_commands.build then
+				updated.build = go_commands["go-build-package"] or updated.build
+			end
+			if updated.run == default_commands.run then
+				updated.run = go_commands["go-run-package"] or updated.run
+			end
+			if updated.test == default_commands.test then
+				updated.test = go_commands["go-test-package"] or updated.test
+			end
+		end
+		return updated
+	end
 	if filetype == "rust" then
 		local detect_options = config.options.detect or {}
 		if detect_options.rust == false then

@@ -452,6 +452,58 @@ local function test_go_runfile_prefers_package_runner_at_root()
     print("✓ Go RunFile package runner test passed")
 end
 
+-- Test Go RunBuild run in a workspace uses the current package path relative to go.work.
+local function test_go_runbuild_prefers_workspace_package_selector()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/gowork/app/cmd/web/main.go" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/gowork/go.work" or path == "/tmp/gowork/app/go.mod" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-work" then
+            return { "USE\t/tmp/gowork/app\t1" }
+        end
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-mod" then
+            return { "MODULE\texample.com/app" }
+        end
+        return {}
+    end
+
+    init.run_build_command("run", "float")
+
+    assert(#job_results > 0, "Go workspace RunBuild run job was not started")
+    local last_job = job_results[#job_results]
+    local command = command_to_string(last_job.cmd)
+    assert(
+        command:match("go run %./app/cmd/web"),
+        "Go workspace RunBuild should target the current package path"
+    )
+    assert(
+        last_job.opts and last_job.opts.cwd == "/tmp/gowork",
+        "Go workspace RunBuild should execute from the go.work root"
+    )
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ Go workspace RunBuild package selector test passed")
+end
+
 -- Test Rust RunBuild run prefers an inferred Cargo bin when using the default config.
 local function test_rust_runbuild_prefers_inferred_cargo_bin()
     config.setup({ mode = "float" })
@@ -555,6 +607,7 @@ test_reserved_argv_build_guard()
 test_zig_standalone_fallback()
 test_zig_project_runfile()
 test_go_runfile_prefers_package_runner_at_root()
+test_go_runbuild_prefers_workspace_package_selector()
 test_rust_runbuild_prefers_inferred_cargo_bin()
 test_go_runfile_standalone_single_file_mode()
 test_odin_single_file_mode()

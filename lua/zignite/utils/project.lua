@@ -13,6 +13,7 @@ local DETECT_CACHE_MAX = 256
 local default_project_markers = {
 	["package.json"] = { name = "Node.js Project", command = "npm start" },
 	["Cargo.toml"] = { name = "Rust Project", command = "cargo run" },
+	["go.work"] = { name = "Go Project", command = nil },
 	["go.mod"] = { name = "Go Project", command = "go run ." },
 	["build.zig"] = { name = "Zig Project", command = "zig build run" },
 	["MODULE.bazel"] = { name = "Bazel Project", command = "bazel build //..." },
@@ -88,6 +89,21 @@ end
 ---@return table|nil
 local function detect_project_by_markers(filepath)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
+
+	if vim.fn.fnamemodify(filepath, ":e") == "go" then
+		local workspace_dir = dir
+		for _ = 1, 10 do
+			if vim.fn.filereadable(path_utils.join_path(workspace_dir, "go.work")) == 1 then
+				return vim.tbl_extend("force", default_project_markers["go.work"], { root = workspace_dir })
+			end
+			local parent = vim.fn.fnamemodify(workspace_dir, ":h")
+			if parent == workspace_dir then
+				break
+			end
+			workspace_dir = parent
+		end
+	end
+
 	local current_dir = dir
 	for _ = 1, 10 do
 		local priority_markers = {
@@ -98,6 +114,7 @@ local function detect_project_by_markers(filepath)
 			"CMakeLists.txt",
 			"build.zig",
 			"Cargo.toml",
+			"go.work",
 			"go.mod",
 			"package.json",
 			"pyproject.toml",

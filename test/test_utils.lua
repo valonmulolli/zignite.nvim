@@ -208,6 +208,32 @@ local function test_node_project_marker_uses_detected_package_manager()
     print("✓ Node project package manager marker test passed")
 end
 
+-- Test Go workspace marker detection prefers go.work over go.mod.
+local function test_go_workspace_marker_detection()
+    local original_filereadable = vim.fn.filereadable
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = function(path)
+        if path == "/home/user/gowork/go.work" or path == "/home/user/gowork/app/go.mod" then
+            return 1
+        end
+        return 0
+    end
+
+    local filepath = "/home/user/gowork/app/cmd/web/main.go"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Go workspace should be detected by marker")
+    assert(project.name == "Go Project", "Go workspace marker name should stay consistent")
+    assert(project.command == nil, "Go workspace marker should not invent a root go run command")
+    assert(project.root == "/home/user/gowork", "Go workspace marker should use the go.work root")
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Go workspace marker detection test passed")
+end
+
 -- Test Python project marker detection prefers uv when uv markers are present.
 local function test_python_project_marker_uses_uv()
     local original_filereadable = vim.fn.filereadable
@@ -252,6 +278,7 @@ test_project_detection()
 test_project_marker_detection()
 test_bazel_project_marker_detection()
 test_node_project_marker_uses_detected_package_manager()
+test_go_workspace_marker_detection()
 test_python_project_marker_uses_uv()
 
 print("All utils tests passed!")
