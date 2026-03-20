@@ -12,10 +12,13 @@ local state = {
 	next_exit_code = 0,
 	next_quickfix_backend_exit_code = 0,
 	next_detect_backend_exit_code = 0,
+	next_detect_backend_error = nil,
 	next_job_id = 123,
 	quickfix_backend_invocations = 0,
 	detect_backend_invocations = 0,
 	detect_backend_request_count = 0,
+	project_backend_invocations = 0,
+	project_backend_request_count = 0,
 }
 
 ---@type table[]
@@ -56,6 +59,9 @@ local function reset_job_results()
 	state.quickfix_backend_invocations = 0
 	state.detect_backend_invocations = 0
 	state.detect_backend_request_count = 0
+	state.project_backend_invocations = 0
+	state.project_backend_request_count = 0
+	state.next_detect_backend_error = nil
 end
 
 ---@return nil
@@ -98,6 +104,16 @@ local function count_detect_backend_requests()
 	return state.detect_backend_request_count
 end
 
+---@return integer
+local function count_project_backend_jobs()
+	return state.project_backend_invocations
+end
+
+---@return integer
+local function count_project_backend_requests()
+	return state.project_backend_request_count
+end
+
 ---@param func function
 ---@param target_name string
 ---@return any
@@ -132,10 +148,14 @@ M.count_quickfix_backend_jobs = count_quickfix_backend_jobs
 M.count_quickfix_daemon_jobs = count_quickfix_daemon_jobs
 M.count_detect_backend_jobs = count_detect_backend_jobs
 M.count_detect_backend_requests = count_detect_backend_requests
+M.count_project_backend_jobs = count_project_backend_jobs
+M.count_project_backend_requests = count_project_backend_requests
 M.get_upvalue_by_name = get_upvalue_by_name
 M.detect_backend_tool_commands = simulation.detect_backend_tool_commands
 M.is_detect_daemon_cmd = simulation.is_detect_daemon_cmd
 M.parse_detect_daemon_request = simulation.parse_detect_daemon_request
+M.is_project_daemon_cmd = simulation.is_project_daemon_cmd
+M.parse_project_daemon_request = simulation.parse_project_daemon_request
 
 ---@return nil
 function M.restore()

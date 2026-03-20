@@ -29,56 +29,6 @@ const TailLineViews = struct {
     }
 };
 
-const LineRing = struct {
-    allocator: std.mem.Allocator,
-    slots: []?[]u8,
-    max_lines: usize,
-    len: usize = 0,
-    write_index: usize = 0,
-    total_seen: usize = 0,
-
-    fn init(allocator: std.mem.Allocator, max_lines: usize) !LineRing {
-        const safe_max = if (max_lines == 0) 1 else max_lines;
-        const slots = try allocator.alloc(?[]u8, safe_max);
-        for (slots) |*slot| {
-            slot.* = null;
-        }
-        return .{
-            .allocator = allocator,
-            .slots = slots,
-            .max_lines = safe_max,
-        };
-    }
-
-    fn deinit(self: *LineRing) void {
-        for (self.slots) |slot| {
-            if (slot) |line| {
-                self.allocator.free(line);
-            }
-        }
-        self.allocator.free(self.slots);
-    }
-
-    fn push(self: *LineRing, line: []const u8) !void {
-        self.total_seen += 1;
-        const dup = try self.allocator.dupe(u8, line);
-        if (self.slots[self.write_index]) |old| {
-            self.allocator.free(old);
-        }
-        self.slots[self.write_index] = dup;
-        self.write_index = (self.write_index + 1) % self.max_lines;
-        if (self.len < self.max_lines) {
-            self.len += 1;
-        }
-    }
-
-    fn at(self: LineRing, idx: usize) []const u8 {
-        const start_idx = if (self.len == self.max_lines) self.write_index else 0;
-        const slot_idx = (start_idx + idx) % self.max_lines;
-        return self.slots[slot_idx].?;
-    }
-};
-
 pub fn parseArgs(args: []const []const u8) !Options {
     var options = Options{};
 
@@ -120,7 +70,6 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         if (maybe_begin == null) {
             break;
         }
-
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
         const begin_line = stripTrailingCR(begin_owned);
@@ -140,7 +89,6 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             if (maybe_line == null) {
                 break;
             }
-
             const line_owned = maybe_line.?;
             defer allocator.free(line_owned);
             const line = stripTrailingCR(line_owned);
@@ -297,21 +245,7 @@ fn parseBool(value: []const u8) !bool {
 }
 
 fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
-    var list: std.ArrayList(u8) = .empty;
-    errdefer list.deinit(allocator);
-
-    var reader = std.fs.File.stdin().deprecatedReader();
-    var buf: [8192]u8 = undefined;
-
-    while (true) {
-        const n = try reader.read(&buf);
-        if (n == 0) {
-            break;
-        }
-        try list.appendSlice(allocator, buf[0..n]);
-    }
-
-    return try list.toOwnedSlice(allocator);
+    return try std.fs.File.stdin().deprecatedReader().readAllAlloc(allocator, std.math.maxInt(usize));
 }
 
 fn collectTailLineViews(
@@ -376,33 +310,6 @@ fn collectTailLineViews(
         .start_idx = start_idx,
         .truncated = truncated,
     };
-}
-
-fn splitLinesIntoRing(ring: *LineRing, input: []const u8) !void {
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i < input.len) : (i += 1) {
-        if (input[i] == '\n') {
-            var line = input[start..i];
-            if (line.len > 0 and line[line.len - 1] == '\r') {
-                line = line[0 .. line.len - 1];
-            }
-            if (line.len > 0) {
-                try ring.push(line);
-            }
-            start = i + 1;
-        }
-    }
-
-    if (start < input.len) {
-        var tail = input[start..];
-        if (tail.len > 0 and tail[tail.len - 1] == '\r') {
-            tail = tail[0 .. tail.len - 1];
-        }
-        if (tail.len > 0) {
-            try ring.push(tail);
-        }
-    }
 }
 
 fn stripAnsiAlloc(allocator: std.mem.Allocator, line: []const u8) ![]u8 {

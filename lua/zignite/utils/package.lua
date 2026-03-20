@@ -4,6 +4,48 @@ local project = require("zignite.utils.project")
 ---@type table
 local M = {}
 
+---@param root string
+---@return table<string, boolean>
+local function detect_pyproject_tools_root(root)
+	---@type table<string, boolean>
+	local tools = {}
+	if type(root) ~= "string" or root == "" then
+		return tools
+	end
+
+	local pyproject_path = path_utils.join_path(root, "pyproject.toml")
+	local detect_backend = require("zignite.build.detect.backend")
+	local lines = detect_backend.parse_project_lines_once("pyproject", pyproject_path)
+	if type(lines) == "table" and #lines > 0 then
+		for _, raw_line in ipairs(lines) do
+			local line = tostring(raw_line or "")
+			local kind, name = line:match("^([^\t]+)\t([^\t]+)$")
+			if kind == "TOOL" and type(name) == "string" and name ~= "" then
+				tools[name] = true
+			end
+		end
+		return tools
+	end
+
+	local pyproject_payload = path_utils.read_text_file(pyproject_path)
+	if type(pyproject_payload) ~= "string" then
+		return tools
+	end
+	if pyproject_payload:find("%[tool%.uv%]", 1, false) then
+		tools.uv = true
+	end
+	if pyproject_payload:find("%[tool%.poetry%]", 1, false) then
+		tools.poetry = true
+	end
+	if pyproject_payload:find("%[tool%.pdm%]", 1, false) then
+		tools.pdm = true
+	end
+	if pyproject_payload:find("%[tool%.hatch", 1, false) then
+		tools.hatch = true
+	end
+	return tools
+end
+
 ---@param package_manager string
 ---@param script_name string
 ---@return string
@@ -102,11 +144,7 @@ function M.is_uv_project_root(root)
 	if path_utils.file_exists(path_utils.join_path(root, "uv.lock")) then
 		return true
 	end
-	local pyproject_payload = path_utils.read_text_file(path_utils.join_path(root, "pyproject.toml"))
-	if type(pyproject_payload) == "string" and pyproject_payload:find("%[tool%.uv%]", 1, false) then
-		return true
-	end
-	return false
+	return detect_pyproject_tools_root(root).uv == true
 end
 
 ---@param filepath string

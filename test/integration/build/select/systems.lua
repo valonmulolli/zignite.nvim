@@ -119,6 +119,14 @@ local function test_cpp_cmake_project_parses_targets_and_ignores_generated_makef
         "CMake target run command should keep a build/app fallback"
     )
     assert(
+        commands["cmake-run-app"]:match("%./build/Debug/app"),
+        "CMake target run command should check common multi-config output directories"
+    )
+    assert(
+        commands["cmake-run-app"]:match("%./build/bin/app"),
+        "CMake target run command should check common bin output directories"
+    )
+    assert(
         commands["cmake-run"] == commands["cmake-run-app"],
         "Generic cmake-run should use the inferred executable target"
     )
@@ -251,6 +259,14 @@ local function test_cpp_meson_project_parses_targets()
     assert(
         commands["meson-run-demo-app"]:match("%./build/demo%-app"),
         "Meson target run command should keep a build/demo-app fallback"
+    )
+    assert(
+        commands["meson-run-demo-app"]:match("%./build/Debug/demo%-app"),
+        "Meson target run command should check common multi-config output directories"
+    )
+    assert(
+        commands["meson-run-demo-app"]:match("%./build/bin/demo%-app"),
+        "Meson target run command should check common bin output directories"
     )
     assert(commands["meson-build"] == "meson compile -C build", "Generic meson-build should be direct")
     assert(commands["meson-clean"] == "meson compile -C build --clean", "Generic meson-clean should be direct")

@@ -1,4 +1,5 @@
 local common = require("zignite.build.parsers.common")
+local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")
 
@@ -38,6 +39,47 @@ function M.detect_cmake_project_commands(filepath)
 	)
 	if cached and cached.mtime_key == mtime_key then
 		return state.copy_string_map(cached.commands), cached.primary_target
+	end
+
+	local zig_lines = detect_backend.parse_project_lines_once("cmake", cmake_lists_path, {
+		"--match-path=" .. filepath,
+	})
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		---@type table<string, string>
+		local commands = {}
+		local primary_target = nil
+		for _, raw_line in ipairs(zig_lines) do
+			local line = tostring(raw_line or "")
+			local kind, target, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
+			if kind == "TARGET" and target and target ~= "" then
+				commands["cmake-build-" .. target] = systems.cmake_build_command(root, target)
+				commands["cmake-run-" .. target] = systems.cmake_run_command(root, target)
+				if matched_flag == "1" and not primary_target then
+					primary_target = target
+				end
+			end
+		end
+		if not primary_target then
+			for key, _ in pairs(commands) do
+				local target = key:match("^cmake%-build%-(.+)$")
+				if target then
+					primary_target = target
+					break
+				end
+			end
+		end
+		state.set_bounded_cache_entry(
+			state.cmake_target_cache,
+			state.cmake_target_cache_order,
+			state.CMAKE_TARGET_CACHE_MAX,
+			cmake_lists_path,
+			{
+				mtime_key = mtime_key,
+				commands = state.copy_string_map(commands),
+				primary_target = primary_target,
+			}
+		)
+		return commands, primary_target
 	end
 
 	local lines = vim.fn.readfile(cmake_lists_path)

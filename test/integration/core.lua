@@ -191,6 +191,31 @@ local function test_uv_python_runner_uses_uv()
     print("✓ uv Python RunFile test passed")
 end
 
+-- Test filetype runners do not eagerly trigger build-project resolution.
+local function test_get_command_avoids_eager_project_resolution_for_filetype_runner()
+    config.setup({ mode = "float" })
+
+    local build = require("zignite.build")
+    local original_get_preferred_project_command = build.get_preferred_project_command
+    local calls = 0
+
+    build.get_preferred_project_command = function(...)
+        calls = calls + 1
+        return original_get_preferred_project_command(...)
+    end
+
+    local runner, source, filetype = init.get_command("/tmp/no-project/main.py", "python")
+
+    build.get_preferred_project_command = original_get_preferred_project_command
+
+    assert(source == "filetype", "Expected filetype runner source, got: " .. tostring(source))
+    assert(filetype == "python", "Expected python filetype, got: " .. tostring(filetype))
+    assert(type(runner) == "string", "Expected python runner string")
+    assert(calls == 0, "Filetype runner should not eagerly resolve project build commands")
+
+    print("✓ get_command lazy project resolution test passed")
+end
+
 -- Test filetype fallback by extension when vim.bo.filetype is empty.
 local function test_language_detected_from_extension()
     config.setup({ mode = "float" })
@@ -453,6 +478,74 @@ local function test_uv_python_build_defaults()
     print("✓ uv Python build defaults test passed")
 end
 
+-- Test Python uv detection can come from the Zig pyproject parser path.
+local function test_uv_python_runner_uses_zig_pyproject_parser()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/uvzig/main.py" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/uvzig/pyproject.toml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=pyproject" then
+            return { "TOOL\tuv" }
+        end
+        return {}
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/uvzig/pyproject.toml" then
+            error("Plain Lua pyproject scan should not run when Zig parser succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_code(0, "float")
+
+    assert(#job_results > 0, "uv-managed Python RunFile should start a job when Zig pyproject parser succeeds")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("uv"), "Zig pyproject parser should drive uv Python runner selection")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.readfile = original_readfile
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ uv Python Zig pyproject parser test passed")
+end
+
 -- Test build command detection maps related filetypes (e.g. typescriptreact -> typescript).
 local function test_build_command_filetype_alias()
     config.setup({ mode = "float" })
@@ -481,6 +574,8 @@ test_interpreted_runner_uses_argv_mode()
 test_visual_run_code_preserves_extension()
 test_timeout_uses_zig_wrapper()
 test_uv_python_runner_uses_uv()
+test_uv_python_runner_uses_zig_pyproject_parser()
+test_get_command_avoids_eager_project_resolution_for_filetype_runner()
 test_language_detected_from_extension()
 test_language_detected_from_shebang()
 test_project_execution()

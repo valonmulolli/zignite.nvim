@@ -423,8 +423,8 @@ local function test_zig_project_runfile()
     print("✓ Zig project RunFile test passed")
 end
 
--- Test Go RunFile in project root prefers filetype runner (single-file), not go run .
-local function test_go_runfile_prefers_file_runner_at_root()
+-- Test Go RunFile in a Go project uses package execution from the file directory.
+local function test_go_runfile_prefers_package_runner_at_root()
     config.setup({ mode = "float" })
 
     vim.bo.filetype = "go"
@@ -440,15 +440,85 @@ local function test_go_runfile_prefers_file_runner_at_root()
 
     init.run_code(0, "float")
     assert(#job_results > 0, "Go RunFile job was not started")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("go run /tmp/goapp/main%.go"), "Go RunFile should use single-file runner")
-    assert(not command:match("go run %."), "Go RunFile should not use go run . at root")
+    local last_job = job_results[#job_results]
+    local command = command_to_string(last_job.cmd)
+    assert(command:match("go run %."), "Go RunFile should use package runner inside a Go project")
+    assert(last_job.opts and last_job.opts.cwd == "/tmp/goapp", "Go RunFile should execute from the file directory")
 
     vim.fn.expand = original_expand
     vim.fn.filereadable = original_filereadable
     reset_job_results()
 
-    print("✓ Go RunFile root-priority test passed")
+    print("✓ Go RunFile package runner test passed")
+end
+
+-- Test Rust RunBuild run prefers an inferred Cargo bin when using the default config.
+local function test_rust_runbuild_prefers_inferred_cargo_bin()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "rust"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/rustproj/src/main.rs" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/rustproj/Cargo.toml" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
+            return { "BIN\tdemo\t1" }
+        end
+        return {}
+    end
+
+    init.run_build_command("run", "float")
+
+    assert(#job_results > 0, "Rust RunBuild run job was not started")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("cargo run %-%-bin demo"), "Rust RunBuild run should prefer the inferred Cargo bin")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ Rust RunBuild inferred Cargo bin test passed")
+end
+
+-- Test standalone Go files still use single-file execution outside a Go project.
+local function test_go_runfile_standalone_single_file_mode()
+    config.setup({ mode = "float" })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/gostandalone/hello.go" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(_path)
+        return 0
+    end
+
+    init.run_code(0, "float")
+    assert(#job_results > 0, "Standalone Go RunFile job was not started")
+    local last_job = job_results[#job_results]
+    local command = command_to_string(last_job.cmd)
+    assert(command:match("go run /tmp/gostandalone/hello%.go"), "Standalone Go RunFile should use single-file runner")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ Go RunFile standalone test passed")
 end
 
 -- Test Odin single-file mode uses -file to avoid package-wide main collisions.
@@ -484,5 +554,7 @@ test_reserved_argv_runner_guard()
 test_reserved_argv_build_guard()
 test_zig_standalone_fallback()
 test_zig_project_runfile()
-test_go_runfile_prefers_file_runner_at_root()
+test_go_runfile_prefers_package_runner_at_root()
+test_rust_runbuild_prefers_inferred_cargo_bin()
+test_go_runfile_standalone_single_file_mode()
 test_odin_single_file_mode()

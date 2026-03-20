@@ -1,5 +1,6 @@
 local common = require("zignite.build.parsers.common")
 local config = require("zignite.config")
+local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local utils = require("zignite.utils")
 
@@ -33,6 +34,25 @@ function M.detect_makefile_targets(filepath)
 	)
 	if cached and cached.mtime_key == mtime_key then
 		return state.copy_string_map(cached.commands)
+	end
+
+	local zig_names = detect_backend.parse_project_names_once("make", makefile_path)
+	if type(zig_names) == "table" and #zig_names > 0 then
+		---@type table<string, string>
+		local commands = {}
+		for _, target in ipairs(zig_names) do
+			if type(target) == "string" and target ~= "" then
+				commands[target] = "make " .. target
+			end
+		end
+		state.set_bounded_cache_entry(
+			state.make_target_cache,
+			state.make_target_cache_order,
+			state.MAKE_TARGET_CACHE_MAX,
+			makefile_path,
+			{ mtime_key = mtime_key, commands = state.copy_string_map(commands) }
+		)
+		return commands
 	end
 
 	local lines = vim.fn.readfile(makefile_path)

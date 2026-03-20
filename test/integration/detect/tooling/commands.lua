@@ -1,0 +1,347 @@
+-- luacheck: globals project_root config init ui state job_results quickfix_results notify_results mock_jobs
+-- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
+-- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
+-- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
+-- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
+
+
+local function test_run_build_command_with_detected_zig_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
+        return original_expand(expr)
+    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=zig" then
+			return { "fmt" }
+		end
+		return {
+			"Usage: zig [command] [options]",
+			"",
+			"Commands:",
+			"  build            Build project from build.zig",
+			"  fmt              Reformat Zig source into canonical form",
+			"",
+			"General Options:",
+		}
+	end
+
+    reset_job_results()
+    init.run_build_command("fmt", "float")
+    assert(#job_results > 0, "Detected zig build command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("zig fmt"), "Detected zig command should execute via zig fmt")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected zig command test passed")
+end
+
+-- Test run_build_command can execute go commands detected from `go help`.
+local function test_run_build_command_with_detected_go_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "go"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/godetect/main.go" end
+        return original_expand(expr)
+    end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=go" then
+			return { "env" }
+		end
+		if type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help" then
+			return {
+				"The commands are:",
+				"    env         print Go environment information",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("env", "float")
+    assert(#job_results > 0, "Detected go command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("go env"), "Detected go command should execute via go env")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunBuild with detected go command test passed")
+end
+
+-- Test run_build_command can execute rust commands detected from `cargo --list`.
+local function test_run_build_command_with_detected_rust_command()
+    init.setup({
+        build_commands = {},
+    })
+
+	vim.bo.filetype = "rust"
+	local original_expand = vim.fn.expand
+	local original_systemlist = vim.fn.systemlist
+	local original_detect_commands = detect_backend_tool_commands.cargo
+	vim.fn.expand = function(expr)
+	    if expr == "%:p" then return "/tmp/rustdetect/main.rs" end
+	    return original_expand(expr)
+	end
+	detect_backend_tool_commands.cargo = { "metadata" }
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
+			return { "metadata" }
+		end
+		if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
+			return {
+				"Installed Commands:",
+				"    metadata    Output metadata about local package",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("metadata", "float")
+    assert(#job_results > 0, "Detected rust command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("cargo metadata"), "Detected rust command should execute via cargo metadata")
+
+	vim.fn.expand = original_expand
+	vim.fn.systemlist = original_systemlist
+	detect_backend_tool_commands.cargo = original_detect_commands
+	vim.v.shell_error = 0
+	reset_job_results()
+
+    print("✓ RunBuild with detected rust command test passed")
+end
+
+-- Test cargo detection ignores aliases and removed/deprecated commands.
+local function test_rust_detected_commands_skip_cargo_noise()
+    init.setup({
+        build_commands = {},
+    })
+
+    local detect_module = require("zignite.build.detect")
+    local original_systemlist = vim.fn.systemlist
+
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
+            return {
+                "build",
+                "check",
+                "rm",
+                "verify-project",
+                "test",
+            }
+        end
+        return original_systemlist(cmd)
+    end
+
+    local commands = detect_module.detect_rust_tool_commands()
+    assert(commands.build == "cargo build", "Cargo build should stay available")
+    assert(commands.check == "cargo check", "Cargo check should stay available")
+    assert(commands.test == "cargo test", "Cargo test should stay available")
+    assert(commands.rm == nil, "Cargo aliases should not be surfaced")
+    assert(commands["verify-project"] == nil, "Deprecated cargo commands should not be surfaced")
+
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+
+    print("✓ Rust cargo noise filtering test passed")
+end
+
+-- Test run_build_command can execute cpp commands detected from Makefile targets.
+local function test_run_build_command_with_detected_cpp_make_target()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "cpp"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/cppdetect/main.cpp" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cppdetect/Makefile" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cppdetect/Makefile" then
+            return {
+                "custom-target:",
+                "\t@echo cpp",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_build_command("custom-target", "float")
+    assert(#job_results > 0, "Detected cpp Makefile target should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("make custom%-target"), "Detected cpp Makefile target should execute via make custom-target")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    reset_job_results()
+
+    print("✓ RunBuild with detected cpp Makefile target test passed")
+end
+
+-- Test run_build_command can execute odin commands detected from `odin help`.
+local function test_run_build_command_with_detected_odin_command()
+    init.setup({
+        build_commands = {},
+    })
+
+	vim.bo.filetype = "odin"
+	local original_expand = vim.fn.expand
+	local original_systemlist = vim.fn.systemlist
+	local original_detect_commands = detect_backend_tool_commands.odin
+	vim.fn.expand = function(expr)
+	    if expr == "%:p" then return "/tmp/odindetect/main.odin" end
+	    return original_expand(expr)
+	end
+	detect_backend_tool_commands.odin = { "version" }
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=odin" then
+			return { "version" }
+		end
+		if type(cmd) == "table" and cmd[1] == "odin" and cmd[2] == "help" then
+			return {
+				"Commands:",
+				"    version     Print version information",
+				"",
+				"Flags:",
+			}
+		end
+		return original_systemlist(cmd)
+	end
+
+    reset_job_results()
+    init.run_build_command("version", "float")
+    assert(#job_results > 0, "Detected odin command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("odin version"), "Detected odin command should execute via odin version")
+
+	vim.fn.expand = original_expand
+	vim.fn.systemlist = original_systemlist
+	detect_backend_tool_commands.odin = original_detect_commands
+	vim.v.shell_error = 0
+	reset_job_results()
+
+    print("✓ RunBuild with detected odin command test passed")
+end
+
+-- Test Java build commands can be inferred from Maven project files.
+local function test_run_build_command_with_detected_java_maven_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "java"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/javadetect/src/Main.java" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/javadetect/pom.xml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    reset_job_results()
+    init.run_build_command("mvn-test", "float")
+    assert(#job_results > 0, "Detected Java Maven command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("mvn test"), "Detected Java Maven command should execute via mvn test")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ RunBuild with detected Java Maven command test passed")
+end
+
+-- Test Kotlin build commands can be inferred from Gradle wrapper projects.
+local function test_run_build_command_with_detected_kotlin_gradle_command()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "kotlin"
+    local original_expand = vim.fn.expand
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/ktdetect/src/Main.kt" end
+        return original_expand(expr)
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/ktdetect/gradlew" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    reset_job_results()
+    init.run_build_command("gradle-build", "float")
+    assert(#job_results > 0, "Detected Kotlin Gradle command should start a job")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("./gradlew build"), "Detected Kotlin Gradle command should execute via ./gradlew build")
+
+    vim.fn.expand = original_expand
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ RunBuild with detected Kotlin Gradle command test passed")
+end
+
+
+test_run_build_command_with_detected_zig_command()
+test_run_build_command_with_detected_go_command()
+test_run_build_command_with_detected_rust_command()
+test_rust_detected_commands_skip_cargo_noise()
+test_run_build_command_with_detected_cpp_make_target()
+test_run_build_command_with_detected_odin_command()
+test_run_build_command_with_detected_java_maven_command()
+test_run_build_command_with_detected_kotlin_gradle_command()

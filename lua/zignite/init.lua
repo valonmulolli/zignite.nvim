@@ -32,17 +32,33 @@ end
 ---@param runner string|string[]|table|nil
 ---@return string|string[]|table|nil
 local function apply_smart_runner_defaults(filetype, filepath, runner)
-	if filetype ~= "python" or type(runner) ~= "string" then
+	if type(runner) ~= "string" then
 		return runner
 	end
 
-	local default_runner = config.defaults.runners.python
-	if runner ~= default_runner then
+	if filetype == "python" then
+		local default_runner = config.defaults.runners.python
+		if runner ~= default_runner then
+			return runner
+		end
+		if utils.detect_python_project_tool(filepath, config.options.project) == "uv" then
+			return "uv run python -u $file"
+		end
 		return runner
 	end
 
-	if utils.detect_python_project_tool(filepath, config.options.project) == "uv" then
-		return "uv run python -u $file"
+	if filetype == "go" then
+		local default_runner = config.defaults.runners.go
+		if runner ~= default_runner then
+			return runner
+		end
+		local project = utils.detect_project(filepath, config.options.project)
+		if project and project.name == "Go Project" then
+			return {
+				cmd = "go run .",
+				cwd = "$dir",
+			}
+		end
 	end
 
 	return runner
@@ -160,14 +176,16 @@ function M.get_command(filepath, requested_filetype)
 	local filetype = runtime.resolve_supported_filetype(requested_filetype or vim.bo.filetype, source_path)
 	local ft_runner = apply_smart_runner_defaults(filetype, source_path, config.options.runners[filetype])
 	local legacy_project = utils.detect_project(source_path, config.options.project)
-	local project = build.get_preferred_project_command(filetype, source_path)
 
 	if filetype == "zig" and legacy_project and legacy_project.command then
+		local project = build.get_preferred_project_command(filetype, source_path)
 		return project or legacy_project, "project", filetype
 	end
 	if ft_runner then
 		return ft_runner, "filetype", filetype
 	end
+
+	local project = build.get_preferred_project_command(filetype, source_path)
 	if project and project.command then
 		return project, "project", filetype
 	end
@@ -239,6 +257,9 @@ function M.run_code(range, mode)
 		command_str = runtime.get_normalized_runner_command(filetype, runner)
 		if type(runner) == "table" and runner.cleanup_command then
 			cleanup_command = runner.cleanup_command
+		end
+		if type(runner) == "table" and type(runner.cwd) == "string" and runner.cwd ~= "" then
+			command_cwd = utils.substitute_variables_raw(runner.cwd, execution_path)
 		end
 		display_name = filetype
 	end

@@ -41,8 +41,32 @@ end
 local function build_discovered_run_suffix(target)
 	local target_name = tostring(target or "")
 	local target_exe = target_name .. ".exe"
-	local fallback_path = "./build/" .. target_name
-	local fallback_exe_path = fallback_path .. ".exe"
+	local candidate_paths = {
+		"./build/" .. target_name,
+		"./build/" .. target_exe,
+		"./build/bin/" .. target_name,
+		"./build/bin/" .. target_exe,
+		"./build/Debug/" .. target_name,
+		"./build/Debug/" .. target_exe,
+		"./build/Release/" .. target_name,
+		"./build/Release/" .. target_exe,
+		"./build/RelWithDebInfo/" .. target_name,
+		"./build/RelWithDebInfo/" .. target_exe,
+		"./build/MinSizeRel/" .. target_name,
+		"./build/MinSizeRel/" .. target_exe,
+		"./build/bin/Debug/" .. target_name,
+		"./build/bin/Debug/" .. target_exe,
+		"./build/bin/Release/" .. target_name,
+		"./build/bin/Release/" .. target_exe,
+		"./build/bin/RelWithDebInfo/" .. target_name,
+		"./build/bin/RelWithDebInfo/" .. target_exe,
+		"./build/bin/MinSizeRel/" .. target_name,
+		"./build/bin/MinSizeRel/" .. target_exe,
+	}
+	local escaped_candidates = {}
+	for _, candidate in ipairs(candidate_paths) do
+		escaped_candidates[#escaped_candidates + 1] = shellescape_text(candidate)
+	end
 	local find_clause = string.format(
 		"find build -type f \\( -name %s -o -name %s \\) "
 			.. "! -path '*/CMakeFiles/*' ! -path '*/meson-private/*' "
@@ -51,11 +75,16 @@ local function build_discovered_run_suffix(target)
 		shellescape_text(target_exe)
 	)
 	return string.format(
-		"ZIGNITE_BIN=$(%s) && if [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; elif [ -x %s ]; then %s; else %s; fi",
+		"for ZIGNITE_CANDIDATE in %s; do "
+			.. "if [ -x \"$ZIGNITE_CANDIDATE\" ]; then \"$ZIGNITE_CANDIDATE\"; exit $?; fi; "
+			.. "done; "
+			.. "ZIGNITE_BIN=$(%s) && "
+			.. "if [ -n \"$ZIGNITE_BIN\" ] && [ -x \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
+			.. "elif [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
+			.. "else %s; fi",
+		table.concat(escaped_candidates, " "),
 		find_clause,
-		shellescape_text(fallback_path),
-		shellescape_text(fallback_path),
-		shellescape_text(fallback_exe_path)
+		shellescape_text("./build/" .. target_name)
 	)
 end
 
