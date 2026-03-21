@@ -36,6 +36,12 @@ local function resolve_source_context(filepath, requested_filetype)
 	return source_path, filetype
 end
 
+---@param requested_filetype string|nil
+---@return string, string
+local function resolve_current_source_context(requested_filetype)
+	return resolve_source_context(vim.fn.expand("%:p"), requested_filetype or vim.bo.filetype)
+end
+
 ---@param filepath string
 ---@return string
 local function resolve_project_cwd(filepath)
@@ -83,6 +89,29 @@ local function apply_smart_runner_defaults(filetype, filepath, runner)
 	end
 
 	return runner
+end
+
+---@param source string|nil
+---@param runner string|string[]|table
+---@param filetype string
+---@param buffer_path string
+---@param execution_path string
+---@return string, string|nil, string, string|nil
+local function resolve_runner_execution(source, runner, filetype, buffer_path, execution_path)
+	if source == "project" then
+		return runner.command, nil, runner.name, resolve_project_cwd(buffer_path ~= "" and buffer_path or execution_path)
+	end
+
+	local cleanup_command
+	local command_cwd
+	if type(runner) == "table" and runner.cleanup_command then
+		cleanup_command = runner.cleanup_command
+	end
+	if type(runner) == "table" and type(runner.cwd) == "string" and runner.cwd ~= "" then
+		command_cwd = utils.substitute_variables_raw(runner.cwd, execution_path)
+	end
+
+	return runtime.get_normalized_runner_command(filetype, runner), cleanup_command, filetype, command_cwd
 end
 
 ---@return string
@@ -217,7 +246,7 @@ end
 function M.run_code(range, mode)
 	ensure_config()
 
-	local buffer_path, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
+	local buffer_path, filetype = resolve_current_source_context()
 	local execution_path
 	local code_to_run
 
@@ -259,25 +288,8 @@ function M.run_code(range, mode)
 		return
 	end
 
-	local command_str
-	local cleanup_command
-	local display_name
-	local command_cwd
-
-	if source == "project" then
-		command_str = runner.command
-		display_name = runner.name
-		command_cwd = utils.get_project_root(buffer_path ~= "" and buffer_path or execution_path, config.options.project)
-	else
-		command_str = runtime.get_normalized_runner_command(filetype, runner)
-		if type(runner) == "table" and runner.cleanup_command then
-			cleanup_command = runner.cleanup_command
-		end
-		if type(runner) == "table" and type(runner.cwd) == "string" and runner.cwd ~= "" then
-			command_cwd = utils.substitute_variables_raw(runner.cwd, execution_path)
-		end
-		display_name = filetype
-	end
+	local command_str, cleanup_command, display_name, command_cwd =
+		resolve_runner_execution(source, runner, filetype, buffer_path, execution_path)
 
 	if runtime.is_reserved_argv_command(command_str) then
 		ui.show_output(ERRORS.RESERVED_ARGV, mode)
@@ -351,7 +363,7 @@ end
 function M.run_build_command(command_name, mode, provided_args)
 	ensure_config()
 
-	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
+	local filepath, filetype = resolve_current_source_context()
 	local settled = false
 
 	---@param build_cmds table<string, string>
@@ -398,7 +410,7 @@ end
 function M.run_live(mode)
 	ensure_config()
 
-	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
+	local filepath, filetype = resolve_current_source_context()
 	local settled = false
 
 	---@return nil
@@ -464,7 +476,7 @@ end
 function M.select_build_command(mode)
 	ensure_config()
 
-	local filepath, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
+	local filepath, filetype = resolve_current_source_context()
 	build_picker.open({
 		filetype = filetype,
 		filepath = filepath,
@@ -486,7 +498,7 @@ end
 function M.run_last_build_command(mode)
 	ensure_config()
 
-	local _, filetype = resolve_source_context(vim.fn.expand("%:p"), vim.bo.filetype)
+	local _, filetype = resolve_current_source_context()
 	local command_name = build.get_last_build_command(filetype)
 	if not command_name then
 		ui.show_output(string.format("No previous build command for filetype: %s", filetype), mode)
@@ -499,7 +511,7 @@ end
 ---@return table<string, string>
 function M.get_build_commands_for_filetype(filetype)
 	ensure_config()
-	local filepath, ft = resolve_source_context(vim.fn.expand("%:p"), filetype)
+	local filepath, ft = resolve_current_source_context(filetype)
 	return build.get_build_commands_for_filetype(ft, filepath)
 end
 
@@ -507,7 +519,7 @@ end
 ---@return table<string, string>
 function M.get_build_commands_for_completion(filetype)
 	ensure_config()
-	local filepath, ft = resolve_source_context(vim.fn.expand("%:p"), filetype)
+	local filepath, ft = resolve_current_source_context(filetype)
 	local build_cmds = build.get_build_commands_for_cached_lookup(ft, filepath, nil)
 	return build_cmds
 end

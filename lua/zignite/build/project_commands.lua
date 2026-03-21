@@ -8,6 +8,28 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "preview" }
+local TOOL_DETECTORS = {
+	zig = {
+		flag = "zig",
+		sync = detect.detect_zig_tool_commands,
+		async = detect.detect_zig_tool_commands_async,
+	},
+	go = {
+		flag = "go",
+		sync = detect.detect_go_tool_commands,
+		async = detect.detect_go_tool_commands_async,
+	},
+	rust = {
+		flag = "rust",
+		sync = detect.detect_rust_tool_commands,
+		async = detect.detect_rust_tool_commands_async,
+	},
+	odin = {
+		flag = "odin",
+		sync = detect.detect_odin_tool_commands,
+		async = detect.detect_odin_tool_commands_async,
+	},
+}
 
 ---@param filetype string
 ---@return table<string, string>
@@ -35,6 +57,16 @@ local function replace_default_command(updated, default_commands, key, value)
 	end
 end
 
+---@param updated table<string, string>
+---@param default_commands table<string, string>
+---@param replacements table<string, string|nil>
+---@return nil
+local function replace_default_commands(updated, default_commands, replacements)
+	for key, value in pairs(replacements or {}) do
+		replace_default_command(updated, default_commands, key, value)
+	end
+end
+
 ---@param target table<string, string>
 ---@param alias string
 ---@param source_key string
@@ -42,6 +74,15 @@ end
 local function mirror_command(target, alias, source_key)
 	if target[source_key] then
 		target[alias] = target[source_key]
+	end
+end
+
+---@param target table<string, string>
+---@param alias_map table<string, string>
+---@return nil
+local function mirror_commands(target, alias_map)
+	for alias, source_key in pairs(alias_map or {}) do
+		mirror_command(target, alias, source_key)
 	end
 end
 
@@ -55,6 +96,120 @@ local function config_detection_enabled()
 		end
 		return value == true
 	end
+end
+
+---@param filtered table<string, string>
+---@param configured table<string, string>
+---@param command_key string
+---@param configured_key string
+---@param primary_target string|nil
+---@param build_tree_ready boolean
+---@param setup_command string
+---@param run_builder fun(target: string): string
+---@return nil
+local function set_system_run_command(
+	filtered,
+	configured,
+	command_key,
+	configured_key,
+	primary_target,
+	build_tree_ready,
+	setup_command,
+	run_builder
+)
+	if primary_target and primary_target ~= "" then
+		filtered[command_key] = run_builder(primary_target)
+		filtered.run = filtered[command_key]
+		return
+	end
+
+	local configured_run = configured[configured_key]
+	if type(configured_run) ~= "string" or configured_run == "" then
+		return
+	end
+
+	filtered[command_key] = build_tree_ready
+		and configured_run
+		or (setup_command .. " && " .. configured_run)
+	filtered.run = filtered[command_key]
+end
+
+---@param configured table<string, string>
+---@param filepath string
+---@param root string
+---@return table<string, string>
+local function build_cmake_commands(configured, filepath, root)
+	---@type table<string, string>
+	local filtered = {}
+	filtered["cmake-config"] = configured["cmake-config"] or systems.cmake_config_command(root)
+	filtered["cmake-build"] = systems.cmake_build_command(root, nil)
+	filtered["cmake-clean"] = systems.cmake_clean_command(root)
+	filtered["cmake-debug"] = configured["cmake-debug"]
+		or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
+	filtered["cmake-release"] = configured["cmake-release"]
+		or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
+	filtered["cmake-test"] = configured["cmake-test"] or "ctest --test-dir build"
+	filtered.install = "cmake --build build --target install"
+	mirror_commands(filtered, {
+		build = "cmake-build",
+		clean = "cmake-clean",
+		debug = "cmake-debug",
+		release = "cmake-release",
+		test = "cmake-test",
+		config = "cmake-config",
+	})
+
+	local _, primary_target = parsers.detect_cmake_project_commands(filepath)
+	set_system_run_command(
+		filtered,
+		configured,
+		"cmake-run",
+		"cmake-run",
+		primary_target,
+		systems.has_cmake_build_tree(root),
+		systems.cmake_config_command(root),
+		function(target)
+			return systems.cmake_run_command(root, target)
+		end
+	)
+
+	return filtered
+end
+
+---@param configured table<string, string>
+---@param filepath string
+---@param root string
+---@return table<string, string>
+local function build_meson_commands(configured, filepath, root)
+	---@type table<string, string>
+	local filtered = {}
+	filtered["meson-setup"] = configured["meson-setup"] or systems.meson_setup_command(root)
+	filtered["meson-build"] = systems.meson_build_command(root, nil)
+	filtered["meson-clean"] = systems.meson_clean_command(root)
+	filtered["meson-test"] = configured["meson-test"] or "meson test -C build"
+	filtered.install = "meson install -C build"
+	mirror_commands(filtered, {
+		build = "meson-build",
+		clean = "meson-clean",
+		test = "meson-test",
+		setup = "meson-setup",
+	})
+
+	local _, primary_target = parsers.detect_meson_project_commands(filepath)
+	set_system_run_command(
+		filtered,
+		configured,
+		"meson-run",
+		"meson-run",
+		primary_target,
+		systems.has_meson_build_tree(root),
+		systems.meson_setup_command(root),
+		function(target)
+			return systems.meson_run_command(root, target)
+		end
+	)
+
+	return filtered
 end
 
 ---@param filetype string
@@ -74,10 +229,13 @@ local function apply_node_package_manager_defaults(filetype, filepath, configure
 	local default_commands = get_default_build_commands(filetype)
 	local updated = copy_commands(configured)
 
-	for _, key in ipairs({ "start", "dev", "build", "test" }) do
-		replace_default_command(updated, default_commands, key, utils.format_package_script_command(package_manager, key))
-	end
-	replace_default_command(updated, default_commands, "install", utils.format_package_install_command(package_manager))
+	replace_default_commands(updated, default_commands, {
+		start = utils.format_package_script_command(package_manager, "start"),
+		dev = utils.format_package_script_command(package_manager, "dev"),
+		build = utils.format_package_script_command(package_manager, "build"),
+		test = utils.format_package_script_command(package_manager, "test"),
+		install = utils.format_package_install_command(package_manager),
+	})
 
 	return updated
 end
@@ -94,9 +252,11 @@ local function apply_python_tool_defaults(filepath, configured)
 	local default_commands = get_default_build_commands("python")
 	local updated = copy_commands(configured)
 
-	replace_default_command(updated, default_commands, "run", "uv run -m main")
-	replace_default_command(updated, default_commands, "test", "uv run pytest")
-	replace_default_command(updated, default_commands, "install", "uv sync")
+	replace_default_commands(updated, default_commands, {
+		run = "uv run -m main",
+		test = "uv run pytest",
+		install = "uv sync",
+	})
 
 	return updated
 end
@@ -152,14 +312,9 @@ end
 ---@return table<string, string>
 function M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
 	local commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-	if filetype == "zig" and is_detection_enabled("zig") then
-		M.extend_string_map(commands, detect.detect_zig_tool_commands())
-	elseif filetype == "go" and is_detection_enabled("go") then
-		M.extend_string_map(commands, detect.detect_go_tool_commands())
-	elseif filetype == "rust" and is_detection_enabled("rust") then
-		M.extend_string_map(commands, detect.detect_rust_tool_commands())
-	elseif filetype == "odin" and is_detection_enabled("odin") then
-		M.extend_string_map(commands, detect.detect_odin_tool_commands())
+	local detector = TOOL_DETECTORS[filetype]
+	if detector and is_detection_enabled(detector.flag) then
+		M.extend_string_map(commands, detector.sync())
 	end
 	return commands
 end
@@ -190,20 +345,9 @@ function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, 
 		on_done(merged)
 	end
 
-	if filetype == "zig" and is_detection_enabled("zig") then
-		detect.detect_zig_tool_commands_async(finish, force_refresh)
-		return
-	end
-	if filetype == "go" and is_detection_enabled("go") then
-		detect.detect_go_tool_commands_async(finish, force_refresh)
-		return
-	end
-	if filetype == "rust" and is_detection_enabled("rust") then
-		detect.detect_rust_tool_commands_async(finish, force_refresh)
-		return
-	end
-	if filetype == "odin" and is_detection_enabled("odin") then
-		detect.detect_odin_tool_commands_async(finish, force_refresh)
+	local detector = TOOL_DETECTORS[filetype]
+	if detector and is_detection_enabled(detector.flag) then
+		detector.async(finish, force_refresh)
 		return
 	end
 	vim.schedule(function()
@@ -278,55 +422,11 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 
 	if system == "cmake" then
-		filtered["cmake-config"] = configured["cmake-config"] or systems.cmake_config_command(root)
-		filtered["cmake-build"] = systems.cmake_build_command(root, nil)
-		filtered["cmake-clean"] = systems.cmake_clean_command(root)
-		filtered["cmake-debug"] = configured["cmake-debug"]
-			or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-		filtered["cmake-release"] = configured["cmake-release"]
-			or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-		filtered["cmake-test"] = configured["cmake-test"] or "ctest --test-dir build"
-		mirror_command(filtered, "build", "cmake-build")
-		mirror_command(filtered, "clean", "cmake-clean")
-		mirror_command(filtered, "debug", "cmake-debug")
-		mirror_command(filtered, "release", "cmake-release")
-		mirror_command(filtered, "test", "cmake-test")
-		mirror_command(filtered, "config", "cmake-config")
-		filtered.install = "cmake --build build --target install"
-		local _, primary_target = parsers.detect_cmake_project_commands(filepath)
-		if primary_target and primary_target ~= "" then
-			filtered["cmake-run"] = systems.cmake_run_command(root, primary_target)
-			filtered.run = filtered["cmake-run"]
-		elseif configured["cmake-run"] then
-			filtered["cmake-run"] = systems.has_cmake_build_tree(root)
-				and configured["cmake-run"]
-				or (systems.cmake_config_command(root) .. " && " .. configured["cmake-run"])
-			filtered.run = filtered["cmake-run"]
-		end
-		return filtered
+		return build_cmake_commands(configured, filepath, root)
 	end
 
 	if system == "meson" then
-		filtered["meson-setup"] = configured["meson-setup"] or systems.meson_setup_command(root)
-		filtered["meson-build"] = systems.meson_build_command(root, nil)
-		filtered["meson-clean"] = systems.meson_clean_command(root)
-		filtered["meson-test"] = configured["meson-test"] or "meson test -C build"
-		mirror_command(filtered, "build", "meson-build")
-		mirror_command(filtered, "clean", "meson-clean")
-		mirror_command(filtered, "test", "meson-test")
-		mirror_command(filtered, "setup", "meson-setup")
-		local _, primary_target = parsers.detect_meson_project_commands(filepath)
-		if primary_target and primary_target ~= "" then
-			filtered["meson-run"] = systems.meson_run_command(root, primary_target)
-			filtered.run = filtered["meson-run"]
-		elseif configured["meson-run"] then
-			filtered["meson-run"] = systems.has_meson_build_tree(root)
-				and configured["meson-run"]
-				or (systems.meson_setup_command(root) .. " && " .. configured["meson-run"])
-			filtered.run = filtered["meson-run"]
-		end
-		filtered.install = "meson install -C build"
-		return filtered
+		return build_meson_commands(configured, filepath, root)
 	end
 
 	return configured
