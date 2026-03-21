@@ -62,7 +62,7 @@ local function apply_smart_runner_defaults(filetype, filepath, runner)
 		if runner ~= default_runner then
 			return runner
 		end
-		if utils.detect_python_project_tool(filepath, config.options.project) == "uv" then
+		if utils.detect_python_project_tool_fast(filepath, config.options.project) == "uv" then
 			return "uv run python -u $file"
 		end
 		return runner
