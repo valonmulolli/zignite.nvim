@@ -22,6 +22,12 @@ local quickfix_backend_available = nil
 local quickfix_worker = nil
 local QUICKFIX_WORKER_REQUEST_TIMEOUT_MS = 3000
 local QUICKFIX_BACKEND = shared.get_plugin_path() .. "/zig/zig-out/bin/zignite"
+local QUICKFIX_PROTOCOL = {
+	res_begin = "@@ZQF_RES_BEGIN",
+	res_end = "@@ZQF_RES_END",
+	req_begin = "@@ZQF_BEGIN",
+	req_end = "@@ZQF_END",
+}
 
 ---@param lines string[]
 ---@return nil
@@ -40,6 +46,21 @@ local function has_quickfix_backend()
 		quickfix_backend_available = vim.fn.executable(QUICKFIX_BACKEND) == 1
 	end
 	return quickfix_backend_available
+end
+
+---@param require_chanclose boolean|nil
+---@return boolean
+local function can_use_quickfix_backend(require_chanclose)
+	if not has_quickfix_backend() then
+		return false
+	end
+	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" then
+		return false
+	end
+	if require_chanclose and type(vim.fn.chanclose) ~= "function" then
+		return false
+	end
+	return true
 end
 
 ---@param lines string[]
@@ -316,6 +337,76 @@ local function append_output_lines(output_lines, data)
 	end
 end
 
+---@param worker ZigniteQuickfixWorker
+---@return nil
+local function clear_quickfix_active_state(worker)
+	worker.active_id = nil
+	worker.active_lines = {}
+end
+
+---@return ZigniteQuickfixWorker
+local function create_quickfix_worker()
+	return {
+		job_id = nil,
+		next_request_id = 0,
+		pending = {},
+		active_id = nil,
+		active_lines = {},
+	}
+end
+
+---@param worker ZigniteQuickfixWorker
+---@param request_id integer
+---@param on_success fun(lines: string[]):nil
+---@param on_fallback fun():nil
+---@param force_truncated boolean
+---@return ZigniteQuickfixWorkerRequest
+local function start_quickfix_worker_request(worker, request_id, on_success, on_fallback, force_truncated)
+	local request = {
+		on_success = on_success,
+		on_fallback = on_fallback,
+		force_truncated = force_truncated,
+		timer = nil,
+	}
+	worker.pending[request_id] = request
+	return request
+end
+
+---@param request_id integer
+---@param flags table
+---@param raw_lines string[]
+---@return string
+local function build_quickfix_worker_payload(request_id, flags, raw_lines)
+	local payload = {
+		string.format(
+			"%s %d %d %d %s %d %s",
+			QUICKFIX_PROTOCOL.req_begin,
+			request_id,
+			flags.max_lines,
+			flags.max_bytes,
+			flags.strip_ansi,
+			flags.strip_max_lines,
+			flags.parse_diagnostics
+		),
+	}
+	for _, line in ipairs(raw_lines) do
+		payload[#payload + 1] = "\t" .. line
+	end
+	payload[#payload + 1] = string.format("%s %d", QUICKFIX_PROTOCOL.req_end, request_id)
+	return table.concat(payload, "\n") .. "\n"
+end
+
+---@param worker ZigniteQuickfixWorker
+---@param line string
+---@return nil
+local function append_quickfix_worker_line(worker, line)
+	if line:sub(1, 1) == "\t" then
+		worker.active_lines[#worker.active_lines + 1] = line:sub(2)
+	else
+		worker.active_lines[#worker.active_lines + 1] = line
+	end
+end
+
 ---@param worker ZigniteQuickfixWorker|nil
 ---@return nil
 local function release_quickfix_worker(worker)
@@ -342,8 +433,7 @@ local function finish_quickfix_worker_request(worker, request_id)
 	local request = worker.pending[request_id]
 	worker.pending[request_id] = nil
 	local completed_lines = worker.active_lines
-	worker.active_id = nil
-	worker.active_lines = {}
+	clear_quickfix_active_state(worker)
 	if request then
 		stop_request_timer(request.timer)
 	end
@@ -357,16 +447,7 @@ end
 ---@param on_fallback fun():nil
 ---@return nil
 local function run_quickfix_with_zig_once(raw_lines, quickfix_opts, force_truncated, on_success, on_fallback)
-	if not has_quickfix_backend() then
-		on_fallback()
-		return
-	end
-
-	if
-		type(vim.fn.jobstart) ~= "function"
-		or type(vim.fn.chansend) ~= "function"
-		or type(vim.fn.chanclose) ~= "function"
-	then
+	if not can_use_quickfix_backend(true) then
 		on_fallback()
 		return
 	end
@@ -432,8 +513,7 @@ local function flush_quickfix_worker_fallbacks(worker)
 	end
 
 	worker.pending = {}
-	worker.active_id = nil
-	worker.active_lines = {}
+	clear_quickfix_active_state(worker)
 end
 
 ---@param worker ZigniteQuickfixWorker
@@ -449,15 +529,15 @@ local function handle_quickfix_worker_stdout(worker, data)
 			goto continue
 		end
 
-		local begin_id = line:match("^@@ZQF_RES_BEGIN%s+(%d+)$")
+		local begin_id = line:match("^" .. QUICKFIX_PROTOCOL.res_begin .. "%s+(%d+)$")
 		if begin_id then
+			clear_quickfix_active_state(worker)
 			worker.active_id = tonumber(begin_id)
-			worker.active_lines = {}
 			goto continue
 		end
 
 		if worker.active_id then
-			local end_id = line:match("^@@ZQF_RES_END%s+(%d+)$")
+			local end_id = line:match("^" .. QUICKFIX_PROTOCOL.res_end .. "%s+(%d+)$")
 			if end_id and tonumber(end_id) == worker.active_id then
 				local request, completed_lines = finish_quickfix_worker_request(worker, worker.active_id)
 				if request and request.on_success then
@@ -466,11 +546,7 @@ local function handle_quickfix_worker_stdout(worker, data)
 				goto continue
 			end
 
-			if line:sub(1, 1) == "\t" then
-				worker.active_lines[#worker.active_lines + 1] = line:sub(2)
-			else
-				worker.active_lines[#worker.active_lines + 1] = line
-			end
+			append_quickfix_worker_line(worker, line)
 		end
 
 		::continue::
@@ -479,10 +555,7 @@ end
 
 ---@return ZigniteQuickfixWorker|nil
 local function ensure_quickfix_worker()
-	if not has_quickfix_backend() then
-		return nil
-	end
-	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" then
+	if not can_use_quickfix_backend(false) then
 		return nil
 	end
 
@@ -490,14 +563,7 @@ local function ensure_quickfix_worker()
 		return quickfix_worker
 	end
 
-	---@type ZigniteQuickfixWorker
-	local worker = {
-		job_id = nil,
-		next_request_id = 0,
-		pending = {},
-		active_id = nil,
-		active_lines = {},
-	}
+	local worker = create_quickfix_worker()
 
 	local job_id = vim.fn.jobstart({ QUICKFIX_BACKEND, "--quickfix-daemon" }, {
 		stdout_buffered = false,
@@ -536,13 +602,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 	worker.next_request_id = worker.next_request_id + 1
 	local request_id = worker.next_request_id
 
-	worker.pending[request_id] = {
-		on_success = on_success,
-		on_fallback = on_fallback,
-		force_truncated = force_truncated,
-		timer = nil,
-	}
-	local request = worker.pending[request_id]
+	local request = start_quickfix_worker_request(worker, request_id, on_success, on_fallback, force_truncated)
 	request.timer = start_request_timer(QUICKFIX_WORKER_REQUEST_TIMEOUT_MS, function()
 		if worker.pending[request_id] ~= request then
 			return
@@ -550,8 +610,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 
 		worker.pending[request_id] = nil
 		if worker.active_id == request_id then
-			worker.active_id = nil
-			worker.active_lines = {}
+			clear_quickfix_active_state(worker)
 		end
 		if request.on_fallback then
 			request.on_fallback()
@@ -559,23 +618,7 @@ local function run_quickfix_with_zig_worker(raw_lines, quickfix_opts, force_trun
 		stop_quickfix_worker_job(worker)
 	end)
 
-	local payload = {
-		string.format(
-			"@@ZQF_BEGIN %d %d %d %s %d %s",
-			request_id,
-			flags.max_lines,
-			flags.max_bytes,
-			flags.strip_ansi,
-			flags.strip_max_lines,
-			flags.parse_diagnostics
-		),
-	}
-	for _, line in ipairs(raw_lines) do
-		payload[#payload + 1] = "\t" .. line
-	end
-	payload[#payload + 1] = string.format("@@ZQF_END %d", request_id)
-
-	local ok_send = pcall(vim.fn.chansend, worker.job_id, table.concat(payload, "\n") .. "\n")
+	local ok_send = pcall(vim.fn.chansend, worker.job_id, build_quickfix_worker_payload(request_id, flags, raw_lines))
 	if not ok_send then
 		stop_request_timer(request.timer)
 		worker.pending[request_id] = nil
