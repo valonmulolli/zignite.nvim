@@ -530,6 +530,100 @@ local function test_gradle_project_uses_zig_project_parser()
     print("✓ Zig Gradle parser test passed")
 end
 
+-- Test the Lua Maven fallback keeps baseline tasks but leaves run inference to Zig.
+local function test_maven_project_uses_basic_lua_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+    local jvm_parser = require("zignite.build.parsers.jvm")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_filereadable = vim.fn.filereadable
+
+    utils_module.get_project_root = function()
+        return "/tmp/javamin"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/javamin/pom.xml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    local commands = jvm_parser.detect_java_like_project_commands("/tmp/javamin/src/Main.java")
+    assert(commands["mvn-build"] == "mvn compile", "Lua Maven fallback should keep mvn compile")
+    assert(commands["mvn-test"] == "mvn test", "Lua Maven fallback should keep mvn test")
+    assert(commands["mvn-package"] == "mvn package", "Lua Maven fallback should keep mvn package")
+    assert(commands["mvn-run"] == nil, "Lua Maven fallback should leave run-goal inference to Zig")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Lua Maven fallback parser test passed")
+end
+
+-- Test the Lua Gradle fallback keeps baseline tasks but leaves run-task inference to Zig.
+local function test_gradle_project_uses_basic_lua_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+    local jvm_parser = require("zignite.build.parsers.jvm")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_filereadable = vim.fn.filereadable
+
+    utils_module.get_project_root = function()
+        return "/tmp/gradlemin"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/gradlemin/gradlew" or path == "/tmp/gradlemin/build.gradle.kts" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    local commands = jvm_parser.detect_java_like_project_commands("/tmp/gradlemin/src/Main.kt")
+    assert(commands["gradle-build"] == "./gradlew build", "Lua Gradle fallback should keep gradle build")
+    assert(commands["gradle-test"] == "./gradlew test", "Lua Gradle fallback should keep gradle test")
+    assert(commands["gradle-clean"] == "./gradlew clean", "Lua Gradle fallback should keep gradle clean")
+    assert(commands["gradle-run"] == nil, "Lua Gradle fallback should leave run-task inference to Zig")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Lua Gradle fallback parser test passed")
+end
+
 -- Test Cargo target parsing can use the Zig project parser path.
 local function test_cargo_targets_use_zig_project_parser()
     init.setup({
@@ -865,6 +959,8 @@ test_cmake_targets_use_basic_lua_fallback()
 test_meson_targets_use_basic_lua_fallback()
 test_maven_project_uses_zig_project_parser()
 test_gradle_project_uses_zig_project_parser()
+test_maven_project_uses_basic_lua_fallback()
+test_gradle_project_uses_basic_lua_fallback()
 test_cargo_targets_use_zig_project_parser()
 test_cargo_targets_use_basic_lua_fallback()
 test_pyproject_tools_use_zig_project_parser()

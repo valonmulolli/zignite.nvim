@@ -6,11 +6,40 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 
+---@param run_command string|nil
+---@return table<string, string>
+local function build_maven_commands(run_command)
+	---@type table<string, string>
+	local commands = {
+		["mvn-build"] = "mvn compile",
+		["mvn-test"] = "mvn test",
+		["mvn-package"] = "mvn package",
+	}
+	if type(run_command) == "string" and run_command ~= "" then
+		commands["mvn-run"] = run_command
+	end
+	return commands
+end
+
+---@param prefix string
+---@param run_task string|nil
+---@return table<string, string>
+local function build_gradle_commands(prefix, run_task)
+	---@type table<string, string>
+	local commands = {
+		["gradle-build"] = prefix .. " build",
+		["gradle-test"] = prefix .. " test",
+		["gradle-clean"] = prefix .. " clean",
+	}
+	if type(run_task) == "string" and run_task ~= "" then
+		commands["gradle-run"] = prefix .. " " .. run_task
+	end
+	return commands
+end
+
 ---@param lines string[]|nil
 ---@return table<string, string>
 local function decode_maven_commands(lines)
-	---@type table<string, string>
-	local commands = {}
 	---@type table<string, boolean>
 	local seen = {}
 	for _, raw_line in ipairs(lines or {}) do
@@ -20,30 +49,20 @@ local function decode_maven_commands(lines)
 		end
 	end
 
-	if seen.compile then
-		commands["mvn-build"] = "mvn compile"
-	end
-	if seen.test then
-		commands["mvn-test"] = "mvn test"
-	end
-	if seen.package then
-		commands["mvn-package"] = "mvn package"
-	end
+	local run_command = nil
 	if seen["spring-boot:run"] then
-		commands["mvn-run"] = "mvn spring-boot:run"
+		run_command = "mvn spring-boot:run"
 	elseif seen["exec:java"] then
-		commands["mvn-run"] = "mvn exec:java"
+		run_command = "mvn exec:java"
 	end
 
-	return commands
+	return build_maven_commands(run_command)
 end
 
 ---@param prefix string
 ---@param lines string[]|nil
 ---@return table<string, string>
 local function decode_gradle_commands(prefix, lines)
-	---@type table<string, string>
-	local commands = {}
 	---@type table<string, boolean>
 	local seen = {}
 	for _, raw_line in ipairs(lines or {}) do
@@ -53,22 +72,14 @@ local function decode_gradle_commands(prefix, lines)
 		end
 	end
 
-	if seen.build then
-		commands["gradle-build"] = prefix .. " build"
-	end
-	if seen.test then
-		commands["gradle-test"] = prefix .. " test"
-	end
-	if seen.clean then
-		commands["gradle-clean"] = prefix .. " clean"
-	end
+	local run_task = nil
 	if seen.bootRun then
-		commands["gradle-run"] = prefix .. " bootRun"
+		run_task = "bootRun"
 	elseif seen.run then
-		commands["gradle-run"] = prefix .. " run"
+		run_task = "run"
 	end
 
-	return commands
+	return build_gradle_commands(prefix, run_task)
 end
 
 ---@param filepath string
@@ -96,10 +107,7 @@ function M.detect_java_like_project_commands(filepath)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
 			return decode_maven_commands(zig_lines)
 		end
-		commands["mvn-build"] = "mvn compile"
-		commands["mvn-test"] = "mvn test"
-		commands["mvn-package"] = "mvn package"
-		commands["mvn-run"] = "mvn exec:java"
+		return build_maven_commands(nil)
 	end
 	if vim.fn.filereadable(gradle_wrapper) == 1 then
 		local gradle_file = nil
@@ -114,20 +122,14 @@ function M.detect_java_like_project_commands(filepath)
 				return decode_gradle_commands("./gradlew", zig_lines)
 			end
 		end
-		commands["gradle-build"] = "./gradlew build"
-		commands["gradle-test"] = "./gradlew test"
-		commands["gradle-clean"] = "./gradlew clean"
-		commands["gradle-run"] = "./gradlew run"
+		return build_gradle_commands("./gradlew", nil)
 	elseif vim.fn.filereadable(gradle_build) == 1 or vim.fn.filereadable(gradle_build_kts) == 1 then
 		local gradle_file = vim.fn.filereadable(gradle_build_kts) == 1 and gradle_build_kts or gradle_build
 		local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
 			return decode_gradle_commands("gradle", zig_lines)
 		end
-		commands["gradle-build"] = "gradle build"
-		commands["gradle-test"] = "gradle test"
-		commands["gradle-clean"] = "gradle clean"
-		commands["gradle-run"] = "gradle run"
+		return build_gradle_commands("gradle", nil)
 	end
 	return commands
 end
