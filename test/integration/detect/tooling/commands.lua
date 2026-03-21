@@ -1,5 +1,6 @@
 -- luacheck: globals project_root config init ui state job_results quickfix_results notify_results mock_jobs
 -- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
+-- luacheck: globals make_expand_override with_overrides
 -- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
@@ -10,39 +11,37 @@ local function test_run_build_command_with_detected_zig_command()
         build_commands = {},
     })
 
-    vim.bo.filetype = "zig"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
-        return original_expand(expr)
-    end
-	vim.fn.systemlist = function(cmd)
+	with_overrides({
+		{ tbl = vim.bo, key = "filetype", value = "zig" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/zigdetect/main.zig") },
+		{
+			tbl = vim.fn,
+			key = "systemlist",
+			value = function(cmd)
+				vim.v.shell_error = 0
+				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=zig" then
+					return { "fmt" }
+				end
+				return {
+					"Usage: zig [command] [options]",
+					"",
+					"Commands:",
+					"  build            Build project from build.zig",
+					"  fmt              Reformat Zig source into canonical form",
+					"",
+					"General Options:",
+				}
+			end,
+		},
+	}, function()
+		reset_job_results()
+		init.run_build_command("fmt", "float")
+		assert(#job_results > 0, "Detected zig build command should start a job")
+		local command = command_to_string(job_results[#job_results].cmd)
+		assert(command:match("zig fmt"), "Detected zig command should execute via zig fmt")
 		vim.v.shell_error = 0
-		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=zig" then
-			return { "fmt" }
-		end
-		return {
-			"Usage: zig [command] [options]",
-			"",
-			"Commands:",
-			"  build            Build project from build.zig",
-			"  fmt              Reformat Zig source into canonical form",
-			"",
-			"General Options:",
-		}
-	end
-
-    reset_job_results()
-    init.run_build_command("fmt", "float")
-    assert(#job_results > 0, "Detected zig build command should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("zig fmt"), "Detected zig command should execute via zig fmt")
-
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.v.shell_error = 0
-    reset_job_results()
+		reset_job_results()
+	end)
 
     print("✓ RunBuild with detected zig command test passed")
 end
@@ -53,37 +52,35 @@ local function test_run_build_command_with_detected_go_command()
         build_commands = {},
     })
 
-    vim.bo.filetype = "go"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/godetect/main.go" end
-        return original_expand(expr)
-    end
-	vim.fn.systemlist = function(cmd)
+	with_overrides({
+		{ tbl = vim.bo, key = "filetype", value = "go" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/godetect/main.go") },
+		{
+			tbl = vim.fn,
+			key = "systemlist",
+			value = function(cmd)
+				vim.v.shell_error = 0
+				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=go" then
+					return { "env" }
+				end
+				if type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help" then
+					return {
+						"The commands are:",
+						"    env         print Go environment information",
+					}
+				end
+				return {}
+			end,
+		},
+	}, function()
+		reset_job_results()
+		init.run_build_command("env", "float")
+		assert(#job_results > 0, "Detected go command should start a job")
+		local command = command_to_string(job_results[#job_results].cmd)
+		assert(command:match("go env"), "Detected go command should execute via go env")
 		vim.v.shell_error = 0
-		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=go" then
-			return { "env" }
-		end
-		if type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help" then
-			return {
-				"The commands are:",
-				"    env         print Go environment information",
-			}
-		end
-		return original_systemlist(cmd)
-	end
-
-    reset_job_results()
-    init.run_build_command("env", "float")
-    assert(#job_results > 0, "Detected go command should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("go env"), "Detected go command should execute via go env")
-
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.v.shell_error = 0
-    reset_job_results()
+		reset_job_results()
+	end)
 
     print("✓ RunBuild with detected go command test passed")
 end
@@ -94,40 +91,38 @@ local function test_run_build_command_with_detected_rust_command()
         build_commands = {},
     })
 
-	vim.bo.filetype = "rust"
-	local original_expand = vim.fn.expand
-	local original_systemlist = vim.fn.systemlist
 	local original_detect_commands = detect_backend_tool_commands.cargo
-	vim.fn.expand = function(expr)
-	    if expr == "%:p" then return "/tmp/rustdetect/main.rs" end
-	    return original_expand(expr)
-	end
-	detect_backend_tool_commands.cargo = { "metadata" }
-	vim.fn.systemlist = function(cmd)
+	with_overrides({
+		{ tbl = vim.bo, key = "filetype", value = "rust" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/rustdetect/main.rs") },
+		{ tbl = detect_backend_tool_commands, key = "cargo", value = { "metadata" } },
+		{
+			tbl = vim.fn,
+			key = "systemlist",
+			value = function(cmd)
+				vim.v.shell_error = 0
+				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
+					return { "metadata" }
+				end
+				if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
+					return {
+						"Installed Commands:",
+						"    metadata    Output metadata about local package",
+					}
+				end
+				return {}
+			end,
+		},
+	}, function()
+		reset_job_results()
+		init.run_build_command("metadata", "float")
+		assert(#job_results > 0, "Detected rust command should start a job")
+		local command = command_to_string(job_results[#job_results].cmd)
+		assert(command:match("cargo metadata"), "Detected rust command should execute via cargo metadata")
 		vim.v.shell_error = 0
-		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
-			return { "metadata" }
-		end
-		if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
-			return {
-				"Installed Commands:",
-				"    metadata    Output metadata about local package",
-			}
-		end
-		return original_systemlist(cmd)
-	end
-
-    reset_job_results()
-    init.run_build_command("metadata", "float")
-    assert(#job_results > 0, "Detected rust command should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("cargo metadata"), "Detected rust command should execute via cargo metadata")
-
-	vim.fn.expand = original_expand
-	vim.fn.systemlist = original_systemlist
+		reset_job_results()
+	end)
 	detect_backend_tool_commands.cargo = original_detect_commands
-	vim.v.shell_error = 0
-	reset_job_results()
 
     print("✓ RunBuild with detected rust command test passed")
 end

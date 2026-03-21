@@ -51,6 +51,40 @@ local function command_to_string(cmd)
 	return cmd or ""
 end
 
+---@param path string
+---@return fun(expr: string): string
+local function make_expand_override(path)
+	local original_expand = vim.fn.expand
+	return function(expr)
+		if expr == "%:p" then
+			return path
+		end
+		return original_expand(expr)
+	end
+end
+
+---@param overrides { tbl: table, key: string, value: any }[]
+---@param fn fun()
+---@return nil
+local function with_overrides(overrides, fn)
+	local originals = {}
+	for index, override in ipairs(overrides) do
+		originals[index] = override.tbl[override.key]
+		override.tbl[override.key] = override.value
+	end
+
+	local ok, err = xpcall(fn, debug.traceback)
+
+	for index = #overrides, 1, -1 do
+		local override = overrides[index]
+		override.tbl[override.key] = originals[index]
+	end
+
+	if not ok then
+		error(err)
+	end
+end
+
 ---@return nil
 local function reset_job_results()
 	for index = #job_results, 1, -1 do
@@ -141,6 +175,8 @@ M.quickfix_results = quickfix_results
 M.notify_results = notify_results
 M.mock_jobs = mock_jobs
 M.command_to_string = command_to_string
+M.make_expand_override = make_expand_override
+M.with_overrides = with_overrides
 M.reset_job_results = reset_job_results
 M.reset_quickfix_results = reset_quickfix_results
 M.reset_notify_results = reset_notify_results
