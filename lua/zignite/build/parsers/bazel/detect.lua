@@ -1,11 +1,58 @@
 local common = require("zignite.build.parsers.common")
 local bazel_common = require("zignite.build.parsers.bazel.common")
 local detect_backend = require("zignite.build.detect.backend")
-local parser = require("zignite.build.parsers.bazel.parser")
 local systems = require("zignite.build.systems")
 
 ---@type table
 local M = {}
+
+---@param line string
+---@return string[]
+local function split_tab_fields(line)
+	---@type string[]
+	local fields = {}
+	local start_idx = 1
+	while true do
+		local tab_idx = line:find("\t", start_idx, true)
+		if not tab_idx then
+			fields[#fields + 1] = line:sub(start_idx)
+			break
+		end
+		fields[#fields + 1] = line:sub(start_idx, tab_idx - 1)
+		start_idx = tab_idx + 1
+	end
+	return fields
+end
+
+---@param lines string[]
+---@return ZigniteBazelParsedTarget[]
+local function parse_backend_target_lines(lines)
+	---@type ZigniteBazelParsedTarget[]
+	local targets = {}
+	for _, raw_line in ipairs(lines or {}) do
+		local line = tostring(raw_line or "")
+		if line ~= "" then
+			local fields = split_tab_fields(line)
+			if fields[1] == "TARGET" and type(fields[2]) == "string" and type(fields[3]) == "string" then
+				---@type string[]
+				local source_entries = {}
+				for index = 6, #fields do
+					if fields[index] ~= "" then
+						source_entries[#source_entries + 1] = fields[index]
+					end
+				end
+				targets[#targets + 1] = {
+					rule_name = fields[2],
+					target_name = fields[3],
+					source_entries = source_entries,
+					supports_run = fields[4] == "1",
+					supports_test = fields[5] == "1",
+				}
+			end
+		end
+	end
+	return targets
+end
 
 ---@param filepath string
 ---@return table<string, string>
@@ -30,10 +77,6 @@ function M.detect_bazel_project_commands(filepath)
 		["bazel-test-all"] = "bazel test //...",
 	}
 
-	if type(vim.fn.readfile) ~= "function" then
-		return commands
-	end
-
 	local build_files = bazel_common.find_build_files_for_path(filepath, root)
 	if #build_files == 0 then
 		return commands
@@ -48,11 +91,9 @@ function M.detect_bazel_project_commands(filepath)
 			common.make_relative_to_root(build_info.package_dir, filepath)
 		)
 		local zig_lines = detect_backend.parse_project_lines_once("bazel", build_info.build_file)
-		local parsed_targets
+		local parsed_targets = {}
 		if type(zig_lines) == "table" and #zig_lines > 0 then
-			parsed_targets = parser.parse_backend_target_lines(zig_lines)
-		else
-			parsed_targets = parser.get_parsed_build_targets(build_info)
+			parsed_targets = parse_backend_target_lines(zig_lines)
 		end
 		for _, target in ipairs(parsed_targets) do
 			local label = bazel_common.bazel_label(build_info.package_path, target.target_name)
