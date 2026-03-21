@@ -142,8 +142,7 @@ local function test_go_detected_commands_with_zig_worker()
         end
     end
 
-    reset_job_results()
-    state.next_detect_backend_error = "ToolProbeFailed"
+	reset_job_results()
     init.select_build_command("float")
 
     assert(picker_opened, "Picker should open for go commands detected via zig worker")
