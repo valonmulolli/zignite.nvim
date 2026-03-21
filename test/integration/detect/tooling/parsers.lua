@@ -591,6 +591,67 @@ local function test_cargo_targets_use_zig_project_parser()
     print("✓ Zig Cargo parser test passed")
 end
 
+-- Test the Lua Cargo fallback only handles obvious src/bin targets when Zig is unavailable.
+local function test_cargo_targets_use_basic_lua_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+    local cargo_parser = require("zignite.build.parsers.cargo")
+    local original_executable = vim.fn.executable
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/rustfallback/Cargo.toml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/rustfallback/Cargo.toml" then
+            error("Lua Cargo fallback should not parse Cargo.toml contents")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands, primary_bin = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/bin/tool.rs")
+    assert(
+        commands["cargo-build-tool"] == "cargo build --bin tool",
+        "Lua Cargo fallback should keep src/bin builds usable"
+    )
+    assert(
+        commands["cargo-run-tool"] == "cargo run --bin tool",
+        "Lua Cargo fallback should keep src/bin runs usable"
+    )
+    assert(primary_bin == "tool", "Lua Cargo fallback should preserve the obvious src/bin target")
+
+    local main_commands, main_primary = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/main.rs")
+    assert(vim.tbl_isempty(main_commands), "Lua Cargo fallback should not infer package-name bins from Cargo.toml")
+    assert(main_primary == nil, "Lua Cargo fallback should not set a primary bin for src/main.rs without Zig")
+
+    vim.fn.executable = original_executable
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ Lua Cargo fallback parser test passed")
+end
+
 -- Test pyproject tool parsing can use the Zig project parser path.
 local function test_pyproject_tools_use_zig_project_parser()
     local package_utils = require("zignite.utils.package")
@@ -805,6 +866,7 @@ test_meson_targets_use_basic_lua_fallback()
 test_maven_project_uses_zig_project_parser()
 test_gradle_project_uses_zig_project_parser()
 test_cargo_targets_use_zig_project_parser()
+test_cargo_targets_use_basic_lua_fallback()
 test_pyproject_tools_use_zig_project_parser()
 test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
