@@ -31,7 +31,11 @@ Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performa
 ## Requirements
 
 - Neovim >= 0.10
-- Zig (latest version recommended)
+- Zig `0.15.2`
+
+The backend and CI are currently tested against Zig `0.15.2`. Newer Zig
+versions may work, but `0.15.2` is the version we use for local development,
+CI, and benchmark numbers in this repo.
 
 
 ## Installation
@@ -445,6 +449,16 @@ zig build bench-fast     # defaults to 1000 iterations
 zig build bench-ci       # defaults to 3000 iterations + hard-fail guardrail
 zig build bench -- 10000
 ```
+
+How `zig build bench-fast` works:
+- It first builds the `zignite` Zig backend in `Debug`.
+- Then it runs `lua test/benchmark.lua` with the built backend wired in through
+  environment variables from `zig/build.zig`.
+- `bench-fast` is the quick local pass: it uses `1000` iterations so you can
+  sanity-check performance without waiting for the full `bench` run.
+- `bench` uses `3000` iterations for a steadier baseline.
+- `bench-ci` also uses `3000` iterations, but enables a hard-fail guardrail so
+  CI can fail if backend quickfix speed regresses too far.
 
 The benchmark prints:
 - Non-blocking cache-first build-list latency and avg/run.
