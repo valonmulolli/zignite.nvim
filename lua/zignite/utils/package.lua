@@ -4,75 +4,121 @@ local project = require("zignite.utils.project")
 ---@type table
 local M = {}
 
----@param root string
+local PYPROJECT_TOOL_PATTERNS = {
+	uv = "%[tool%.uv%]",
+	poetry = "%[tool%.poetry%]",
+	pdm = "%[tool%.pdm%]",
+	hatch = "%[tool%.hatch",
+}
+
 ---@return table<string, boolean>
-local function detect_pyproject_tools_root(root)
-	---@type table<string, boolean>
-	local tools = {}
-	if type(root) ~= "string" or root == "" then
+local function empty_tool_set()
+	return {}
+end
+
+---@param payload string|nil
+---@return table<string, boolean>
+local function detect_pyproject_tools_from_payload(payload)
+	local tools = empty_tool_set()
+	if type(payload) ~= "string" then
 		return tools
 	end
-
-	local pyproject_path = path_utils.join_path(root, "pyproject.toml")
-	local detect_backend = require("zignite.build.detect.backend")
-	local lines = detect_backend.parse_project_lines_once("pyproject", pyproject_path)
-	if type(lines) == "table" and #lines > 0 then
-		for _, raw_line in ipairs(lines) do
-			local line = tostring(raw_line or "")
-			local kind, name = line:match("^([^\t]+)\t([^\t]+)$")
-			if kind == "TOOL" and type(name) == "string" and name ~= "" then
-				tools[name] = true
-			end
+	for tool_name, pattern in pairs(PYPROJECT_TOOL_PATTERNS) do
+		if payload:find(pattern, 1, false) then
+			tools[tool_name] = true
 		end
-		return tools
 	end
+	return tools
+end
 
-	local pyproject_payload = path_utils.read_text_file(pyproject_path)
-	if type(pyproject_payload) ~= "string" then
+---@param lines string[]|nil
+---@return table<string, boolean>
+local function detect_pyproject_tools_from_lines(lines)
+	local tools = empty_tool_set()
+	if type(lines) ~= "table" or #lines == 0 then
 		return tools
 	end
-	if pyproject_payload:find("%[tool%.uv%]", 1, false) then
-		tools.uv = true
-	end
-	if pyproject_payload:find("%[tool%.poetry%]", 1, false) then
-		tools.poetry = true
-	end
-	if pyproject_payload:find("%[tool%.pdm%]", 1, false) then
-		tools.pdm = true
-	end
-	if pyproject_payload:find("%[tool%.hatch", 1, false) then
-		tools.hatch = true
+	for _, raw_line in ipairs(lines) do
+		local line = tostring(raw_line or "")
+		local kind, name = line:match("^([^\t]+)\t([^\t]+)$")
+		if kind == "TOOL" and type(name) == "string" and name ~= "" then
+			tools[name] = true
+		end
 	end
 	return tools
 end
 
 ---@param root string
+---@return string
+local function pyproject_path(root)
+	return path_utils.join_path(root, "pyproject.toml")
+end
+
+---@param root string
+---@return string|nil
+local function read_pyproject_payload(root)
+	return path_utils.read_text_file(pyproject_path(root))
+end
+
+---@param root string
 ---@return table<string, boolean>
-local function detect_pyproject_tools_root_fast(root)
-	---@type table<string, boolean>
-	local tools = {}
+local function detect_pyproject_tools_root_with_backend(root)
+	local detect_backend = require("zignite.build.detect.backend")
+	return detect_pyproject_tools_from_lines(detect_backend.parse_project_lines_once("pyproject", pyproject_path(root)))
+end
+
+---@param root string
+---@param use_backend boolean
+---@return table<string, boolean>
+local function detect_pyproject_tools_root(root, use_backend)
 	if type(root) ~= "string" or root == "" then
-		return tools
+		return empty_tool_set()
 	end
 
-	local pyproject_path = path_utils.join_path(root, "pyproject.toml")
-	local pyproject_payload = path_utils.read_text_file(pyproject_path)
-	if type(pyproject_payload) ~= "string" then
-		return tools
+	if use_backend then
+		local tools = detect_pyproject_tools_root_with_backend(root)
+		if next(tools) ~= nil then
+			return tools
+		end
 	end
-	if pyproject_payload:find("%[tool%.uv%]", 1, false) then
-		tools.uv = true
+
+	return detect_pyproject_tools_from_payload(read_pyproject_payload(root))
+end
+
+---@param filepath string
+---@param project_config table|nil
+---@return string
+local function resolve_project_root(filepath, project_config)
+	local root = project.get_project_root(filepath, project_config)
+	if not root or root == "" then
+		return vim.fn.fnamemodify(filepath, ":h")
 	end
-	if pyproject_payload:find("%[tool%.poetry%]", 1, false) then
-		tools.poetry = true
+	return root
+end
+
+---@param root string|nil
+---@param use_backend boolean
+---@return boolean
+local function is_uv_project_root_with(root, use_backend)
+	if type(root) ~= "string" or root == "" then
+		return false
 	end
-	if pyproject_payload:find("%[tool%.pdm%]", 1, false) then
-		tools.pdm = true
+	if path_utils.file_exists(path_utils.join_path(root, "uv.lock")) then
+		return true
 	end
-	if pyproject_payload:find("%[tool%.hatch", 1, false) then
-		tools.hatch = true
+	return detect_pyproject_tools_root(root, use_backend).uv == true
+end
+
+---@param filepath string
+---@param project_config table|nil
+---@param use_backend boolean
+---@return string
+local function detect_python_project_tool_with(filepath, project_config, use_backend)
+	local root = resolve_project_root(filepath, project_config)
+	if is_uv_project_root_with(root, use_backend) then
+		return "uv"
 	end
-	return tools
+	return "python"
 end
 
 ---@param package_manager string
@@ -157,63 +203,34 @@ end
 ---@param project_config table|nil
 ---@return string
 function M.detect_node_package_manager(filepath, project_config)
-	local root = project.get_project_root(filepath, project_config)
-	if not root or root == "" then
-		root = vim.fn.fnamemodify(filepath, ":h")
-	end
+	local root = resolve_project_root(filepath, project_config)
 	return M.detect_node_package_manager_root(root)
 end
 
 ---@param root string|nil
 ---@return boolean
 function M.is_uv_project_root(root)
-	if type(root) ~= "string" or root == "" then
-		return false
-	end
-	if path_utils.file_exists(path_utils.join_path(root, "uv.lock")) then
-		return true
-	end
-	return detect_pyproject_tools_root(root).uv == true
+	return is_uv_project_root_with(root, true)
 end
 
 ---@param root string|nil
 ---@return boolean
 function M.is_uv_project_root_fast(root)
-	if type(root) ~= "string" or root == "" then
-		return false
-	end
-	if path_utils.file_exists(path_utils.join_path(root, "uv.lock")) then
-		return true
-	end
-	return detect_pyproject_tools_root_fast(root).uv == true
+	return is_uv_project_root_with(root, false)
 end
 
 ---@param filepath string
 ---@param project_config table|nil
 ---@return string
 function M.detect_python_project_tool(filepath, project_config)
-	local root = project.get_project_root(filepath, project_config)
-	if not root or root == "" then
-		root = vim.fn.fnamemodify(filepath, ":h")
-	end
-	if M.is_uv_project_root(root) then
-		return "uv"
-	end
-	return "python"
+	return detect_python_project_tool_with(filepath, project_config, true)
 end
 
 ---@param filepath string
 ---@param project_config table|nil
 ---@return string
 function M.detect_python_project_tool_fast(filepath, project_config)
-	local root = project.get_project_root(filepath, project_config)
-	if not root or root == "" then
-		root = vim.fn.fnamemodify(filepath, ":h")
-	end
-	if M.is_uv_project_root_fast(root) then
-		return "uv"
-	end
-	return "python"
+	return detect_python_project_tool_with(filepath, project_config, false)
 end
 
 return M
