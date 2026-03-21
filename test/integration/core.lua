@@ -478,8 +478,8 @@ local function test_uv_python_build_defaults()
     print("✓ uv Python build defaults test passed")
 end
 
--- Test Python uv detection can come from the Zig pyproject parser path.
-local function test_uv_python_runner_uses_zig_pyproject_parser()
+-- Test Python RunFile uses the fast local pyproject scan and still selects uv.
+local function test_uv_python_runner_uses_fast_pyproject_scan()
     config.setup({ mode = "float" })
 
     vim.bo.filetype = "python"
@@ -488,6 +488,7 @@ local function test_uv_python_runner_uses_zig_pyproject_parser()
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_readfile = vim.fn.readfile
+    local readfile_calls = 0
 
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/uvzig/main.py" end
@@ -520,7 +521,13 @@ local function test_uv_python_runner_uses_zig_pyproject_parser()
     end
     vim.fn.readfile = function(path, _, _)
         if path == "/tmp/uvzig/pyproject.toml" then
-            error("Plain Lua pyproject scan should not run when Zig parser succeeds")
+            readfile_calls = readfile_calls + 1
+            return {
+                "[project]",
+                'name = "uvzig"',
+                "",
+                "[tool.uv]",
+            }
         end
         if original_readfile then
             return original_readfile(path)
@@ -531,9 +538,10 @@ local function test_uv_python_runner_uses_zig_pyproject_parser()
     reset_job_results()
     init.run_code(0, "float")
 
-    assert(#job_results > 0, "uv-managed Python RunFile should start a job when Zig pyproject parser succeeds")
+    assert(#job_results > 0, "uv-managed Python RunFile should start a job when local pyproject scan succeeds")
     local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("uv"), "Zig pyproject parser should drive uv Python runner selection")
+    assert(command:match("uv"), "Fast pyproject scan should drive uv Python runner selection")
+    assert(readfile_calls == 1, "RunFile should use the local pyproject scan once for Python uv detection")
 
     vim.fn.expand = original_expand
     vim.fn.filereadable = original_filereadable
@@ -543,7 +551,7 @@ local function test_uv_python_runner_uses_zig_pyproject_parser()
     vim.v.shell_error = 0
     reset_job_results()
 
-    print("✓ uv Python Zig pyproject parser test passed")
+    print("✓ uv Python fast pyproject scan test passed")
 end
 
 -- Test build command detection maps related filetypes (e.g. typescriptreact -> typescript).
@@ -574,7 +582,7 @@ test_interpreted_runner_uses_argv_mode()
 test_visual_run_code_preserves_extension()
 test_timeout_uses_zig_wrapper()
 test_uv_python_runner_uses_uv()
-test_uv_python_runner_uses_zig_pyproject_parser()
+test_uv_python_runner_uses_fast_pyproject_scan()
 test_get_command_avoids_eager_project_resolution_for_filetype_runner()
 test_language_detected_from_extension()
 test_language_detected_from_shebang()

@@ -46,6 +46,35 @@ local function detect_pyproject_tools_root(root)
 	return tools
 end
 
+---@param root string
+---@return table<string, boolean>
+local function detect_pyproject_tools_root_fast(root)
+	---@type table<string, boolean>
+	local tools = {}
+	if type(root) ~= "string" or root == "" then
+		return tools
+	end
+
+	local pyproject_path = path_utils.join_path(root, "pyproject.toml")
+	local pyproject_payload = path_utils.read_text_file(pyproject_path)
+	if type(pyproject_payload) ~= "string" then
+		return tools
+	end
+	if pyproject_payload:find("%[tool%.uv%]", 1, false) then
+		tools.uv = true
+	end
+	if pyproject_payload:find("%[tool%.poetry%]", 1, false) then
+		tools.poetry = true
+	end
+	if pyproject_payload:find("%[tool%.pdm%]", 1, false) then
+		tools.pdm = true
+	end
+	if pyproject_payload:find("%[tool%.hatch", 1, false) then
+		tools.hatch = true
+	end
+	return tools
+end
+
 ---@param package_manager string
 ---@param script_name string
 ---@return string
@@ -147,6 +176,18 @@ function M.is_uv_project_root(root)
 	return detect_pyproject_tools_root(root).uv == true
 end
 
+---@param root string|nil
+---@return boolean
+function M.is_uv_project_root_fast(root)
+	if type(root) ~= "string" or root == "" then
+		return false
+	end
+	if path_utils.file_exists(path_utils.join_path(root, "uv.lock")) then
+		return true
+	end
+	return detect_pyproject_tools_root_fast(root).uv == true
+end
+
 ---@param filepath string
 ---@param project_config table|nil
 ---@return string
@@ -156,6 +197,20 @@ function M.detect_python_project_tool(filepath, project_config)
 		root = vim.fn.fnamemodify(filepath, ":h")
 	end
 	if M.is_uv_project_root(root) then
+		return "uv"
+	end
+	return "python"
+end
+
+---@param filepath string
+---@param project_config table|nil
+---@return string
+function M.detect_python_project_tool_fast(filepath, project_config)
+	local root = project.get_project_root(filepath, project_config)
+	if not root or root == "" then
+		root = vim.fn.fnamemodify(filepath, ":h")
+	end
+	if M.is_uv_project_root_fast(root) then
 		return "uv"
 	end
 	return "python"
