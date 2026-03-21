@@ -1,8 +1,35 @@
 -- luacheck: globals project_root config init ui state job_results quickfix_results notify_results mock_jobs
 -- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
+-- luacheck: globals make_expand_override with_overrides
 -- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
+
+---@param filetype string
+---@param filepath string
+---@param overrides { tbl: table, key: string, value: any }[]|nil
+---@param fn fun()
+local function with_file_context(filetype, filepath, overrides, fn)
+    local specs = {
+        { tbl = vim.bo, key = "filetype", value = filetype },
+        { tbl = vim.fn, key = "expand", value = make_expand_override(filepath) },
+    }
+    for _, override in ipairs(overrides or {}) do
+        specs[#specs + 1] = override
+    end
+    with_overrides(specs, fn)
+end
+
+---@param started_msg string
+---@param pattern string
+---@param match_msg string
+---@return string
+local function assert_last_job_command_matches(started_msg, pattern, match_msg)
+    assert(#job_results > 0, started_msg)
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match(pattern), match_msg)
+    return command
+end
 
 -- Test run_build_command prompts for zig fetch URL/path and executes with provided argument.
 local function test_run_build_command_with_detected_zig_fetch_prompt()
@@ -10,45 +37,47 @@ local function test_run_build_command_with_detected_zig_fetch_prompt()
         build_commands = {},
     })
 
-    vim.bo.filetype = "zig"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    local original_input = vim.fn.input
     local prompts = {}
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/zigdetect/main.zig" end
-        return original_expand(expr)
-    end
-    vim.fn.systemlist = function()
+    with_file_context("zig", "/tmp/zigdetect/main.zig", {
+        {
+            tbl = vim.fn,
+            key = "systemlist",
+            value = function()
+                vim.v.shell_error = 0
+                return {
+                    "Usage: zig [command] [options]",
+                    "",
+                    "Commands:",
+                    "  fetch            Copy a package into global cache and print its hash",
+                    "",
+                    "General Options:",
+                }
+            end,
+        },
+        {
+            tbl = vim.fn,
+            key = "input",
+            value = function(prompt, _default)
+                prompts[#prompts + 1] = prompt
+                return "https://example.com/pkg.tar.gz"
+            end,
+        },
+    }, function()
+        reset_job_results()
+        init.run_build_command("fetch", "float")
+        local command = assert_last_job_command_matches(
+            "Detected zig fetch command should start a job after prompting for URL/path",
+            "zig fetch",
+            "Detected zig fetch should execute via zig fetch"
+        )
+        assert(
+            command:match("https://example%.com/pkg%.tar%.gz"),
+            "zig fetch should include provided URL/path argument"
+        )
+        assert(#prompts == 1 and prompts[1]:match("zig fetch"), "zig fetch should prompt for URL/path exactly once")
         vim.v.shell_error = 0
-        return {
-            "Usage: zig [command] [options]",
-            "",
-            "Commands:",
-            "  fetch            Copy a package into global cache and print its hash",
-            "",
-            "General Options:",
-        }
-    end
-    vim.fn.input = function(prompt, _default)
-        prompts[#prompts + 1] = prompt
-        return "https://example.com/pkg.tar.gz"
-    end
-
-    reset_job_results()
-    init.run_build_command("fetch", "float")
-    assert(#job_results > 0, "Detected zig fetch command should start a job after prompting for URL/path")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("zig fetch"), "Detected zig fetch should execute via zig fetch")
-    assert(command:match("https://example%.com/pkg%.tar%.gz"), "zig fetch should include provided URL/path argument")
-    assert(#prompts == 1 and prompts[1]:match("zig fetch"), "zig fetch should prompt for URL/path exactly once")
-
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.fn.input = original_input
-    vim.v.shell_error = 0
-    reset_job_results()
+        reset_job_results()
+    end)
 
     print("✓ RunBuild with detected zig fetch prompt test passed")
 end
@@ -59,58 +88,54 @@ local function test_run_build_command_with_zig_fetch_github_url()
         build_commands = {},
     })
 
-    vim.bo.filetype = "zig"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    local original_input = vim.fn.input
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/zigfetch/main.zig" end
-        return original_expand(expr)
-    end
-    vim.fn.systemlist = function()
+    with_file_context("zig", "/tmp/zigfetch/main.zig", {
+        {
+            tbl = vim.fn,
+            key = "systemlist",
+            value = function()
+                vim.v.shell_error = 0
+                return {
+                    "Usage: zig [command] [options]",
+                    "",
+                    "Commands:",
+                    "  fetch            Copy a package into global cache and print its hash",
+                    "",
+                    "General Options:",
+                }
+            end,
+        },
+        {
+            tbl = vim.fn,
+            key = "input",
+            value = function()
+                return "https://github.com/raylib-zig/raylib-zig"
+            end,
+        },
+    }, function()
+        reset_job_results()
+        local runtime = require("zignite.runtime")
+        init.run_build_command("fetch", "float")
+        assert_last_job_command_matches(
+            "GitHub zig fetch should start a job",
+            "zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig",
+            "Plain GitHub URL should expand to --save git+https://github.com/<owner>/<repo>"
+        )
+        local argv = runtime.command_to_argv(
+            "zig fetch --save git+https://github.com/raylib-zig/raylib-zig",
+            "/tmp/zigfetch/main.zig"
+        )
+        assert(
+            type(argv) == "table" and #argv >= 4,
+            "zig fetch GitHub URL should tokenize into separate argv items"
+        )
+        assert(argv[3] == "--save", "zig fetch should keep --save as a separate argv token")
+        assert(
+            argv[4] == "git+https://github.com/raylib-zig/raylib-zig",
+            "zig fetch should keep the git URL as a separate argv token"
+        )
         vim.v.shell_error = 0
-        return {
-            "Usage: zig [command] [options]",
-            "",
-            "Commands:",
-            "  fetch            Copy a package into global cache and print its hash",
-            "",
-            "General Options:",
-        }
-    end
-    vim.fn.input = function()
-        return "https://github.com/raylib-zig/raylib-zig"
-    end
-
-    reset_job_results()
-    init.run_build_command("fetch", "float")
-    assert(#job_results > 0, "GitHub zig fetch should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(
-        command:match("zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig"),
-        "Plain GitHub URL should expand to --save git+https://github.com/<owner>/<repo>"
-    )
-    local runtime = require("zignite.runtime")
-    local argv = runtime.command_to_argv(
-        "zig fetch --save git+https://github.com/raylib-zig/raylib-zig",
-        "/tmp/zigfetch/main.zig"
-    )
-    assert(
-        type(argv) == "table" and #argv >= 4,
-        "zig fetch GitHub URL should tokenize into separate argv items"
-    )
-    assert(argv[3] == "--save", "zig fetch should keep --save as a separate argv token")
-    assert(
-        argv[4] == "git+https://github.com/raylib-zig/raylib-zig",
-        "zig fetch should keep the git URL as a separate argv token"
-    )
-
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.fn.input = original_input
-    vim.v.shell_error = 0
-    reset_job_results()
+        reset_job_results()
+    end)
 
     print("✓ Zig fetch GitHub URL expansion test passed")
 end
@@ -121,58 +146,54 @@ local function test_run_build_command_with_zig_fetch_github_ref()
         build_commands = {},
     })
 
-    vim.bo.filetype = "zig"
-    local original_expand = vim.fn.expand
-    local original_systemlist = vim.fn.systemlist
-    local original_input = vim.fn.input
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/zigfetch-ref/main.zig" end
-        return original_expand(expr)
-    end
-    vim.fn.systemlist = function()
+    with_file_context("zig", "/tmp/zigfetch-ref/main.zig", {
+        {
+            tbl = vim.fn,
+            key = "systemlist",
+            value = function()
+                vim.v.shell_error = 0
+                return {
+                    "Usage: zig [command] [options]",
+                    "",
+                    "Commands:",
+                    "  fetch            Copy a package into global cache and print its hash",
+                    "",
+                    "General Options:",
+                }
+            end,
+        },
+        {
+            tbl = vim.fn,
+            key = "input",
+            value = function()
+                return "https://github.com/raylib-zig/raylib-zig/tree/devel"
+            end,
+        },
+    }, function()
+        reset_job_results()
+        local runtime = require("zignite.runtime")
+        init.run_build_command("fetch", "float")
+        assert_last_job_command_matches(
+            "GitHub ref zig fetch should start a job",
+            "zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig#devel",
+            "GitHub tree URL should expand to a saved git dependency with #ref"
+        )
+        local argv = runtime.command_to_argv(
+            "zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel",
+            "/tmp/zigfetch-ref/main.zig"
+        )
+        assert(
+            type(argv) == "table" and #argv >= 4,
+            "zig fetch GitHub ref should tokenize into separate argv items"
+        )
+        assert(argv[3] == "--save", "zig fetch ref should keep --save as a separate argv token")
+        assert(
+            argv[4] == "git+https://github.com/raylib-zig/raylib-zig#devel",
+            "zig fetch ref should keep the git URL and ref as a separate argv token"
+        )
         vim.v.shell_error = 0
-        return {
-            "Usage: zig [command] [options]",
-            "",
-            "Commands:",
-            "  fetch            Copy a package into global cache and print its hash",
-            "",
-            "General Options:",
-        }
-    end
-    vim.fn.input = function()
-        return "https://github.com/raylib-zig/raylib-zig/tree/devel"
-    end
-
-    reset_job_results()
-    init.run_build_command("fetch", "float")
-    assert(#job_results > 0, "GitHub ref zig fetch should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(
-        command:match("zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig#devel"),
-        "GitHub tree URL should expand to a saved git dependency with #ref"
-    )
-    local runtime = require("zignite.runtime")
-    local argv = runtime.command_to_argv(
-        "zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel",
-        "/tmp/zigfetch-ref/main.zig"
-    )
-    assert(
-        type(argv) == "table" and #argv >= 4,
-        "zig fetch GitHub ref should tokenize into separate argv items"
-    )
-    assert(argv[3] == "--save", "zig fetch ref should keep --save as a separate argv token")
-    assert(
-        argv[4] == "git+https://github.com/raylib-zig/raylib-zig#devel",
-        "zig fetch ref should keep the git URL and ref as a separate argv token"
-    )
-
-    vim.fn.expand = original_expand
-    vim.fn.systemlist = original_systemlist
-    vim.fn.input = original_input
-    vim.v.shell_error = 0
-    reset_job_results()
+        reset_job_results()
+    end)
 
     print("✓ Zig fetch GitHub ref expansion test passed")
 end
@@ -187,21 +208,23 @@ local function test_show_output_respects_mode()
         },
     })
 
-    local original_cmd = vim.cmd
     local issued_cmds = {}
-    vim.cmd = function(cmd)
-        table.insert(issued_cmds, cmd)
-    end
-    reset_notify_results()
-
-    ui.show_output("Error: split mode output", "split")
-
-    assert(#issued_cmds > 0, "show_output(split) should open a split window")
-    assert(issued_cmds[1] == "topleft split", "show_output(split) should honor top split position")
-    assert(#notify_results == 0, "show_output(split) should not fallback to notify")
-
-    vim.cmd = original_cmd
-    reset_notify_results()
+    with_overrides({
+        {
+            tbl = vim,
+            key = "cmd",
+            value = function(cmd)
+                table.insert(issued_cmds, cmd)
+            end,
+        },
+    }, function()
+        reset_notify_results()
+        ui.show_output("Error: split mode output", "split")
+        assert(#issued_cmds > 0, "show_output(split) should open a split window")
+        assert(issued_cmds[1] == "topleft split", "show_output(split) should honor top split position")
+        assert(#notify_results == 0, "show_output(split) should not fallback to notify")
+        reset_notify_results()
+    end)
 
     print("✓ show_output mode behavior test passed")
 end
@@ -217,27 +240,21 @@ local function test_vsplit_respects_left_position()
         },
     })
 
-    vim.bo.filetype = "python"
-    local original_expand = vim.fn.expand
-    local original_cmd = vim.cmd
     local issued_cmds = {}
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/vsplit/main.py" end
-        return original_expand(expr)
-    end
-    vim.cmd = function(cmd)
-        table.insert(issued_cmds, cmd)
-    end
-
-    init.run_code(0, "vsplit")
-
-    assert(#issued_cmds > 0, "vsplit run should issue split command")
-    assert(issued_cmds[1] == "topleft vsplit", "vsplit should honor term.position=left")
-
-    vim.fn.expand = original_expand
-    vim.cmd = original_cmd
-    reset_job_results()
+    with_file_context("python", "/tmp/vsplit/main.py", {
+        {
+            tbl = vim,
+            key = "cmd",
+            value = function(cmd)
+                table.insert(issued_cmds, cmd)
+            end,
+        },
+    }, function()
+        init.run_code(0, "vsplit")
+        assert(#issued_cmds > 0, "vsplit run should issue split command")
+        assert(issued_cmds[1] == "topleft vsplit", "vsplit should honor term.position=left")
+        reset_job_results()
+    end)
 
     print("✓ vsplit left-position test passed")
 end
@@ -254,26 +271,20 @@ local function test_vsplit_respects_configured_width()
         },
     })
 
-    vim.bo.filetype = "python"
-    local original_expand = vim.fn.expand
-    local original_set_width = vim.api.nvim_win_set_width
     local captured_width = nil
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/vsplit-width/main.py" end
-        return original_expand(expr)
-    end
-    vim.api.nvim_win_set_width = function(_, width)
-        captured_width = width
-    end
-
-    init.run_code(0, "vsplit")
-
-    assert(captured_width == 33, "vsplit should apply term.size as window width")
-
-    vim.fn.expand = original_expand
-    vim.api.nvim_win_set_width = original_set_width
-    reset_job_results()
+    with_file_context("python", "/tmp/vsplit-width/main.py", {
+        {
+            tbl = vim.api,
+            key = "nvim_win_set_width",
+            value = function(_, width)
+                captured_width = width
+            end,
+        },
+    }, function()
+        init.run_code(0, "vsplit")
+        assert(captured_width == 33, "vsplit should apply term.size as window width")
+        reset_job_results()
+    end)
 
     print("✓ vsplit width test passed")
 end

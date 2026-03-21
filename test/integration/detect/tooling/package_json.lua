@@ -1,5 +1,6 @@
 -- luacheck: globals project_root config init ui state job_results quickfix_results notify_results mock_jobs
 -- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
+-- luacheck: globals make_expand_override with_overrides
 -- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
@@ -11,56 +12,53 @@ local function test_javascript_package_scripts_detection()
         build_commands = {},
     })
 
-    vim.bo.filetype = "javascript"
-    local original_expand = vim.fn.expand
-    local original_filereadable = vim.fn.filereadable
-    local original_readfile = vim.fn.readfile
     local original_vim_json = vim.json
-
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/jsapp/src/main.js" end
-        return original_expand(expr)
-    end
-    vim.fn.filereadable = function(path)
-        if path == "/tmp/jsapp/package.json" then
-            return 1
-        end
-        if original_filereadable then
-            return original_filereadable(path)
-        end
-        return 0
-    end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/jsapp/package.json" then
-            return { '{"scripts":{"dev":"vite","lint":"eslint ."}}' }
-        end
-        if original_readfile then
-            return original_readfile(path)
-        end
-        return {}
-    end
-    vim.json = {
-        decode = function(_)
-            return {
-                scripts = {
-                    dev = "vite",
-                    lint = "eslint .",
-                },
-            }
-        end,
-    }
-
-    reset_job_results()
-    init.run_build_command("lint", "float")
-    assert(#job_results > 0, "Detected package script should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("npm run lint"), "Detected script should execute via npm run lint")
-
-    vim.fn.expand = original_expand
-    vim.fn.filereadable = original_filereadable
-    vim.fn.readfile = original_readfile
-    vim.json = original_vim_json
-    reset_job_results()
+	with_overrides({
+		{ tbl = vim.bo, key = "filetype", value = "javascript" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/jsapp/src/main.js") },
+		{
+			tbl = vim.fn,
+			key = "filereadable",
+			value = function(path)
+				if path == "/tmp/jsapp/package.json" then
+					return 1
+				end
+				return 0
+			end,
+		},
+		{
+			tbl = vim.fn,
+			key = "readfile",
+			value = function(path, _, _)
+				if path == "/tmp/jsapp/package.json" then
+					return { '{"scripts":{"dev":"vite","lint":"eslint ."}}' }
+				end
+				return {}
+			end,
+		},
+		{
+			tbl = vim,
+			key = "json",
+			value = {
+				decode = function(_)
+					return {
+						scripts = {
+							dev = "vite",
+							lint = "eslint .",
+						},
+					}
+				end,
+			},
+		},
+	}, function()
+		reset_job_results()
+		init.run_build_command("lint", "float")
+		assert(#job_results > 0, "Detected package script should start a job")
+		local command = command_to_string(job_results[#job_results].cmd)
+		assert(command:match("npm run lint"), "Detected script should execute via npm run lint")
+		reset_job_results()
+	end)
+	vim.json = original_vim_json
 
 	print("✓ JavaScript package script detection test passed")
 end
