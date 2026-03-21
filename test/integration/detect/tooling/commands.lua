@@ -134,17 +134,30 @@ local function test_rust_detected_commands_skip_cargo_noise()
     })
 
     local detect_module = require("zignite.build.detect")
+    local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
 
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
+        if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
             return {
-                "build",
-                "check",
-                "rm",
-                "verify-project",
-                "test",
+                "Installed Commands:",
+                "    b                    alias: build",
+                "    build                Compile a local package and all of its dependencies",
+                "    check                Check a local package and all of its dependencies for errors",
+                "    git-checkout         REMOVED: This command has been removed",
+                "    read-manifest        DEPRECATED: Print a JSON representation of a Cargo.toml manifest",
+                "    rm                   alias: remove",
+                "    test                 Execute all unit and integration tests and build examples of a local package",
             }
         end
         return original_systemlist(cmd)
@@ -157,6 +170,7 @@ local function test_rust_detected_commands_skip_cargo_noise()
     assert(commands.rm == nil, "Cargo aliases should not be surfaced")
     assert(commands["verify-project"] == nil, "Deprecated cargo commands should not be surfaced")
 
+    vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.v.shell_error = 0
 

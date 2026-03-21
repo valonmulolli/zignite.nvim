@@ -117,13 +117,15 @@ local function normalize_detected_names(lines)
 	return normalized
 end
 
----@param name string
+---@param line string
+---@param token string
 ---@return boolean
-local function is_cargo_noise_name(name)
-	return name == "rm"
-		or name == "verify-project"
-		or name == "read-manifest"
-		or name == "git-checkout"
+local function is_cargo_noise_line(line, token)
+	return token == "help"
+		or #token <= 1
+		or line:find("alias:", 1, true) ~= nil
+		or line:find("DEPRECATED:", 1, true) ~= nil
+		or line:find("REMOVED:", 1, true) ~= nil
 end
 
 ---@param lines string[]|nil
@@ -193,7 +195,7 @@ function M.parse_cargo_commands(lines)
 			end
 		else
 			local cmd = line:match("^%s+([%w%-]+)%s+")
-			if cmd and #cmd > 1 and cmd ~= "help" and not is_cargo_noise_name(cmd) then
+			if cmd and not is_cargo_noise_line(line, cmd) then
 				commands[cmd] = cargo_detected_command_templates[cmd] or ("cargo " .. cmd)
 			end
 		end
@@ -251,11 +253,7 @@ function M.build_detected_templates_from_names(tool, names)
 	---@type table<string, string>
 	local commands = {}
 	for _, name in ipairs(normalize_detected_names(names)) do
-		if tool == "cargo" and is_cargo_noise_name(name) then
-			goto continue
-		end
 		commands[name] = templates[name] or (default_prefix .. name)
-		::continue::
 	end
 	return commands
 end
