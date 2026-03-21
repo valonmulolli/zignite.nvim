@@ -135,43 +135,6 @@ function M.find_build_files_for_path(start_path, workspace_root)
 	return build_files
 end
 
----@param block string
----@param key string
----@return string|nil
-function M.parse_named_string(block, key)
-	local double_quoted = block:match(key .. '%s*=%s*"([^"]+)"')
-	if double_quoted and double_quoted ~= "" then
-		return double_quoted
-	end
-	local single_quoted = block:match(key .. "%s*=%s*'([^']+)'")
-	if single_quoted and single_quoted ~= "" then
-		return single_quoted
-	end
-	return nil
-end
-
----@param block string
----@param key string
----@return string[]
-function M.parse_string_list(block, key)
-	local list_body = block:match(key .. "%s*=%s*%[(.-)%]")
-	if type(list_body) ~= "string" or list_body == "" then
-		return {}
-	end
-	return M.collect_quoted_values(list_body)
-end
-
----@param block string
----@param key string
----@return string[]
-function M.parse_glob_list(block, key)
-	local list_body = block:match(key .. "%s*=%s*glob%s*%(%s*%[(.-)%]")
-	if type(list_body) ~= "string" or list_body == "" then
-		return {}
-	end
-	return M.collect_quoted_values(list_body)
-end
-
 ---@param value string
 ---@return string
 function M.glob_to_lua_pattern(value)
@@ -231,73 +194,6 @@ function M.source_entries_are_related_to_file(source_entries, filepath)
 	return false
 end
 
----@param name string
----@return boolean
-function M.looks_like_test_name(name)
-	local value = tostring(name or ""):lower()
-	return value:find("test", 1, true) ~= nil or value:find("spec", 1, true) ~= nil
-end
-
----@param rule_name string
----@param block string
----@return boolean
-function M.rule_supports_run(rule_name, block)
-	if RUN_RULES[rule_name] then
-		return true
-	end
-	local normalized_name = tostring(rule_name or ""):lower()
-	if normalized_name:find("test", 1, true) ~= nil then
-		return false
-	end
-	if normalized_name:find("binary", 1, true) ~= nil or normalized_name:find("_bin", 1, true) ~= nil then
-		return true
-	end
-	return M.parse_named_string(block, "main") ~= nil or M.parse_named_string(block, "entry_point") ~= nil
-end
-
----@param rule_name string
----@param target_name string
----@param source_entries string[]
----@return boolean
-function M.rule_supports_test(rule_name, target_name, source_entries)
-	if TEST_RULES[rule_name] then
-		return true
-	end
-	local normalized_rule = tostring(rule_name or ""):lower()
-	if normalized_rule:find("test", 1, true) ~= nil or normalized_rule:find("spec", 1, true) ~= nil then
-		return true
-	end
-	if M.looks_like_test_name(target_name) then
-		return true
-	end
-	for _, source_entry in ipairs(source_entries) do
-		if M.looks_like_test_name(source_entry) then
-			return true
-		end
-	end
-	return false
-end
-
----@param block string
----@return string[]
-function M.collect_rule_source_entries(block)
-	---@type string[]
-	local entries = {}
-	for _, key in ipairs({ "srcs", "hdrs", "textual_hdrs", "main", "src", "sources", "test_srcs", "tests" }) do
-		local value = M.parse_named_string(block, key)
-		if type(value) == "string" and value ~= "" then
-			entries[#entries + 1] = value
-		end
-		for _, item in ipairs(M.parse_string_list(block, key)) do
-			entries[#entries + 1] = item
-		end
-		for _, item in ipairs(M.parse_glob_list(block, key)) do
-			entries[#entries + 1] = item
-		end
-	end
-	return entries
-end
-
 ---@param rule_name string
 ---@param package_path string
 ---@param target_name string
@@ -314,34 +210,6 @@ function M.add_target_commands(rule_name, package_path, target_name, commands)
 	if commands["bazel-test-" .. target_name] == nil and TEST_RULES[rule_name] then
 		commands["bazel-test-" .. target_name] = "bazel test " .. label
 	end
-end
-
----@param entries string[]
----@return string[]
-function M.copy_string_list(entries)
-	---@type string[]
-	local copied = {}
-	for _, entry in ipairs(entries or {}) do
-		copied[#copied + 1] = tostring(entry)
-	end
-	return copied
-end
-
----@param targets ZigniteBazelParsedTarget[]
----@return ZigniteBazelParsedTarget[]
-function M.copy_parsed_targets(targets)
-	---@type ZigniteBazelParsedTarget[]
-	local copied = {}
-	for _, target in ipairs(targets or {}) do
-		copied[#copied + 1] = {
-			rule_name = tostring(target.rule_name or ""),
-			target_name = tostring(target.target_name or ""),
-			source_entries = M.copy_string_list(target.source_entries),
-			supports_run = target.supports_run == true,
-			supports_test = target.supports_test == true,
-		}
-	end
-	return copied
 end
 
 return M

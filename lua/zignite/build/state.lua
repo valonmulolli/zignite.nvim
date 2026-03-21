@@ -11,7 +11,6 @@ M.CMAKE_TARGET_CACHE_MAX = 128
 M.MESON_TARGET_CACHE_MAX = 128
 M.CARGO_TARGET_CACHE_MAX = 128
 M.GO_PROJECT_CACHE_MAX = 128
-M.BAZEL_BUILD_CACHE_MAX = 128
 M.DETECT_RUNTIME_CACHE_MAX = 256
 
 ---@type table<string, string>
@@ -40,10 +39,6 @@ M.cargo_target_cache_order = {}
 M.go_project_cache = {}
 ---@type string[]
 M.go_project_cache_order = {}
----@type table<string, table>
-M.bazel_build_cache = {}
----@type string[]
-M.bazel_build_cache_order = {}
 ---@type table<string, table>
 M.detect_runtime_cache = {}
 ---@type string[]
@@ -149,8 +144,6 @@ function M.reset()
 	clear_table(M.cargo_target_cache_order)
 	clear_table(M.go_project_cache)
 	clear_table(M.go_project_cache_order)
-	clear_table(M.bazel_build_cache)
-	clear_table(M.bazel_build_cache_order)
 	clear_table(M.detect_runtime_cache)
 	clear_table(M.detect_runtime_cache_order)
 	clear_table(M.detect_runtime_inflight)
@@ -159,8 +152,6 @@ end
 ---@return table
 function M.debug_state()
 	return {
-		bazel_build_cache = M.bazel_build_cache,
-		bazel_build_cache_order = M.bazel_build_cache_order,
 		cargo_target_cache = M.cargo_target_cache,
 		cargo_target_cache_order = M.cargo_target_cache_order,
 		go_project_cache = M.go_project_cache,

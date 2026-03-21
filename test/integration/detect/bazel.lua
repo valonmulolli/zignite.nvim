@@ -1,867 +1,302 @@
--- luacheck: globals project_root config init ui state job_results quickfix_results notify_results mock_jobs
--- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
--- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
--- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
--- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
+-- luacheck: globals config init job_results command_to_string reset_job_results
+-- luacheck: globals make_expand_override with_overrides
 
--- Test Bazel workspace commands appear in picker and prompt-aware commands render placeholders.
-local function test_bazel_project_commands_in_picker()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
+local function make_filereadable_override(readable_paths)
 	local original_filereadable = vim.fn.filereadable
+	local readable = {}
+	for _, path in ipairs(readable_paths or {}) do
+		readable[path] = true
+	end
+	return function(path)
+		if readable[path] then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+end
+
+local function make_bazel_systemlist_override(outputs)
+	local original_systemlist = vim.fn.systemlist
+	return function(cmd)
+		vim.v.shell_error = 0
+		if type(cmd) ~= "table" then
+			if original_systemlist then
+				return original_systemlist(cmd)
+			end
+			return {}
+		end
+		if cmd[2] ~= "--project-parse" or cmd[3] ~= "--kind=bazel" then
+			if original_systemlist then
+				return original_systemlist(cmd)
+			end
+			return {}
+		end
+		return outputs[cmd[4]] or {}
+	end
+end
+
+local function capture_picker_lines(run_fn)
 	local original_open_win = vim.api.nvim_open_win
 	local original_buf_set_lines = vim.api.nvim_buf_set_lines
 	local picker_opened = false
 	local rendered_lines = {}
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelapp/src/main.cc"
-		end
-		return original_expand(expr)
+	with_overrides({
+		{
+			tbl = vim.api,
+			key = "nvim_open_win",
+			value = function(...)
+				picker_opened = true
+				return original_open_win(...)
+			end,
+		},
+		{
+			tbl = vim.api,
+			key = "nvim_buf_set_lines",
+			value = function(buf, start_idx, end_idx, strict, lines)
+				if type(lines) == "table" and #lines > 0 then
+					rendered_lines = lines
+				end
+				if original_buf_set_lines then
+					return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+				end
+			end,
+		},
+	}, run_fn)
+
+	return picker_opened, rendered_lines
+end
+
+local function with_bazel_context(opts, fn)
+	local overrides = {
+		{ tbl = vim.bo, key = "filetype", value = opts.filetype or "cpp" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override(opts.filepath) },
+		{
+			tbl = vim.fn,
+			key = "filereadable",
+			value = make_filereadable_override(opts.readable_paths),
+		},
+	}
+
+	if opts.systemlist then
+		overrides[#overrides + 1] = { tbl = vim.fn, key = "systemlist", value = opts.systemlist }
 	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelapp/MODULE.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
+	if opts.readfile then
+		overrides[#overrides + 1] = { tbl = vim.fn, key = "readfile", value = opts.readfile }
 	end
-	vim.api.nvim_open_win = function(...)
-		picker_opened = true
-		return original_open_win(...)
-	end
-	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
-		if type(lines) == "table" and #lines > 0 then
-			rendered_lines = lines
-		end
-		if original_buf_set_lines then
-			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
-		end
+	if opts.input then
+		overrides[#overrides + 1] = { tbl = vim.fn, key = "input", value = opts.input }
 	end
 
-	init.select_build_command("float")
+	with_overrides(overrides, fn)
+end
 
-	assert(picker_opened, "Picker should open for detected Bazel workspace commands")
+local function test_bazel_project_commands_in_picker()
+	init.setup({ build_commands = {} })
+
+	local picker_opened = false
+	local rendered_lines = {}
+	with_bazel_context({
+		filepath = "/tmp/bazelapp/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelapp/MODULE.bazel",
+			"/tmp/bazelapp/app/BUILD.bazel",
+		},
+		readfile = function()
+			error("Lua Bazel fallback parser should not read BUILD files")
+		end,
+	}, function()
+		picker_opened, rendered_lines = capture_picker_lines(function()
+			init.select_build_command("float")
+		end)
+	end)
+
+	assert(picker_opened, "Picker should open for Bazel workspace commands")
 	local rendered = table.concat(rendered_lines, "\n")
 	assert(rendered:match("bazel%-build"), "Picker should include bazel-build command")
 	assert(rendered:match("bazel%-run"), "Picker should include bazel-run command")
-	assert(rendered:match("bazel build <%a+>"), "Bazel placeholder command should render <args>")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.api.nvim_open_win = original_open_win
-	vim.api.nvim_buf_set_lines = original_buf_set_lines
+	assert(rendered:match("bazel build <%a+>"), "Generic Bazel fallback should render placeholder args")
 
 	print("✓ Bazel project commands in picker test passed")
 end
 
--- Test Bazel command execution prompts for target arguments.
 local function test_run_build_command_with_detected_bazel_command()
-	init.setup({
-		build_commands = {},
-	})
+	init.setup({ build_commands = {} })
 
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_input = vim.fn.input
 	local prompts = {}
+	with_bazel_context({
+		filepath = "/tmp/bazelapp/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelapp/MODULE.bazel",
+			"/tmp/bazelapp/app/BUILD.bazel",
+		},
+		readfile = function()
+			error("Lua Bazel fallback parser should not read BUILD files")
+		end,
+		input = function(prompt, _default)
+			prompts[#prompts + 1] = prompt
+			return "//app:main"
+		end,
+	}, function()
+		reset_job_results()
+		init.run_build_command("bazel-build", "float")
+	end)
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelapp/src/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelapp/MODULE.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.input = function(prompt, _default)
-		prompts[#prompts + 1] = prompt
-		return "//app:main"
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-build", "float")
-	assert(#job_results > 0, "Detected Bazel command should start a job after prompting for target")
+	assert(#job_results > 0, "Generic Bazel command should start a job after prompting")
 	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel build"), "Detected Bazel command should execute via bazel build")
-	assert(command:match("//app:main"), "Detected Bazel command should include provided target argument")
-	assert(#prompts == 1 and prompts[1]:match("cpp bazel%-build args"), "Bazel command should prompt for target argument")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.input = original_input
+	assert(command:match("bazel build"), "Generic Bazel command should execute via bazel build")
+	assert(command:match("//app:main"), "Generic Bazel command should include provided target argument")
+	assert(#prompts == 1 and prompts[1]:match("cpp bazel%-build args"), "Bazel command should prompt for target args")
 	reset_job_results()
 
 	print("✓ RunBuild with detected Bazel command test passed")
 end
 
--- Test Bazel BUILD parsing infers a concrete target for the current file.
-local function test_bazel_target_inference_in_picker()
-	init.setup({
-		build_commands = {},
-	})
+local function test_bazel_targets_use_zig_project_parser()
+	init.setup({ build_commands = {} })
 
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_open_win = vim.api.nvim_open_win
-	local original_buf_set_lines = vim.api.nvim_buf_set_lines
-	local picker_opened = false
 	local rendered_lines = {}
+	with_bazel_context({
+		filepath = "/tmp/bazelzig/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelzig/MODULE.bazel",
+			"/tmp/bazelzig/app/BUILD.bazel",
+		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+				"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
+				"TARGET\tcc_test\tmain_test\t0\t1\tmain_test.cc",
+			},
+		}),
+		readfile = function()
+			error("Lua Bazel parser should not be used when Zig parser succeeds")
+		end,
+	}, function()
+		local picker_opened
+		picker_opened, rendered_lines = capture_picker_lines(function()
+			init.select_build_command("float")
+		end)
+		assert(picker_opened, "Picker should open for Zig Bazel parser commands")
+	end)
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelapp/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelapp/MODULE.bazel" or path == "/tmp/bazelapp/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelapp/app/BUILD.bazel" then
-			return {
-				'cc_binary(',
-				'    name = "main",',
-				'    srcs = ["main.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.api.nvim_open_win = function(...)
-		picker_opened = true
-		return original_open_win(...)
-	end
-	vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
-		if type(lines) == "table" and #lines > 0 then
-			rendered_lines = lines
-		end
-		if original_buf_set_lines then
-			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
-		end
-	end
-
-	init.select_build_command("float")
-
-	assert(picker_opened, "Picker should open for inferred Bazel target commands")
 	local rendered = table.concat(rendered_lines, "\n")
-	assert(rendered:match("bazel%-run%-main"), "Picker should include target-specific Bazel run command")
-	assert(rendered:match("bazel run //app:main"), "Picker should render inferred Bazel label")
-	assert(not rendered:match("bazel run <%a+>"), "Inferred Bazel run command should not render placeholder args")
+	assert(rendered:match("bazel%-build%-main"), "Zig Bazel parser should expose target-specific build command")
+	assert(rendered:match("bazel%-run%-main"), "Zig Bazel parser should expose target-specific run command")
+	assert(rendered:match("bazel test //app:main_test"), "Zig Bazel parser should expose target-specific test command")
+	assert(rendered:match("bazel run //app:main"), "Zig Bazel parser should infer the primary run target")
+	assert(not rendered:match("bazel run <%a+>"), "Inferred Zig Bazel run should not render placeholder args")
 
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.api.nvim_open_win = original_open_win
-	vim.api.nvim_buf_set_lines = original_buf_set_lines
-
-	print("✓ Bazel target inference in picker test passed")
+	print("✓ Zig Bazel parser test passed")
 end
 
--- Test Bazel run uses inferred target without prompting for args.
 local function test_run_build_command_with_inferred_bazel_target()
-	init.setup({
-		build_commands = {},
-	})
+	init.setup({ build_commands = {} })
 
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
 	local prompts = {}
+	with_bazel_context({
+		filepath = "/tmp/bazelzig/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelzig/MODULE.bazel",
+			"/tmp/bazelzig/app/BUILD.bazel",
+		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+				"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
+			},
+		}),
+		input = function(prompt, default_value)
+			prompts[#prompts + 1] = prompt
+			return default_value or ""
+		end,
+	}, function()
+		reset_job_results()
+		init.run_build_command("bazel-run", "float")
+	end)
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelapp/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelapp/MODULE.bazel" or path == "/tmp/bazelapp/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelapp/app/BUILD.bazel" then
-			return {
-				'cc_binary(',
-				'    name = "main",',
-				'    srcs = ["main.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-run", "float")
-
-	assert(#job_results > 0, "Inferred Bazel run should start a job")
+	assert(#job_results > 0, "Inferred Zig Bazel run should start a job")
 	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel run //app:main"), "Inferred Bazel run should execute concrete label")
-	assert(#prompts == 0, "Inferred Bazel run should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
+	assert(command:match("bazel run //app:main"), "Inferred Zig Bazel run should execute concrete label")
+	assert(#prompts == 0, "Inferred Zig Bazel run should not prompt for args")
 	reset_job_results()
 
 	print("✓ Inferred Bazel run command test passed")
 end
 
--- Test Bazel infers a target when BUILD uses glob() for sources.
-local function test_bazel_glob_target_inference()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
-	local prompts = {}
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelglob/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelglob/MODULE.bazel" or path == "/tmp/bazelglob/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelglob/app/BUILD.bazel" then
-			return {
-				'cc_binary(',
-				'    name = "glob_app",',
-				'    srcs = glob(["*.cc"]),',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-run", "float")
-
-	assert(#job_results > 0, "Glob-based Bazel run should start a job")
-	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel run //app:glob_app"), "Glob-based Bazel run should infer target label")
-	assert(#prompts == 0, "Glob-based Bazel run should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
-	reset_job_results()
-
-	print("✓ Bazel glob target inference test passed")
-end
-
--- Test Bazel infers a related cc_test target for the current source file.
 local function test_bazel_related_test_inference()
-	init.setup({
-		build_commands = {},
-	})
+	init.setup({ build_commands = {} })
 
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
 	local prompts = {}
+	with_bazel_context({
+		filepath = "/tmp/bazeltests/app/foo.cc",
+		readable_paths = {
+			"/tmp/bazeltests/MODULE.bazel",
+			"/tmp/bazeltests/app/BUILD.bazel",
+		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazeltests/app/BUILD.bazel"] = {
+				"TARGET\tcc_library\tfoo_lib\t0\t0\tfoo.cc",
+				"TARGET\tcc_test\tfoo_test\t0\t1\tfoo_test.cc",
+			},
+		}),
+		input = function(prompt, default_value)
+			prompts[#prompts + 1] = prompt
+			return default_value or ""
+		end,
+	}, function()
+		reset_job_results()
+		init.run_build_command("bazel-test", "float")
+	end)
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazeltests/app/foo.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazeltests/MODULE.bazel" or path == "/tmp/bazeltests/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazeltests/app/BUILD.bazel" then
-			return {
-				'cc_library(',
-				'    name = "foo_lib",',
-				'    srcs = ["foo.cc"],',
-				')',
-				'cc_test(',
-				'    name = "foo_test",',
-				'    srcs = ["foo_test.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-test", "float")
-
-	assert(#job_results > 0, "Related Bazel test should start a job")
+	assert(#job_results > 0, "Related Zig Bazel test should start a job")
 	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel test //app:foo_test"), "Related Bazel test should infer test target")
-	assert(#prompts == 0, "Related Bazel test should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
+	assert(command:match("bazel test //app:foo_test"), "Related Zig Bazel test should infer test target")
+	assert(#prompts == 0, "Related Zig Bazel test should not prompt for args")
 	reset_job_results()
 
 	print("✓ Bazel related test inference test passed")
 end
 
--- Test Bazel can infer a target from a parent package BUILD file.
 local function test_bazel_parent_package_inference()
-	init.setup({
-		build_commands = {},
-	})
+	init.setup({ build_commands = {} })
 
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
 	local prompts = {}
+	with_bazel_context({
+		filepath = "/tmp/bazelparent/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelparent/MODULE.bazel",
+			"/tmp/bazelparent/app/BUILD.bazel",
+			"/tmp/bazelparent/BUILD.bazel",
+		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelparent/app/BUILD.bazel"] = {},
+			["--path=/tmp/bazelparent/BUILD.bazel"] = {
+				"TARGET\tcc_binary\troot_app\t1\t0\tapp/main.cc",
+			},
+		}),
+		input = function(prompt, default_value)
+			prompts[#prompts + 1] = prompt
+			return default_value or ""
+		end,
+	}, function()
+		reset_job_results()
+		init.run_build_command("bazel-run", "float")
+	end)
 
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelparent/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if
-			path == "/tmp/bazelparent/MODULE.bazel"
-			or path == "/tmp/bazelparent/BUILD.bazel"
-			or path == "/tmp/bazelparent/app/BUILD.bazel"
-		then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelparent/app/BUILD.bazel" then
-			return {
-				'exports_files(["main.cc"])',
-			}
-		end
-		if path == "/tmp/bazelparent/BUILD.bazel" then
-			return {
-				'cc_binary(',
-				'    name = "root_app",',
-				'    srcs = ["app/main.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-run", "float")
-
-	assert(#job_results > 0, "Parent-package Bazel run should start a job")
+	assert(#job_results > 0, "Parent-package Zig Bazel run should start a job")
 	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel run //:root_app"), "Parent-package Bazel run should infer root package target")
-	assert(#prompts == 0, "Parent-package Bazel run should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
+	assert(command:match("bazel run //:root_app"), "Parent-package Zig Bazel run should infer root package target")
+	assert(#prompts == 0, "Parent-package Zig Bazel run should not prompt for args")
 	reset_job_results()
 
 	print("✓ Bazel parent package inference test passed")
 end
 
--- Test Bazel wrapper macro names still infer runnable targets.
-local function test_bazel_wrapper_rule_inference()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
-	local prompts = {}
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelmacro/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelmacro/MODULE.bazel" or path == "/tmp/bazelmacro/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelmacro/app/BUILD.bazel" then
-			return {
-				'wrapped_cc_binary(',
-				'    name = "macro_app",',
-				'    srcs = ["main.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-run", "float")
-
-	assert(#job_results > 0, "Wrapper-rule Bazel run should start a job")
-	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel run //app:macro_app"), "Wrapper-rule Bazel run should infer wrapped binary target")
-	assert(#prompts == 0, "Wrapper-rule Bazel run should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
-	reset_job_results()
-
-	print("✓ Bazel wrapper rule inference test passed")
-end
-
--- Test Bazel infers related Go test targets from *_test.go naming.
-local function test_bazel_go_test_relationship_inference()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "go"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
-	local prompts = {}
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelgo/app/foo.go"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelgo/MODULE.bazel" or path == "/tmp/bazelgo/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelgo/app/BUILD.bazel" then
-			return {
-				'go_library(',
-				'    name = "foo_lib",',
-				'    srcs = ["foo.go"],',
-				')',
-				'go_test(',
-				'    name = "foo_test",',
-				'    srcs = ["foo_test.go"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-test", "float")
-
-	assert(#job_results > 0, "Go-related Bazel test should start a job")
-	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel test //app:foo_test"), "Go-related Bazel test should infer go_test target")
-	assert(#prompts == 0, "Go-related Bazel test should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
-	reset_job_results()
-
-	print("✓ Bazel Go test relationship inference test passed")
-end
-
--- Test Bazel infers related Python test targets from test_*.py naming.
-local function test_bazel_python_test_relationship_inference()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "python"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
-	local prompts = {}
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelpy/app/main.py"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelpy/MODULE.bazel" or path == "/tmp/bazelpy/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelpy/app/BUILD.bazel" then
-			return {
-				'py_binary(',
-				'    name = "main",',
-				'    srcs = ["main.py"],',
-				'    main = "main.py",',
-				')',
-				'py_test(',
-				'    name = "main_test",',
-				'    srcs = ["test_main.py"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-test", "float")
-
-	assert(#job_results > 0, "Python-related Bazel test should start a job")
-	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel test //app:main_test"), "Python-related Bazel test should infer py_test target")
-	assert(#prompts == 0, "Python-related Bazel test should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
-	reset_job_results()
-
-	print("✓ Bazel Python test relationship inference test passed")
-end
-
--- Test Bazel infers related JVM test targets from Foo.java -> FooTest.java naming.
-local function test_bazel_jvm_test_relationship_inference()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "java"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local original_input = vim.fn.input
-	local prompts = {}
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazeljvm/app/Foo.java"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazeljvm/MODULE.bazel" or path == "/tmp/bazeljvm/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazeljvm/app/BUILD.bazel" then
-			return {
-				'java_library(',
-				'    name = "foo_lib",',
-				'    srcs = ["Foo.java"],',
-				')',
-				'java_test(',
-				'    name = "foo_test",',
-				'    srcs = ["FooTest.java"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-	vim.fn.input = function(prompt, default_value)
-		prompts[#prompts + 1] = prompt
-		return default_value or ""
-	end
-
-	reset_job_results()
-	init.run_build_command("bazel-test", "float")
-
-	assert(#job_results > 0, "JVM-related Bazel test should start a job")
-	local command = command_to_string(job_results[#job_results].cmd)
-	assert(command:match("bazel test //app:foo_test"), "JVM-related Bazel test should infer java_test target")
-	assert(#prompts == 0, "JVM-related Bazel test should not prompt for args")
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.fn.input = original_input
-	reset_job_results()
-
-	print("✓ Bazel JVM test relationship inference test passed")
-end
-
--- Test parsed Bazel BUILD files are cached across repeated lookups.
-local function test_bazel_build_file_cache_reuses_parsed_targets()
-	init.setup({
-		build_commands = {},
-	})
-
-	vim.bo.filetype = "cpp"
-	local original_expand = vim.fn.expand
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-	local build_read_count = 0
-
-	vim.fn.expand = function(expr)
-		if expr == "%:p" then
-			return "/tmp/bazelcache/app/main.cc"
-		end
-		return original_expand(expr)
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelcache/MODULE.bazel" or path == "/tmp/bazelcache/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelcache/app/BUILD.bazel" then
-			build_read_count = build_read_count + 1
-			return {
-				'cc_binary(',
-				'    name = "main",',
-				'    srcs = ["main.cc"],',
-				')',
-			}
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-
-	local first_commands = init.get_build_commands_for_filetype("cpp")
-	local second_commands = init.get_build_commands_for_filetype("cpp")
-
-	assert(
-		first_commands["bazel-run"] == "bazel run //app:main",
-		"First Bazel lookup should infer concrete run target"
-	)
-	assert(
-		second_commands["bazel-run"] == "bazel run //app:main",
-		"Second Bazel lookup should reuse inferred concrete run target"
-	)
-	assert(
-		build_read_count == 1,
-		"Repeated Bazel lookups should reuse cached parsed BUILD targets"
-	)
-
-	vim.fn.expand = original_expand
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-
-	print("✓ Bazel parsed BUILD cache reuse test passed")
-end
-
--- Test Bazel BUILD parsing can use the Zig project parser path.
-local function test_bazel_targets_use_zig_project_parser()
-	init.setup({
-		build_commands = {},
-	})
-
-	local bazel_parser = require("zignite.build.parsers.bazel")
-	local original_executable = vim.fn.executable
-	local original_systemlist = vim.fn.systemlist
-	local original_filereadable = vim.fn.filereadable
-	local original_readfile = vim.fn.readfile
-
-	vim.fn.executable = function(path)
-		if tostring(path):match("zignite$") then
-			return 1
-		end
-		if original_executable then
-			return original_executable(path)
-		end
-		return 0
-	end
-	vim.fn.systemlist = function(cmd)
-		vim.v.shell_error = 0
-		assert(type(cmd) == "table", "Zig Bazel parser should execute via argv")
-		assert(cmd[2] == "--project-parse", "Bazel parser should call the Zig project parser mode")
-		assert(cmd[3] == "--kind=bazel", "Bazel parser should use the bazel parser kind")
-		return {
-			"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
-			"TARGET\tcc_test\tmain_test\t0\t1\tmain_test.cc",
-		}
-	end
-	vim.fn.filereadable = function(path)
-		if path == "/tmp/bazelzig/MODULE.bazel" or path == "/tmp/bazelzig/app/BUILD.bazel" then
-			return 1
-		end
-		if original_filereadable then
-			return original_filereadable(path)
-		end
-		return 0
-	end
-	vim.fn.readfile = function(path)
-		if path == "/tmp/bazelzig/app/BUILD.bazel" then
-			error("Lua Bazel parser should not be used when Zig parser succeeds")
-		end
-		if original_readfile then
-			return original_readfile(path)
-		end
-		return {}
-	end
-
-	local commands = bazel_parser.detect_bazel_project_commands("/tmp/bazelzig/app/main.cc")
-	assert(commands["bazel-build-main"] == "bazel build //app:main", "Zig Bazel parser should build inferred target")
-	assert(commands["bazel-run"] == "bazel run //app:main", "Zig Bazel parser should infer primary run target")
-	assert(commands["bazel-test-main_test"] == "bazel test //app:main_test", "Zig Bazel parser should expose test target")
-
-	vim.fn.executable = original_executable
-	vim.fn.systemlist = original_systemlist
-	vim.fn.filereadable = original_filereadable
-	vim.fn.readfile = original_readfile
-	vim.v.shell_error = 0
-
-	print("✓ Zig Bazel parser test passed")
-end
-
-test_bazel_target_inference_in_picker()
-test_bazel_glob_target_inference()
-test_bazel_parent_package_inference()
 test_bazel_project_commands_in_picker()
-test_bazel_wrapper_rule_inference()
-test_bazel_go_test_relationship_inference()
-test_bazel_python_test_relationship_inference()
-test_bazel_jvm_test_relationship_inference()
-test_bazel_build_file_cache_reuses_parsed_targets()
-test_bazel_targets_use_zig_project_parser()
-test_bazel_related_test_inference()
-test_run_build_command_with_inferred_bazel_target()
 test_run_build_command_with_detected_bazel_command()
+test_bazel_targets_use_zig_project_parser()
+test_run_build_command_with_inferred_bazel_target()
+test_bazel_related_test_inference()
+test_bazel_parent_package_inference()
