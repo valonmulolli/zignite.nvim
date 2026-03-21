@@ -243,7 +243,9 @@ auto-detected commands when available:
 - `odin`: parsed from `odin help`
 - `c` / `cpp`: parsed from `Makefile` targets when `Makefile` is present
 - `javascript` / `typescript`: project `package.json` scripts with automatic `npm` / `pnpm` / `yarn` / `bun` command selection
-- `java` / `kotlin`: Maven/Gradle project tasks inferred from project files
+- `java` / `kotlin`: Maven/Gradle project tasks inferred from project files, with
+  smarter `run` resolution (`exec:java`, `spring-boot:run`, `run`, `bootRun`)
+  when the Zig backend can detect them
 - `python`: default build/file commands automatically prefer `uv` in uv-managed projects
 - Bazel workspaces (`MODULE.bazel`, `WORKSPACE.bazel`, `WORKSPACE`): `bazel-*` commands are added for target-aware build/run/test/query flows
 
