@@ -7,59 +7,70 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 
----@param lines string[]|nil
----@return string|nil
-local function parse_package_name(lines)
-	local in_package = false
-	for _, raw_line in ipairs(lines or {}) do
-		local line = common.strip_hash_comment(raw_line)
-		local trimmed = common.trim_text(line)
-		if trimmed == "" then
-			goto continue
-		end
-		if trimmed:sub(1, 1) == "[" then
-			in_package = trimmed == "[package]"
-			goto continue
-		end
-		if in_package then
-			local name = trimmed:match('^name%s*=%s*"([^"]+)"')
-			if name and name ~= "" then
-				return name
+---@param commands table<string, string>
+---@param bin_name string
+---@return nil
+local function add_bin_commands(commands, bin_name)
+	commands["cargo-build-" .. bin_name] = "cargo build --bin " .. bin_name
+	commands["cargo-run-" .. bin_name] = "cargo run --bin " .. bin_name
+	commands["cargo-test-" .. bin_name] = "cargo test --bin " .. bin_name
+end
+
+---@param cache_key string
+---@param mtime_key string
+---@param match_path string
+---@param commands table<string, string>
+---@param primary_bin string|nil
+---@return table<string, string>, string|nil
+local function store_cached_result(cache_key, mtime_key, match_path, commands, primary_bin)
+	state.set_bounded_cache_entry(
+		state.cargo_target_cache,
+		state.cargo_target_cache_order,
+		state.CARGO_TARGET_CACHE_MAX,
+		cache_key,
+		{
+			mtime_key = mtime_key,
+			match_path = match_path,
+			commands = state.copy_string_map(commands),
+			primary_bin = primary_bin,
+		}
+	)
+	return commands, primary_bin
+end
+
+---@param zig_lines string[]
+---@return table<string, string>, string|nil
+local function parse_zig_targets(zig_lines)
+	---@type table<string, string>
+	local commands = {}
+	local primary_bin = nil
+	for _, raw_line in ipairs(zig_lines) do
+		local line = tostring(raw_line or "")
+		local kind, bin_name, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
+		if kind == "BIN" and bin_name and bin_name ~= "" then
+			add_bin_commands(commands, bin_name)
+			if matched_flag == "1" and not primary_bin then
+				primary_bin = bin_name
 			end
 		end
-		::continue::
 	end
-	return nil
+	return commands, primary_bin
 end
 
 ---@param filepath string
 ---@param root string
 ---@return table<string, string>, string|nil
 local function fallback_cargo_commands(filepath, root)
-	local cargo_toml_path = vim.fs.joinpath(root, "Cargo.toml")
-	if type(vim.fn.readfile) ~= "function" or vim.fn.filereadable(cargo_toml_path) ~= 1 then
-		return {}, nil
-	end
-
 	local relative_filepath = common.normalize_path_text(common.make_relative_to_root(root, filepath))
-	local lines = vim.fn.readfile(cargo_toml_path)
-	local primary_bin
-
-	if relative_filepath == "src/main.rs" then
-		primary_bin = parse_package_name(lines)
-	else
-		primary_bin = relative_filepath:match("^src/bin/([^/]+)%.rs$")
-	end
-
+	local primary_bin = relative_filepath:match("^src/bin/([^/]+)%.rs$")
 	if not primary_bin or primary_bin == "" then
 		return {}, nil
 	end
 
-	return {
-		["cargo-build-" .. primary_bin] = "cargo build --bin " .. primary_bin,
-		["cargo-run-" .. primary_bin] = "cargo run --bin " .. primary_bin,
-		["cargo-test-" .. primary_bin] = "cargo test --bin " .. primary_bin,
-	}, primary_bin
+	---@type table<string, string>
+	local commands = {}
+	add_bin_commands(commands, primary_bin)
+	return commands, primary_bin
 end
 
 ---@param filepath string
@@ -93,50 +104,12 @@ function M.detect_cargo_project_commands(filepath)
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		---@type table<string, string>
-		local commands = {}
-		local primary_bin = nil
-		for _, raw_line in ipairs(zig_lines) do
-			local line = tostring(raw_line or "")
-			local kind, bin_name, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
-			if kind == "BIN" and bin_name and bin_name ~= "" then
-				commands["cargo-build-" .. bin_name] = "cargo build --bin " .. bin_name
-				commands["cargo-run-" .. bin_name] = "cargo run --bin " .. bin_name
-				commands["cargo-test-" .. bin_name] = "cargo test --bin " .. bin_name
-				if matched_flag == "1" and not primary_bin then
-					primary_bin = bin_name
-				end
-			end
-		end
-		state.set_bounded_cache_entry(
-			state.cargo_target_cache,
-			state.cargo_target_cache_order,
-			state.CARGO_TARGET_CACHE_MAX,
-			cargo_toml_path,
-			{
-				mtime_key = mtime_key,
-				match_path = filepath,
-				commands = state.copy_string_map(commands),
-				primary_bin = primary_bin,
-			}
-		)
-		return commands, primary_bin
+		local commands, primary_bin = parse_zig_targets(zig_lines)
+		return store_cached_result(cargo_toml_path, mtime_key, filepath, commands, primary_bin)
 	end
 
 	local commands, primary_bin = fallback_cargo_commands(filepath, root)
-	state.set_bounded_cache_entry(
-		state.cargo_target_cache,
-		state.cargo_target_cache_order,
-		state.CARGO_TARGET_CACHE_MAX,
-		cargo_toml_path,
-		{
-			mtime_key = mtime_key,
-			match_path = filepath,
-			commands = state.copy_string_map(commands),
-			primary_bin = primary_bin,
-		}
-	)
-	return commands, primary_bin
+	return store_cached_result(cargo_toml_path, mtime_key, filepath, commands, primary_bin)
 end
 
 return M
