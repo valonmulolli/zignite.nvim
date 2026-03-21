@@ -6,25 +6,25 @@
   <img src="https://img.shields.io/badge/Made%20with-Lua-blueviolet.svg" alt="Made with Lua"/>
   <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
   <br/>
-  <strong>A blazingly fast, asynchronous code runner for Neovim, powered by Zig.</strong>
+  <strong>Fast, asynchronous code execution for Neovim with a Zig backend.</strong>
 </p>
 
 ---
 
-Zignite.nvim is a modern code runner plugin for Neovim that prioritizes performance and responsiveness. Unlike traditional runners that just pipe output to a text buffer, Zignite uses interactive terminal buffers in floats, splits, vsplits, and tabs. This means support for user input, full ANSI colors, and real-time streaming, with a lightweight Zig backend handling timeout execution, quickfix processing, and command detection.
+Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, timeouts, quickfix processing, and command detection.
 
 ## Features
 
-- **Interactive Terminal Output**: Floating windows are real terminals. Run interactive scripts (e.g., Python `input()`) without issues.
+- **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
 - **Full ANSI Colors**: Compiler errors and logs retain their rich coloring.
-- **High-Performance Backend**: Core process management logic is written in Zig.
-- **Safety Timeouts**: Automatically kill processes that run too long (infinite loops) via the Zig backend.
-- **Quickfix Integration**: Automatically populates the Quickfix list on error, allowing you to jump straight to the correct line.
+- **Zig Backend**: Core process management, command detection, and quickfix processing run through a native backend.
+- **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Zig backend.
+- **Quickfix Integration**: Non-zero exits can populate the quickfix list so errors are easy to jump through.
 - **Persistent Quickfix Worker**: Reuses a Zig daemon for quickfix processing to reduce repeat-run latency.
 - **Persistent Detect Worker**: Reuses a Zig daemon for build-command detection parsing (`zig/go/cargo/odin`) with Lua fallback.
-- **Build System Support**: First-class support for `cargo`, `zig build`, `npm`, `make`, etc.
-- **Interactive Command Picker**: Visual menu to choose between `run`, `test`, `build`, or `clean` for the current project.
-- **Project Detection**: Automatically detects project roots (e.g., executes `cargo run` even if you are editing a submodule file).
+- **Build System Support**: Supports `cargo`, `zig build`, `npm`, `make`, CMake, Meson, Bazel, and more.
+- **Interactive Command Picker**: Choose between `run`, `test`, `build`, `clean`, and detected project commands.
+- **Project Detection**: Detects project roots so project-aware commands run from the correct working directory.
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
 - **Cross-Platform Core**: Verified in CI on Linux and macOS. Some bundled runner examples are POSIX-oriented and may need overrides on Windows.
 
@@ -115,7 +115,7 @@ programs.neovim = {
 
 ## Configuration
 
-Zignite works out of the box for 20+ languages. Here is the default configuration structure:
+Zignite works out of the box for 20+ languages. The block below shows the default configuration shape:
 
 ```lua
 require('zignite').setup({
@@ -196,8 +196,7 @@ require('zignite').setup({
 
 ### Build Command Picker
 
-For compiled languages (Rust, Zig, C++, Go), you often want to do more than just "Run". 
-Press `<leader>rb` (default) to open the Command Picker:
+For compiled languages such as Rust, Zig, C++, and Go, you often want more than a single-file runner. Use `<leader>rb` (default) to open the build command picker:
 
 ```text
   build              → cargo build
@@ -207,7 +206,7 @@ Press `<leader>rb` (default) to open the Command Picker:
   clean              → cargo clean
 ```
 
-Zig now also ships a lightweight project-level check path:
+For Zig projects, the default commands also include a project-level check path:
 
 ```text
   build              → zig build
@@ -235,19 +234,10 @@ picker = {
 }
 ```
 
-Picker commands are merged from your configured `build_commands.<filetype>` plus
-auto-detected commands when available:
-- `zig`: parsed from `zig --help`
-- `go`: parsed from `go help`
-- `rust`: parsed from `cargo --list`
-- `odin`: parsed from `odin help`
-- `c` / `cpp`: parsed from `Makefile` targets when `Makefile` is present
-- `javascript` / `typescript`: project `package.json` scripts with automatic `npm` / `pnpm` / `yarn` / `bun` command selection
-- `java` / `kotlin`: Maven/Gradle project tasks inferred from project files, with
-  smarter `run` resolution (`exec:java`, `spring-boot:run`, `run`, `bootRun`)
-  when the Zig backend can detect them
-- `python`: default build/file commands automatically prefer `uv` in uv-managed projects
-- Bazel workspaces (`MODULE.bazel`, `WORKSPACE.bazel`, `WORKSPACE`): `bazel-*` commands are added for target-aware build/run/test/query flows
+Picker commands are built from your configured `build_commands.<filetype>` plus
+auto-detected commands when available. Detection currently covers:
+- tool commands for `zig`, `go`, `cargo`, and `odin`
+- project commands for `Makefile`, `package.json`, Maven, Gradle, CMake, Meson, Bazel, `Cargo.toml`, `go.mod`, `go.work`, and `pyproject.toml`
 
 Configured commands always take priority when names overlap.
 
@@ -262,13 +252,13 @@ detect = {
 }
 ```
 
-When the Zig backend is available, command detection parsing uses a persistent
-worker (`--detect-daemon`) for lower overhead. If unavailable/failing, it
-falls back to Lua parsing automatically.
+When the Zig backend is available, command detection uses a persistent worker
+(`--detect-daemon`) for lower overhead. If the backend is unavailable or a
+request fails, parsing falls back to Lua automatically.
 
-`RunBuild`, `RunLive`, and `:RunBuild` completion now use configured commands
-plus cached detected commands first, then refresh detection in the background.
-That keeps command dispatch responsive even when tool help output has to be
+`RunBuild`, `RunLive`, and `:RunBuild` completion use configured commands plus
+cached detected commands first, then refresh detection in the background. That
+keeps command dispatch responsive even when tool help output still has to be
 parsed.
 
 Picker detection runtime defaults:
@@ -285,10 +275,9 @@ detect_runtime = {
 - `cache_ttl_ms`: stale threshold used before triggering refresh.
 - `live_merge = true`: refreshed detected commands are merged into the open picker without closing it.
 
-`zig fetch` is included and prompts for URL/path input when selected.
-In the picker, you can paste a plain GitHub repo URL such as
-`https://github.com/<owner>/<repo>` or a shorthand like `<owner>/<repo>`,
-and Zignite will expand it to the saved Zig form automatically.
+`zig fetch` is included and prompts for URL/path input when selected. In the
+picker, you can paste a plain GitHub repo URL or `<owner>/<repo>`, and
+Zignite will expand it to the saved Zig form automatically.
 
 Any build command can request runtime arguments by using `$zignite_args` in the
 command template. Example:
@@ -313,23 +302,6 @@ expands to:
 ```text
 zig fetch --save git+https://github.com/<owner>/<repo>
 ```
-
-For Bazel workspaces, detected commands look like:
-
-```text
-bazel-build      → bazel build <args>
-bazel-run        → bazel run <args>
-bazel-test       → bazel test <args>
-bazel-query      → bazel query <args>
-bazel-clean      → bazel clean
-bazel-build-all  → bazel build //...
-bazel-test-all   → bazel test //...
-```
-
-When Zignite can infer the matching Bazel target for the current file, generic
-`bazel-build`, `bazel-run`, and `bazel-test` resolve to that concrete label
-automatically. When it cannot infer the target safely, those commands still
-fall back to prompting for the label/args.
 
 - Use `:RunFile` for fast single-file feedback.
 - Use `:RunBuild run` when you explicitly want project-wide startup/build behavior.
