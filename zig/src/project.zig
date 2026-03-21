@@ -3,9 +3,11 @@ const bazel = @import("project/bazel.zig");
 const cargo = @import("project/cargo.zig");
 const cmake = @import("project/cmake.zig");
 const common = @import("project/common.zig");
+const gradle = @import("project/gradle.zig");
 const go_mod = @import("project/go_mod.zig");
 const go_work = @import("project/go_work.zig");
 const make = @import("project/make.zig");
+const maven = @import("project/maven.zig");
 const meson = @import("project/meson.zig");
 const package_json = @import("project/package_json.zig");
 const pyproject = @import("project/pyproject.zig");
@@ -13,6 +15,8 @@ const pyproject = @import("project/pyproject.zig");
 pub const Kind = enum {
     make,
     package_json,
+    maven,
+    gradle,
     cmake,
     bazel,
     meson,
@@ -139,6 +143,8 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "make")) return .make;
     if (std.ascii.eqlIgnoreCase(value, "package-json")) return .package_json;
+    if (std.ascii.eqlIgnoreCase(value, "maven")) return .maven;
+    if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
@@ -280,6 +286,8 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
     switch (kind) {
         .make => try make.parseTargets(allocator, contents, &names),
         .package_json => try package_json.parseScripts(allocator, contents, &names),
+        .maven => try maven.parseGoals(allocator, contents, &names),
+        .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
         .bazel => return error.InvalidProjectParseKind,
         .meson => return error.InvalidProjectParseKind,

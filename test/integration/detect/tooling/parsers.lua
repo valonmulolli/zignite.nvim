@@ -274,6 +274,142 @@ local function test_meson_targets_use_zig_project_parser()
     print("✓ Zig Meson parser test passed")
 end
 
+-- Test Maven project parsing can use the Zig project parser path.
+local function test_maven_project_uses_zig_project_parser()
+    init.setup({
+        build_commands = {},
+    })
+
+    local jvm_parser = require("zignite.build.parsers.jvm")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    utils_module.get_project_root = function()
+        return "/tmp/javadetect"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        assert(type(cmd) == "table", "Zig Maven parser should execute via argv")
+        assert(cmd[2] == "--project-parse", "Maven parser should call the Zig project parser mode")
+        assert(cmd[3] == "--kind=maven", "Maven parser should use the maven parser kind")
+        return { "compile", "test", "package", "spring-boot:run" }
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/javadetect/pom.xml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/javadetect/pom.xml" then
+            error("Lua Maven parser should not be used when Zig parser succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands = jvm_parser.detect_java_like_project_commands("/tmp/javadetect/src/Main.java")
+    assert(commands["mvn-build"] == "mvn compile", "Zig Maven parser should return mvn compile")
+    assert(commands["mvn-test"] == "mvn test", "Zig Maven parser should return mvn test")
+    assert(commands["mvn-package"] == "mvn package", "Zig Maven parser should return mvn package")
+    assert(commands["mvn-run"] == "mvn spring-boot:run", "Zig Maven parser should preserve the detected run goal")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.v.shell_error = 0
+
+    print("✓ Zig Maven parser test passed")
+end
+
+-- Test Gradle project parsing can use the Zig project parser path.
+local function test_gradle_project_uses_zig_project_parser()
+    init.setup({
+        build_commands = {},
+    })
+
+    local jvm_parser = require("zignite.build.parsers.jvm")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    utils_module.get_project_root = function()
+        return "/tmp/gradledetect"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        assert(type(cmd) == "table", "Zig Gradle parser should execute via argv")
+        assert(cmd[2] == "--project-parse", "Gradle parser should call the Zig project parser mode")
+        assert(cmd[3] == "--kind=gradle", "Gradle parser should use the gradle parser kind")
+        return { "build", "test", "clean", "bootRun" }
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/gradledetect/gradlew" or path == "/tmp/gradledetect/build.gradle.kts" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/gradledetect/build.gradle.kts" then
+            error("Lua Gradle parser should not be used when Zig parser succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands = jvm_parser.detect_java_like_project_commands("/tmp/gradledetect/src/Main.kt")
+    assert(commands["gradle-build"] == "./gradlew build", "Zig Gradle parser should return gradle build")
+    assert(commands["gradle-test"] == "./gradlew test", "Zig Gradle parser should return gradle test")
+    assert(commands["gradle-clean"] == "./gradlew clean", "Zig Gradle parser should return gradle clean")
+    assert(commands["gradle-run"] == "./gradlew bootRun", "Zig Gradle parser should preserve the detected run task")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.v.shell_error = 0
+
+    print("✓ Zig Gradle parser test passed")
+end
+
 -- Test Cargo target parsing can use the Zig project parser path.
 local function test_cargo_targets_use_zig_project_parser()
     init.setup({
@@ -544,6 +680,8 @@ test_c_detected_make_targets_in_picker()
 test_make_targets_use_zig_project_parser()
 test_cmake_targets_use_zig_project_parser()
 test_meson_targets_use_zig_project_parser()
+test_maven_project_uses_zig_project_parser()
+test_gradle_project_uses_zig_project_parser()
 test_cargo_targets_use_zig_project_parser()
 test_pyproject_tools_use_zig_project_parser()
 test_go_project_commands_use_zig_project_parser()

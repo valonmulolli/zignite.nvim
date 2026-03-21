@@ -146,7 +146,9 @@ COMMANDS                                                    *zignite-commands*
       • odin: `odin help`
       • c/cpp: Makefile targets
       • javascript/typescript: package.json scripts
-      • java/kotlin: Maven/Gradle project tasks
+      • java/kotlin: Maven/Gradle project tasks, with smarter runnable task
+        detection (`exec:java`, `spring-boot:run`, `run`, `bootRun`) when the
+        Zig backend is available
       • bazel workspaces: `bazel-*` commands with target prompts
 	    (configured names take precedence)
 	    Auto-detection is enabled by default and can be disabled per detector via
