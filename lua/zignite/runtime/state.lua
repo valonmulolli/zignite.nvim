@@ -1,3 +1,5 @@
+local cache_utils = require("zignite.utils.cache")
+
 ---@type table
 local M = {}
 
@@ -167,16 +169,6 @@ end
 ---@param order string[]
 ---@param key string
 ---@return nil
-local function touch_cache_key(order, key)
-	for index, existing in ipairs(order) do
-		if existing == key then
-			table.remove(order, index)
-			break
-		end
-	end
-	order[#order + 1] = key
-end
-
 ---@param cache table<string, any>
 ---@param order string[]
 ---@param max_entries integer
@@ -184,17 +176,7 @@ end
 ---@param value any
 ---@return nil
 function M.set_bounded_cache_entry(cache, order, max_entries, key, value)
-	if type(key) ~= "string" or key == "" then
-		return
-	end
-	cache[key] = value
-	touch_cache_key(order, key)
-	while #order > max_entries do
-		local oldest = table.remove(order, 1)
-		if oldest ~= nil then
-			cache[oldest] = nil
-		end
-	end
+	cache_utils.set_bounded_cache_entry(cache, order, max_entries, key, value)
 end
 
 ---@param cache table<string, any>
@@ -202,11 +184,7 @@ end
 ---@param key string
 ---@return any
 function M.get_bounded_cache_entry(cache, order, key)
-	local value = cache[key]
-	if value ~= nil and type(key) == "string" and key ~= "" then
-		touch_cache_key(order, key)
-	end
-	return value
+	return cache_utils.get_bounded_cache_entry(cache, order, key)
 end
 
 ---@param key string

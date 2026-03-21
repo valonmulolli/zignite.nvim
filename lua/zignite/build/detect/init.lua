@@ -1,5 +1,6 @@
 local backend = require("zignite.build.detect.backend")
 local parsers = require("zignite.build.detect.parsers")
+local cache_utils = require("zignite.utils.cache")
 
 ---@type table
 local M = {}
@@ -18,67 +19,6 @@ local function trim_text(value)
 		return ""
 	end
 	return (value:gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
----@param order string[]
----@param key string
----@return nil
-local function touch_cache_key(order, key)
-	for index, existing in ipairs(order) do
-		if existing == key then
-			table.remove(order, index)
-			break
-		end
-	end
-	order[#order + 1] = key
-end
-
----@param cache table<string, any>
----@param order string[]
----@param max_entries integer
----@param key string
----@param value any
----@return nil
-local function set_bounded_cache_entry(cache, order, max_entries, key, value)
-	if type(key) ~= "string" or key == "" then
-		return
-	end
-	cache[key] = value
-	touch_cache_key(order, key)
-	while #order > max_entries do
-		local oldest = table.remove(order, 1)
-		if oldest ~= nil then
-			cache[oldest] = nil
-		end
-	end
-end
-
----@param cache table<string, any>
----@param order string[]
----@param key string
----@return any
-local function get_bounded_cache_entry(cache, order, key)
-	local value = cache[key]
-	if value ~= nil and type(key) == "string" and key ~= "" then
-		touch_cache_key(order, key)
-	end
-	return value
-end
-
----@param tbl table<string, string>|nil
----@return table<string, string>
-local function copy_string_map(tbl)
-	---@type table<string, string>
-	local out = {}
-	if type(tbl) ~= "table" then
-		return out
-	end
-	for key, value in pairs(tbl) do
-		if type(key) == "string" and type(value) == "string" then
-			out[key] = value
-		end
-	end
-	return out
 end
 
 ---@param tool string
@@ -111,36 +51,66 @@ end
 ---@param parser fun(lines: string[]): table<string, string>
 ---@return table<string, string>
 local function detect_commands_from_tool(cache_key, tool, executable, command_argv, parser)
-	local cached = get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
+	local cached = cache_utils.get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
 	if cached ~= nil then
-		return copy_string_map(cached)
+		return cache_utils.copy_string_map(cached)
 	end
 
 	local zig_detected = detect_commands_with_zig_backend(tool)
 	if zig_detected ~= nil then
-		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, zig_detected)
-		return copy_string_map(zig_detected)
+		cache_utils.set_bounded_cache_entry(
+			tool_command_cache,
+			tool_command_cache_order,
+			TOOL_COMMAND_CACHE_MAX,
+			cache_key,
+			zig_detected
+		)
+		return cache_utils.copy_string_map(zig_detected)
 	end
 
 	if type(vim.fn.executable) ~= "function" or vim.fn.executable(executable) ~= 1 then
-		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
+		cache_utils.set_bounded_cache_entry(
+			tool_command_cache,
+			tool_command_cache_order,
+			TOOL_COMMAND_CACHE_MAX,
+			cache_key,
+			{}
+		)
 		return {}
 	end
 	if type(vim.fn.systemlist) ~= "function" then
-		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
+		cache_utils.set_bounded_cache_entry(
+			tool_command_cache,
+			tool_command_cache_order,
+			TOOL_COMMAND_CACHE_MAX,
+			cache_key,
+			{}
+		)
 		return {}
 	end
 
 	local output_lines = vim.fn.systemlist(command_argv)
 	local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
 	if type(output_lines) ~= "table" or shell_error ~= 0 then
-		set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
+		cache_utils.set_bounded_cache_entry(
+			tool_command_cache,
+			tool_command_cache_order,
+			TOOL_COMMAND_CACHE_MAX,
+			cache_key,
+			{}
+		)
 		return {}
 	end
 
 	local detected = parser(output_lines)
-	set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
-	return copy_string_map(detected)
+	cache_utils.set_bounded_cache_entry(
+		tool_command_cache,
+		tool_command_cache_order,
+		TOOL_COMMAND_CACHE_MAX,
+		cache_key,
+		detected
+	)
+	return cache_utils.copy_string_map(detected)
 end
 
 ---@param cache_key string
@@ -160,15 +130,21 @@ local function detect_commands_from_tool_async(
 	on_done,
 	force_refresh
 )
-	local cached = get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
+	local cached = cache_utils.get_bounded_cache_entry(tool_command_cache, tool_command_cache_order, cache_key)
 	if force_refresh ~= true and cached ~= nil then
-		on_done(copy_string_map(cached))
+		on_done(cache_utils.copy_string_map(cached))
 		return
 	end
 
 	local function run_command_fallback()
 		if type(vim.fn.executable) ~= "function" or vim.fn.executable(executable) ~= 1 then
-			set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, {})
+			cache_utils.set_bounded_cache_entry(
+				tool_command_cache,
+				tool_command_cache_order,
+				TOOL_COMMAND_CACHE_MAX,
+				cache_key,
+				{}
+			)
 			on_done({})
 			return
 		end
@@ -207,8 +183,14 @@ local function detect_commands_from_tool_async(
 						return
 					end
 					local detected = parser(lines)
-					set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
-					on_done(copy_string_map(detected))
+					cache_utils.set_bounded_cache_entry(
+						tool_command_cache,
+						tool_command_cache_order,
+						TOOL_COMMAND_CACHE_MAX,
+						cache_key,
+						detected
+					)
+					on_done(cache_utils.copy_string_map(detected))
 				end,
 			})
 			if type(job_id) == "number" and job_id > 0 then
@@ -224,8 +206,14 @@ local function detect_commands_from_tool_async(
 				return
 			end
 			local detected = parser(output_lines)
-			set_bounded_cache_entry(tool_command_cache, tool_command_cache_order, TOOL_COMMAND_CACHE_MAX, cache_key, detected)
-			on_done(copy_string_map(detected))
+			cache_utils.set_bounded_cache_entry(
+				tool_command_cache,
+				tool_command_cache_order,
+				TOOL_COMMAND_CACHE_MAX,
+				cache_key,
+				detected
+			)
+			on_done(cache_utils.copy_string_map(detected))
 			return
 		end
 
@@ -234,14 +222,14 @@ local function detect_commands_from_tool_async(
 
 	detect_commands_with_zig_backend_async(tool, function(zig_detected)
 		if zig_detected ~= nil then
-			set_bounded_cache_entry(
+			cache_utils.set_bounded_cache_entry(
 				tool_command_cache,
 				tool_command_cache_order,
 				TOOL_COMMAND_CACHE_MAX,
 				cache_key,
 				zig_detected
 			)
-			on_done(copy_string_map(zig_detected))
+			on_done(cache_utils.copy_string_map(zig_detected))
 			return
 		end
 		run_command_fallback()
