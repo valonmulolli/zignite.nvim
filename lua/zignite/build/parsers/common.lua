@@ -101,29 +101,6 @@ function M.tokenize_quoted_args(text)
 	return tokens
 end
 
----@param lines string[]
----@return string|nil
-function M.parse_cmake_project_name(lines)
-	for _, raw_line in ipairs(lines) do
-		local line = M.strip_hash_comment(raw_line)
-		local name = line:match("[Pp][Rr][Oo][Jj][Ee][Cc][Tt]%s*%(%s*([%w%._%-]+)")
-		if name and name ~= "" then
-			return name
-		end
-	end
-	return nil
-end
-
----@param token string
----@param project_name string|nil
----@return string
-function M.resolve_cmake_token(token, project_name)
-	if token == "${PROJECT_NAME}" and project_name and project_name ~= "" then
-		return project_name
-	end
-	return token
-end
-
 ---@param payload string
 ---@return table<string, string|number|boolean|table|nil>|nil
 function M.decode_json_payload(payload)

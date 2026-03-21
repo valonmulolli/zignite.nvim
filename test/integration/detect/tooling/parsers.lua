@@ -274,6 +274,126 @@ local function test_meson_targets_use_zig_project_parser()
     print("✓ Zig Meson parser test passed")
 end
 
+-- Test the Lua CMake fallback only handles literal executable targets when Zig is unavailable.
+local function test_cmake_targets_use_basic_lua_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+    local cmake_parser = require("zignite.build.parsers.cmake")
+    local original_executable = vim.fn.executable
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cmakefallback/CMakeLists.txt" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cmakefallback/CMakeLists.txt" then
+            return {
+                "project(demo)",
+                "add_executable(app src/main.cpp)",
+                "add_executable(${PROJECT_NAME} src/ignored.cpp)",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands, primary_target =
+        cmake_parser.detect_cmake_project_commands("/tmp/cmakefallback/src/main.cpp")
+    local expected_cmake_build = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target app"
+    assert(
+        commands["cmake-build-app"] == expected_cmake_build,
+        "Lua CMake fallback should keep obvious literal targets usable"
+    )
+    assert(primary_target == "app", "Lua CMake fallback should preserve the matching literal target")
+    assert(
+        commands["cmake-build-demo"] == nil,
+        "Lua CMake fallback should not resolve variable-based targets without Zig"
+    )
+
+    vim.fn.executable = original_executable
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ Lua CMake fallback parser test passed")
+end
+
+-- Test the Lua Meson fallback keeps literal executable parsing when Zig is unavailable.
+local function test_meson_targets_use_basic_lua_fallback()
+    init.setup({
+        build_commands = {},
+    })
+
+    local meson_parser = require("zignite.build.parsers.meson")
+    local original_executable = vim.fn.executable
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 0
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/mesonfallback/meson.build" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/mesonfallback/meson.build" then
+            return {
+                "project('demo', 'cpp')",
+                "executable('demo-app', 'src/main.cpp')",
+            }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands, primary_target =
+        meson_parser.detect_meson_project_commands("/tmp/mesonfallback/src/main.cpp")
+    assert(
+        commands["meson-build-demo-app"] == "meson setup build && meson compile -C build demo-app",
+        "Lua Meson fallback should keep obvious literal targets usable"
+    )
+    assert(primary_target == "demo-app", "Lua Meson fallback should preserve the matching literal target")
+
+    vim.fn.executable = original_executable
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ Lua Meson fallback parser test passed")
+end
+
 -- Test Maven project parsing can use the Zig project parser path.
 local function test_maven_project_uses_zig_project_parser()
     init.setup({
@@ -680,6 +800,8 @@ test_c_detected_make_targets_in_picker()
 test_make_targets_use_zig_project_parser()
 test_cmake_targets_use_zig_project_parser()
 test_meson_targets_use_zig_project_parser()
+test_cmake_targets_use_basic_lua_fallback()
+test_meson_targets_use_basic_lua_fallback()
 test_maven_project_uses_zig_project_parser()
 test_gradle_project_uses_zig_project_parser()
 test_cargo_targets_use_zig_project_parser()
