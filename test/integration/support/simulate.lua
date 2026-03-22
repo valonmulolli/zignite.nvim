@@ -11,10 +11,32 @@ M.detect_backend_tool_commands = {
 M.project_backend_lines = {
 	make = { "bench", "test" },
 	["package-json"] = { "dev", "build" },
-	cmake = { "TARGET\tapp\t1" },
+	cmake = {
+		"TARGET\tapp\t1",
+		"RUN_PATH\tapp\t./build/bin/app",
+		"PRIMARY_TARGET\tapp",
+		"PRIMARY_RUN_PATH\t./build/bin/app",
+	},
 	bazel = { "TARGET\tcc_binary\tapp\t1\t0\tmain.cc" },
-	meson = { "TARGET\tapp\t1" },
-	cargo = { "BIN\tapp\t1" },
+	meson = {
+		"TARGET\tapp\t1",
+		"RUN_PATH\tapp\t./build/app",
+		"PRIMARY_TARGET\tapp",
+		"PRIMARY_RUN_PATH\t./build/app",
+	},
+	cargo = {
+		"BIN\tapp\t1",
+		"PRIMARY_BIN\tapp",
+		"PRIMARY_RUN\tcargo run --bin 'app'",
+		"PRIMARY_RELEASE_RUN\tcargo run --release --bin 'app'",
+	},
+	go = {
+		"MODULE\texample.com/app",
+		"PRIMARY_SELECTOR\t./cmd/app",
+		"PRIMARY_BUILD\tgo build './cmd/app'",
+		"PRIMARY_RUN\tgo run './cmd/app'",
+		"PRIMARY_TEST\tgo test './cmd/app'",
+	},
 	pyproject = { "TOOL\tuv" },
 }
 

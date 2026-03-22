@@ -170,7 +170,12 @@ local function test_cmake_targets_use_zig_project_parser()
         assert(type(cmd) == "table", "Zig CMake parser should execute via argv")
         assert(cmd[2] == "--project-parse", "CMake parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=cmake", "CMake parser should use the cmake parser kind")
-        return { "TARGET\tapp\t1" }
+        return {
+            "TARGET\tapp\t1",
+            "RUN_PATH\tapp\t./build/bin/app",
+            "PRIMARY_TARGET\tapp",
+            "PRIMARY_RUN_PATH\t./build/bin/app",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cmakeproj/CMakeLists.txt" or path == "/tmp/cmakeproj/build/CMakeCache.txt" then
@@ -191,14 +196,22 @@ local function test_cmake_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, primary_target =
+    local commands, cmake_info =
         cmake_parser.detect_cmake_project_commands("/tmp/cmakeproj/src/main.cpp")
     assert(
         commands["cmake-build-app"] == "cmake --build build --target app",
         "Zig CMake parser should build the target"
     )
-    assert(type(commands["cmake-run-app"]) == "string", "Zig CMake parser should create a run command")
-    assert(primary_target == "app", "Zig CMake parser should preserve the primary target")
+    assert(
+        commands["cmake-run-app"] == "cmake --build build --target app && ./build/bin/app",
+        "Zig CMake parser should use the discovered run path directly"
+    )
+    assert(cmake_info.primary_target == "app", "Zig CMake parser should preserve the primary target")
+    assert(cmake_info.primary_run_path == "./build/bin/app", "Zig CMake parser should expose the primary run path")
+    assert(
+        cmake_info.primary_run == "cmake --build build --target app && ./build/bin/app",
+        "Zig CMake parser should expose the primary run command"
+    )
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -235,7 +248,12 @@ local function test_meson_targets_use_zig_project_parser()
         assert(type(cmd) == "table", "Zig Meson parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Meson parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=meson", "Meson parser should use the meson parser kind")
-        return { "TARGET\tdemo-app\t1" }
+        return {
+            "TARGET\tdemo-app\t1",
+            "RUN_PATH\tdemo-app\t./build/demo-app",
+            "PRIMARY_TARGET\tdemo-app",
+            "PRIMARY_RUN_PATH\t./build/demo-app",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/mesonproj/meson.build" or path == "/tmp/mesonproj/build/build.ninja" then
@@ -256,14 +274,22 @@ local function test_meson_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, primary_target =
+    local commands, meson_info =
         meson_parser.detect_meson_project_commands("/tmp/mesonproj/src/main.cpp")
     assert(
         commands["meson-build-demo-app"] == "meson compile -C build demo-app",
         "Zig Meson parser should build the target"
     )
-    assert(type(commands["meson-run-demo-app"]) == "string", "Zig Meson parser should create a run command")
-    assert(primary_target == "demo-app", "Zig Meson parser should preserve the primary target")
+    assert(
+        commands["meson-run-demo-app"] == "meson compile -C build demo-app && ./build/demo-app",
+        "Zig Meson parser should use the discovered run path directly"
+    )
+    assert(meson_info.primary_target == "demo-app", "Zig Meson parser should preserve the primary target")
+    assert(meson_info.primary_run_path == "./build/demo-app", "Zig Meson parser should expose the primary run path")
+    assert(
+        meson_info.primary_run == "meson compile -C build demo-app && ./build/demo-app",
+        "Zig Meson parser should expose the primary run command"
+    )
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -317,14 +343,14 @@ local function test_cmake_targets_use_basic_lua_fallback()
         return {}
     end
 
-    local commands, primary_target =
+    local commands, cmake_info =
         cmake_parser.detect_cmake_project_commands("/tmp/cmakefallback/src/main.cpp")
     local expected_cmake_build = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target app"
     assert(
         commands["cmake-build-app"] == expected_cmake_build,
         "Lua CMake fallback should keep obvious literal targets usable"
     )
-    assert(primary_target == "app", "Lua CMake fallback should preserve the matching literal target")
+    assert(cmake_info.primary_target == "app", "Lua CMake fallback should preserve the matching literal target")
     assert(
         commands["cmake-build-demo"] == nil,
         "Lua CMake fallback should not resolve variable-based targets without Zig"
@@ -379,13 +405,13 @@ local function test_meson_targets_use_basic_lua_fallback()
         return {}
     end
 
-    local commands, primary_target =
+    local commands, meson_info =
         meson_parser.detect_meson_project_commands("/tmp/mesonfallback/src/main.cpp")
     assert(
         commands["meson-build-demo-app"] == "meson setup build && meson compile -C build demo-app",
         "Lua Meson fallback should keep obvious literal targets usable"
     )
-    assert(primary_target == "demo-app", "Lua Meson fallback should preserve the matching literal target")
+    assert(meson_info.primary_target == "demo-app", "Lua Meson fallback should preserve the matching literal target")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
@@ -650,7 +676,13 @@ local function test_cargo_targets_use_zig_project_parser()
         assert(type(cmd) == "table", "Zig Cargo parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Cargo parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=cargo", "Cargo parser should use the cargo parser kind")
-        return { "BIN\tdemo\t1", "BIN\ttool\t0" }
+        return {
+            "BIN\tdemo\t1",
+            "BIN\ttool\t0",
+            "PRIMARY_BIN\tdemo",
+            "PRIMARY_RUN\tcargo run --bin 'demo'",
+            "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/rustproj/Cargo.toml" then
@@ -672,12 +704,12 @@ local function test_cargo_targets_use_zig_project_parser()
     end
 
     local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustproj/src/main.rs")
-    assert(commands["cargo-build-demo"] == "cargo build --bin demo", "Zig Cargo parser should build the inferred bin")
-    assert(commands["cargo-run-demo"] == "cargo run --bin demo", "Zig Cargo parser should run the inferred bin")
+    assert(commands["cargo-build-demo"] == "cargo build --bin 'demo'", "Zig Cargo parser should build the inferred bin")
+    assert(commands["cargo-run-demo"] == "cargo run --bin 'demo'", "Zig Cargo parser should run the inferred bin")
     assert(cargo_info.primary_bin == "demo", "Zig Cargo parser should preserve the primary bin")
-    assert(cargo_info.primary_run == "cargo run --bin demo", "Zig Cargo parser should expose the primary run command")
+    assert(cargo_info.primary_run == "cargo run --bin 'demo'", "Zig Cargo parser should expose the primary run command")
     assert(
-        cargo_info.primary_release_run == "cargo run --release --bin demo",
+        cargo_info.primary_release_run == "cargo run --release --bin 'demo'",
         "Zig Cargo parser should expose the primary release run command"
     )
 
@@ -731,15 +763,18 @@ local function test_cargo_targets_use_basic_lua_fallback()
 
     local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/bin/tool.rs")
     assert(
-        commands["cargo-build-tool"] == "cargo build --bin tool",
+        commands["cargo-build-tool"] == "cargo build --bin 'tool'",
         "Lua Cargo fallback should keep src/bin builds usable"
     )
     assert(
-        commands["cargo-run-tool"] == "cargo run --bin tool",
+        commands["cargo-run-tool"] == "cargo run --bin 'tool'",
         "Lua Cargo fallback should keep src/bin runs usable"
     )
     assert(cargo_info.primary_bin == "tool", "Lua Cargo fallback should preserve the obvious src/bin target")
-    assert(cargo_info.primary_run == "cargo run --bin tool", "Lua Cargo fallback should expose the primary run command")
+    assert(
+        cargo_info.primary_run == "cargo run --bin 'tool'",
+        "Lua Cargo fallback should expose the primary run command"
+    )
 
     local main_commands, main_primary = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/main.rs")
     assert(vim.tbl_isempty(main_commands), "Lua Cargo fallback should not infer package-name bins from Cargo.toml")
@@ -832,13 +867,14 @@ local function test_go_project_commands_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Go parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Go parser should call the Zig project parser mode")
-        if cmd[3] == "--kind=go-work" then
-            return { "USE\t/tmp/gowork/app\t1" }
-        end
-        if cmd[3] == "--kind=go-mod" then
-            return { "MODULE\texample.com/app" }
-        end
-        error("Unexpected Zig Go parser kind: " .. tostring(cmd[3]))
+        assert(cmd[3] == "--kind=go", "Go parser should use the unified go parser kind")
+        return {
+            "MODULE\texample.com/app",
+            "PRIMARY_SELECTOR\t./app/cmd/web",
+            "PRIMARY_BUILD\tgo build './app/cmd/web'",
+            "PRIMARY_RUN\tgo run './app/cmd/web'",
+            "PRIMARY_TEST\tgo test './app/cmd/web'",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/gowork/go.work" or path == "/tmp/gowork/app/go.mod" then
@@ -859,14 +895,17 @@ local function test_go_project_commands_use_zig_project_parser()
         return {}
     end
 
-    local commands, primary_selector, module_name =
-        go_parser.detect_go_project_commands("/tmp/gowork/app/cmd/web/main.go")
+    local commands, go_info = go_parser.detect_go_project_commands("/tmp/gowork/app/cmd/web/main.go")
     assert(
-        commands["go-run-package"] == "go run ./app/cmd/web",
+        commands["go-run-package"] == "go run './app/cmd/web'",
         "Zig Go parser should build package-relative run commands from go.work"
     )
-    assert(primary_selector == "./app/cmd/web", "Zig Go parser should preserve the primary package selector")
-    assert(module_name == "example.com/app", "Zig Go parser should preserve the matched module name")
+    assert(go_info.primary_selector == "./app/cmd/web", "Zig Go parser should preserve the primary package selector")
+    assert(go_info.module_name == "example.com/app", "Zig Go parser should preserve the matched module name")
+    assert(
+        go_info.primary_run == "go run './app/cmd/web'",
+        "Zig Go parser should expose the primary run command through parser metadata"
+    )
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -955,6 +994,171 @@ local function test_make_targets_use_zig_project_daemon()
     print("✓ Zig project daemon parser test passed")
 end
 
+-- Test project parsing falls back to one-shot parsing when the daemon times out.
+local function test_make_targets_fall_back_after_project_daemon_timeout()
+    init.setup({
+        build_commands = {},
+    })
+
+    local make_parser = require("zignite.build.parsers.make")
+    local utils_module = require("zignite.utils")
+    local detect_backend = require("zignite.build.detect.backend")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_wait = vim.wait
+    local original_chansend = vim.fn.chansend
+
+    utils_module.get_project_root = function()
+        return "/tmp/cdetect"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.wait = function()
+        return false
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
+            return { "bench", "test" }
+        end
+        error("Expected one-shot project parse fallback to use systemlist")
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cdetect/Makefile" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cdetect/Makefile" then
+            error("Lua Makefile parser should not be used when one-shot Zig fallback succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+    vim.fn.chansend = function(job_id, data)
+        local job = mock_jobs[job_id]
+        if job and is_project_daemon_cmd(job.cmd) then
+            state.project_backend_request_count = state.project_backend_request_count + 1
+            job.input = job.input .. tostring(data or "")
+            return 1
+        end
+        if original_chansend then
+            return original_chansend(job_id, data)
+        end
+        return 0
+    end
+
+    detect_backend.reset()
+    reset_job_results()
+    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
+    assert(commands.bench == "make bench", "Timed out project daemon should fall back to one-shot parsing")
+    assert(commands.test == "make test", "Timed out project daemon should still return parsed targets")
+    assert(
+        count_project_backend_requests() == 1,
+        "Timed out daemon path should still issue one request before fallback"
+    )
+
+    vim.fn.chansend = original_chansend
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.wait = original_wait
+    vim.v.shell_error = 0
+    detect_backend.reset()
+    reset_job_results()
+
+    print("✓ Zig project daemon timeout fallback test passed")
+end
+
+-- Test buffered project-daemon output can be reassembled across split stdout chunks.
+local function test_make_targets_use_buffered_project_daemon_chunks()
+    init.setup({
+        build_commands = {},
+    })
+
+    local make_parser = require("zignite.build.parsers.make")
+    local utils_module = require("zignite.utils")
+    local detect_backend = require("zignite.build.detect.backend")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_wait = vim.wait
+
+    utils_module.get_project_root = function()
+        return "/tmp/cdetect"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.wait = function(_, condition)
+        return condition()
+    end
+    vim.fn.systemlist = function()
+        error("systemlist should not be used when the buffered daemon response succeeds")
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cdetect/Makefile" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cdetect/Makefile" then
+            error("Lua Makefile parser should not be used when buffered daemon parsing succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+    state.next_project_backend_stdout_chunks = {
+        { "@@ZPRJ_RES_BEG" },
+        { "IN 1\n\tbench\n\tt" },
+        { "est\n@@ZPRJ_RES_E" },
+        { "ND 1\n" },
+    }
+
+    detect_backend.reset()
+    reset_job_results()
+    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
+    assert(commands.bench == "make bench", "Buffered daemon chunks should still decode the first Make target")
+    assert(commands.test == "make test", "Buffered daemon chunks should still decode the second Make target")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.wait = original_wait
+    detect_backend.reset()
+    reset_job_results()
+
+    print("✓ Zig project daemon buffered chunk test passed")
+end
+
 -- Test run_build_command can execute zig commands detected from `zig --help`.
 
 test_c_detected_make_targets_in_picker()
@@ -972,3 +1176,5 @@ test_cargo_targets_use_basic_lua_fallback()
 test_pyproject_tools_use_zig_project_parser()
 test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
+test_make_targets_fall_back_after_project_daemon_timeout()
+test_make_targets_use_buffered_project_daemon_chunks()
