@@ -81,8 +81,12 @@ local function with_optional_setup(root, is_ready, setup_command, build_command)
 end
 
 ---@param target string
+---@param run_path string|nil
 ---@return string
-local function build_discovered_run_suffix(target)
+local function build_discovered_run_suffix(target, run_path)
+	if type(run_path) == "string" and run_path ~= "" then
+		return shellescape_text(run_path)
+	end
 	local target_name = tostring(target or "")
 	local target_exe = target_name .. ".exe"
 	local candidate_paths = {
@@ -251,9 +255,10 @@ end
 
 ---@param root string|nil
 ---@param target string
+---@param run_path string|nil
 ---@return string
-function M.cmake_run_command(root, target)
-	return M.cmake_build_command(root, target) .. " && " .. build_discovered_run_suffix(target)
+function M.cmake_run_command(root, target, run_path)
+	return M.cmake_build_command(root, target) .. " && " .. build_discovered_run_suffix(target, run_path)
 end
 
 ---@param root string|nil
@@ -282,9 +287,10 @@ end
 
 ---@param root string|nil
 ---@param target string
+---@param run_path string|nil
 ---@return string
-function M.meson_run_command(root, target)
-	return M.meson_build_command(root, target) .. " && " .. build_discovered_run_suffix(target)
+function M.meson_run_command(root, target, run_path)
+	return M.meson_build_command(root, target) .. " && " .. build_discovered_run_suffix(target, run_path)
 end
 
 ---@param root string|nil

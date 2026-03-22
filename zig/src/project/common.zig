@@ -70,3 +70,112 @@ pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, f
     }
     return try allocator.dupe(u8, std.fs.path.basename(filepath));
 }
+
+pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    var quoted: std.ArrayList(u8) = .empty;
+    errdefer quoted.deinit(allocator);
+
+    try quoted.append(allocator, '\'');
+    for (value) |ch| {
+        if (ch == '\'') {
+            try quoted.appendSlice(allocator, "'\"'\"'");
+        } else {
+            try quoted.append(allocator, ch);
+        }
+    }
+    try quoted.append(allocator, '\'');
+
+    return try quoted.toOwnedSlice(allocator);
+}
+
+pub fn discoverBuildRunPathAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    target: []const u8,
+) !?[]u8 {
+    if (target.len == 0) return null;
+
+    const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
+    defer allocator.free(target_exe);
+
+    const candidate_dirs = [_][]const u8{
+        "",
+        "bin/",
+        "Debug/",
+        "Release/",
+        "RelWithDebInfo/",
+        "MinSizeRel/",
+        "bin/Debug/",
+        "bin/Release/",
+        "bin/RelWithDebInfo/",
+        "bin/MinSizeRel/",
+    };
+
+    for (candidate_dirs) |prefix| {
+        const base_path = try std.fmt.allocPrint(allocator, "./build/{s}{s}", .{ prefix, target });
+        defer allocator.free(base_path);
+        if (buildRelativePathExists(allocator, root, base_path)) {
+            return try allocator.dupe(u8, base_path);
+        }
+
+        const exe_path = try std.fmt.allocPrint(allocator, "./build/{s}{s}", .{ prefix, target_exe });
+        defer allocator.free(exe_path);
+        if (buildRelativePathExists(allocator, root, exe_path)) {
+            return try allocator.dupe(u8, exe_path);
+        }
+    }
+
+    const build_dir = try std.fs.path.join(allocator, &.{ root, "build" });
+    defer allocator.free(build_dir);
+
+    var dir = if (std.fs.path.isAbsolute(build_dir))
+        std.fs.openDirAbsolute(build_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return null,
+            else => return err,
+        }
+    else
+        std.fs.cwd().openDir(build_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return null,
+            else => return err,
+        };
+    defer dir.close();
+
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (pathContainsIgnoredBuildDir(entry.path)) continue;
+
+        const basename = std.fs.path.basename(entry.path);
+        if (!std.mem.eql(u8, basename, target) and !std.mem.eql(u8, basename, target_exe)) {
+            continue;
+        }
+
+        return try std.fmt.allocPrint(allocator, "./build/{s}", .{entry.path});
+    }
+
+    return null;
+}
+
+fn buildRelativePathExists(allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
+    const full_path = std.fs.path.join(allocator, &.{ root, relative_path }) catch return false;
+    defer allocator.free(full_path);
+
+    if (std.fs.path.isAbsolute(full_path)) {
+        std.fs.accessAbsolute(full_path, .{}) catch return false;
+        return true;
+    }
+    std.fs.cwd().access(full_path, .{}) catch return false;
+    return true;
+}
+
+fn pathContainsIgnoredBuildDir(path: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, path, '/');
+    while (parts.next()) |part| {
+        if (std.mem.eql(u8, part, "CMakeFiles") or std.mem.eql(u8, part, "meson-private") or std.mem.eql(u8, part, "meson-logs")) {
+            return true;
+        }
+    }
+    return false;
+}

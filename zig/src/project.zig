@@ -5,6 +5,7 @@ const cmake = @import("project/cmake.zig");
 const common = @import("project/common.zig");
 const gradle = @import("project/gradle.zig");
 const go_mod = @import("project/go_mod.zig");
+const go = @import("project/go.zig");
 const go_work = @import("project/go_work.zig");
 const make = @import("project/make.zig");
 const maven = @import("project/maven.zig");
@@ -22,6 +23,7 @@ pub const Kind = enum {
     meson,
     cargo,
     pyproject,
+    go,
     go_mod,
     go_work,
 };
@@ -150,6 +152,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
+    if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
     if (std.ascii.eqlIgnoreCase(value, "go-work")) return .go_work;
     return error.InvalidProjectParseKind;
@@ -200,8 +203,36 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     if (options.kind == .cmake) {
         const items = try cmake.parseTargets(allocator, contents, options.path, options.match_path);
         defer cmake.freeOwnedTargets(allocator, items);
+        var primary_target: ?[]const u8 = null;
+        for (items) |item| {
+            if (item.matched and primary_target == null) {
+                primary_target = item.name;
+            }
+        }
+        if (primary_target == null and items.len > 0) {
+            primary_target = items[0].name;
+        }
+
+        const root = std.fs.path.dirname(options.path) orelse "";
+        var primary_run_path: ?[]u8 = null;
+        defer if (primary_run_path) |value| allocator.free(value);
+
         for (items) |item| {
             try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+            const run_path = try common.discoverBuildRunPathAlloc(allocator, root, item.name);
+            defer if (run_path) |value| allocator.free(value);
+            if (run_path) |value| {
+                try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
+                if (primary_target != null and std.mem.eql(u8, item.name, primary_target.?) and primary_run_path == null) {
+                    primary_run_path = try allocator.dupe(u8, value);
+                }
+            }
+        }
+        if (primary_target) |name| {
+            try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
+            if (primary_run_path) |value| {
+                try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
+            }
         }
         return;
     }
@@ -209,8 +240,36 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     if (options.kind == .meson) {
         const items = try meson.parseTargets(allocator, contents, options.path, options.match_path);
         defer meson.freeOwnedTargets(allocator, items);
+        var primary_target: ?[]const u8 = null;
+        for (items) |item| {
+            if (item.matched and primary_target == null) {
+                primary_target = item.name;
+            }
+        }
+        if (primary_target == null and items.len > 0) {
+            primary_target = items[0].name;
+        }
+
+        const root = std.fs.path.dirname(options.path) orelse "";
+        var primary_run_path: ?[]u8 = null;
+        defer if (primary_run_path) |value| allocator.free(value);
+
         for (items) |item| {
             try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+            const run_path = try common.discoverBuildRunPathAlloc(allocator, root, item.name);
+            defer if (run_path) |value| allocator.free(value);
+            if (run_path) |value| {
+                try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
+                if (primary_target != null and std.mem.eql(u8, item.name, primary_target.?) and primary_run_path == null) {
+                    primary_run_path = try allocator.dupe(u8, value);
+                }
+            }
+        }
+        if (primary_target) |name| {
+            try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
+            if (primary_run_path) |value| {
+                try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
+            }
         }
         return;
     }
@@ -218,8 +277,45 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     if (options.kind == .cargo) {
         const items = try cargo.parseTargets(allocator, contents, options.path, options.match_path);
         defer cargo.freeOwnedTargets(allocator, items);
+        var primary_bin: ?[]const u8 = null;
         for (items) |item| {
+            if (item.matched and primary_bin == null) {
+                primary_bin = item.name;
+            }
             try stdout.print("BIN\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        }
+        if (primary_bin == null and items.len > 0) {
+            primary_bin = items[0].name;
+        }
+        if (primary_bin) |name| {
+            const quoted = try common.quoteShellArgAlloc(allocator, name);
+            defer allocator.free(quoted);
+
+            try stdout.print("PRIMARY_BIN\t{s}\n", .{name});
+            try stdout.print("PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted});
+            try stdout.print("PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted});
+        }
+        return;
+    }
+
+    if (options.kind == .go) {
+        const info = try go.parseInfo(allocator, contents, options.path, options.match_path);
+        defer go.freeOwnedInfo(allocator, info);
+
+        if (info.module_name) |name| {
+            try stdout.print("MODULE\t{s}\n", .{name});
+        }
+        if (info.primary_selector) |selector| {
+            try stdout.print("PRIMARY_SELECTOR\t{s}\n", .{selector});
+        }
+        if (info.primary_build) |command| {
+            try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+        }
+        if (info.primary_run) |command| {
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+        }
+        if (info.primary_test) |command| {
+            try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
         }
         return;
     }
@@ -256,15 +352,12 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         const items = try bazel.parseTargets(allocator, contents);
         defer bazel.freeOwnedTargets(allocator, items);
         for (items) |item| {
-            try stdout.print(
-                "TARGET\t{s}\t{s}\t{d}\t{d}",
-                .{
-                    item.rule_name,
-                    item.name,
-                    if (item.supports_run) @as(u8, 1) else @as(u8, 0),
-                    if (item.supports_test) @as(u8, 1) else @as(u8, 0),
-                }
-            );
+            try stdout.print("TARGET\t{s}\t{s}\t{d}\t{d}", .{
+                item.rule_name,
+                item.name,
+                if (item.supports_run) @as(u8, 1) else @as(u8, 0),
+                if (item.supports_test) @as(u8, 1) else @as(u8, 0),
+            });
             for (item.source_entries) |entry| {
                 try stdout.print("\t{s}", .{entry});
             }
@@ -297,6 +390,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .meson => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,
+        .go => return error.InvalidProjectParseKind,
         .go_mod => return error.InvalidProjectParseKind,
         .go_work => return error.InvalidProjectParseKind,
     }

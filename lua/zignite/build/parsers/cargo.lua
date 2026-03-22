@@ -24,9 +24,13 @@ end
 ---@param bin_name string
 ---@return nil
 local function add_bin_commands(commands, bin_name)
-	commands["cargo-build-" .. bin_name] = "cargo build --bin " .. bin_name
-	commands["cargo-run-" .. bin_name] = "cargo run --bin " .. bin_name
-	commands["cargo-test-" .. bin_name] = "cargo test --bin " .. bin_name
+	local quoted_bin = utils.quote_cli_argument(bin_name)
+	if quoted_bin == nil then
+		return
+	end
+	commands["cargo-build-" .. bin_name] = "cargo build --bin " .. quoted_bin
+	commands["cargo-run-" .. bin_name] = "cargo run --bin " .. quoted_bin
+	commands["cargo-test-" .. bin_name] = "cargo test --bin " .. quoted_bin
 end
 
 ---@param primary_bin string|nil
@@ -35,10 +39,14 @@ local function build_primary_info(primary_bin)
 	if type(primary_bin) ~= "string" or primary_bin == "" then
 		return nil
 	end
+	local quoted_bin = utils.quote_cli_argument(primary_bin)
+	if quoted_bin == nil then
+		return nil
+	end
 	return {
 		primary_bin = primary_bin,
-		primary_run = "cargo run --bin " .. primary_bin,
-		primary_release_run = "cargo run --release --bin " .. primary_bin,
+		primary_run = "cargo run --bin " .. quoted_bin,
+		primary_release_run = "cargo run --release --bin " .. quoted_bin,
 	}
 end
 
@@ -70,6 +78,8 @@ local function parse_zig_targets(zig_lines)
 	---@type table<string, string>
 	local commands = {}
 	local primary_bin = nil
+	local primary_run = nil
+	local primary_release_run = nil
 	for _, raw_line in ipairs(zig_lines) do
 		local line = tostring(raw_line or "")
 		local kind, bin_name, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
@@ -78,9 +88,23 @@ local function parse_zig_targets(zig_lines)
 			if matched_flag == "1" and not primary_bin then
 				primary_bin = bin_name
 			end
+		else
+			local value_kind, value = line:match("^([^\t]+)\t(.*)$")
+			if value_kind == "PRIMARY_BIN" and value ~= "" then
+				primary_bin = value
+			elseif value_kind == "PRIMARY_RUN" and value ~= "" then
+				primary_run = value
+			elseif value_kind == "PRIMARY_RELEASE_RUN" and value ~= "" then
+				primary_release_run = value
+			end
 		end
 	end
-	return commands, build_primary_info(primary_bin)
+	local info = build_primary_info(primary_bin)
+	if info then
+		info.primary_run = primary_run or info.primary_run
+		info.primary_release_run = primary_release_run or info.primary_release_run
+	end
+	return commands, info
 end
 
 ---@param filepath string
