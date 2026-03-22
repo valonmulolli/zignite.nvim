@@ -32,6 +32,7 @@ pub const Options = struct {
     kind: Kind,
     path: []const u8,
     match_path: ?[]const u8 = null,
+    package_path: []const u8 = "",
 };
 
 const ProjectDaemonRequestHeader = struct {
@@ -49,6 +50,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
     var kind: ?Kind = null;
     var path: ?[]const u8 = null;
     var match_path: ?[]const u8 = null;
+    var package_path: []const u8 = "";
 
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--project-parse")) {
@@ -59,6 +61,8 @@ pub fn parseArgs(args: []const []const u8) !Options {
             path = arg["--path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--match-path=")) {
             match_path = arg["--match-path=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--package-path=")) {
+            package_path = arg["--package-path=".len..];
         } else {
             return error.InvalidProjectParseFlag;
         }
@@ -68,6 +72,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
         .kind = kind orelse return error.MissingProjectParseKind,
         .path = path orelse return error.MissingProjectParsePath,
         .match_path = match_path,
+        .package_path = package_path,
     };
 }
 
@@ -351,6 +356,14 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     if (options.kind == .bazel) {
         const items = try bazel.parseTargets(allocator, contents);
         defer bazel.freeOwnedTargets(allocator, items);
+        const info = try bazel.buildCommandInfo(
+            allocator,
+            items,
+            options.path,
+            options.package_path,
+            options.match_path,
+        );
+        defer bazel.freeOwnedCommandInfo(allocator, info);
         for (items) |item| {
             try stdout.print("TARGET\t{s}\t{s}\t{d}\t{d}", .{
                 item.rule_name,
@@ -362,6 +375,18 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
                 try stdout.print("\t{s}", .{entry});
             }
             try stdout.writeByte('\n');
+        }
+        for (info.commands) |entry| {
+            try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+        }
+        if (info.primary_build) |command| {
+            try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+        }
+        if (info.primary_run) |command| {
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+        }
+        if (info.primary_test) |command| {
+            try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
         }
         return;
     }
@@ -493,4 +518,38 @@ test "writeOutput emits cmake primary target and discovered run path" {
     try std.testing.expect(
         std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null
     );
+}
+
+test "writeOutput emits bazel commands and primary targets" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(
+        out.writer(allocator),
+        allocator,
+        .{
+            .kind = .bazel,
+            .path = "/tmp/bazelzig/app/BUILD.bazel",
+            .match_path = "/tmp/bazelzig/app/main.cc",
+            .package_path = "app",
+        },
+        \\cc_binary(
+        \\    name = "main",
+        \\    srcs = ["main.cc"],
+        \\)
+        \\
+        \\cc_test(
+        \\    name = "main_test",
+        \\    srcs = ["main_test.cc"],
+        \\)
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null
+    );
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tbazel run //app:main\n") != null);
 }
