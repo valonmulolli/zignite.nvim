@@ -3,25 +3,25 @@ local M = {}
 
 M.detect_backend_tool_commands = {
 	zig = {
-		"build	zig build",
-		"fmt	zig fmt $file",
-		"fetch	zig fetch $zignite_args",
-		"run	zig run $file",
+		"build\tzig build",
+		"fmt\tzig fmt $file",
+		"fetch\tzig fetch $zignite_args",
+		"run\tzig run $file",
 	},
 	go = {
-		"build	go build",
-		"env	go env",
-		"fmt	go fmt ./...",
+		"build\tgo build",
+		"env\tgo env",
+		"fmt\tgo fmt ./...",
 	},
 	cargo = {
-		"build	cargo build",
-		"check	cargo check",
-		"run	cargo run",
+		"build\tcargo build",
+		"check\tcargo check",
+		"run\tcargo run",
 	},
 	odin = {
-		"build	odin build .",
-		"run	odin run .",
-		"test	odin test .",
+		"build\todin build .",
+		"run\todin run .",
+		"test\todin test .",
 	},
 }
 
@@ -34,7 +34,13 @@ M.project_backend_lines = {
 		"PRIMARY_TARGET\tapp",
 		"PRIMARY_RUN_PATH\t./build/bin/app",
 	},
-	bazel = { "TARGET\tcc_binary\tapp\t1\t0\tmain.cc" },
+	bazel = {
+		"TARGET\tcc_binary\tapp\t1\t0\tmain.cc",
+		"COMMAND\tbazel-build-app\tbazel build //:app",
+		"COMMAND\tbazel-run-app\tbazel run //:app",
+		"PRIMARY_BUILD\tbazel build //:app",
+		"PRIMARY_RUN\tbazel run //:app",
+	},
 	meson = {
 		"TARGET\tapp\t1",
 		"RUN_PATH\tapp\t./build/app",
