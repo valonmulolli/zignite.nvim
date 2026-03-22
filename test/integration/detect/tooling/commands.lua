@@ -253,6 +253,55 @@ local function test_detect_worker_async_timeout_resets_client()
     print("✓ Detect worker async timeout reset test passed")
 end
 
+-- Test sync detect worker parsing handles multi-line stdout callbacks without timing out.
+local function test_detect_worker_sync_multiline_response()
+    init.setup({
+        build_commands = {},
+    })
+
+    local detect_module = require("zignite.build.detect")
+    local detect_backend = require("zignite.build.detect.backend")
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_wait = vim.wait
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.wait = function(_, condition)
+        return condition()
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--detect" then
+            error("Sync detect should not fall back to one-shot parsing when the daemon succeeds")
+        end
+        vim.v.shell_error = 0
+        return {}
+    end
+
+    detect_backend.reset()
+    reset_job_results()
+    local commands = detect_module.detect_go_tool_commands()
+    assert(type(commands) == "table", "Sync detect worker should return detected commands")
+    assert(commands.build == "go build", "Sync detect worker should decode build command")
+    assert(commands.env == "go env", "Sync detect worker should decode env command")
+    assert(count_detect_backend_requests() == 1, "Sync detect worker should send one daemon request")
+
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.wait = original_wait
+    detect_backend.reset()
+    reset_job_results()
+
+    print("✓ Detect worker sync multiline response test passed")
+end
+
 -- Test run_build_command can execute cpp commands detected from Makefile targets.
 local function test_run_build_command_with_detected_cpp_make_target()
     init.setup({
@@ -433,6 +482,7 @@ test_run_build_command_with_detected_rust_command()
 test_rust_detected_commands_skip_cargo_noise()
 test_detect_worker_async_timeout_resets_client()
 test_run_build_command_with_detected_cpp_make_target()
+test_detect_worker_sync_multiline_response()
 test_run_build_command_with_detected_odin_command()
 test_run_build_command_with_detected_java_maven_command()
 test_run_build_command_with_detected_kotlin_gradle_command()

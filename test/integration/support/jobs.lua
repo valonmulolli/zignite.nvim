@@ -22,6 +22,18 @@ function M.attach(ctx, simulation)
 	local original_notify = vim.notify
 	local original_log = vim.log
 
+	---@param lines string[]
+	---@return string[]
+	local function to_stdout_payload(lines)
+		---@type string[]
+		local payload = {}
+		for _, line in ipairs(lines or {}) do
+			payload[#payload + 1] = tostring(line or "")
+		end
+		payload[#payload + 1] = ""
+		return payload
+	end
+
 	vim.fn.jobstart = function(cmd, opts)
 		local job_id = ctx.state.next_job_id
 		ctx.state.next_job_id = ctx.state.next_job_id + 1
@@ -85,7 +97,7 @@ function M.attach(ctx, simulation)
 				if response and job.opts and job.opts.on_stdout then
 					ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
 					vim.defer_fn(function()
-						job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+						job.opts.on_stdout(job_id, to_stdout_payload(response))
 					end, 10)
 				end
 				return 1
@@ -115,7 +127,7 @@ function M.attach(ctx, simulation)
 						}
 						ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
 						vim.defer_fn(function()
-							job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+							job.opts.on_stdout(job_id, to_stdout_payload(response))
 						end, 10)
 					end
 					return 1
@@ -125,7 +137,7 @@ function M.attach(ctx, simulation)
 				if response and job.opts and job.opts.on_stdout then
 					ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
 					vim.defer_fn(function()
-						job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+						job.opts.on_stdout(job_id, to_stdout_payload(response))
 					end, 10)
 				end
 				return 1
@@ -145,7 +157,7 @@ function M.attach(ctx, simulation)
 						}
 						ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
 						vim.defer_fn(function()
-							job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+							job.opts.on_stdout(job_id, to_stdout_payload(response))
 						end, 10)
 					end
 					return 1
@@ -165,7 +177,7 @@ function M.attach(ctx, simulation)
 						end
 					else
 						vim.defer_fn(function()
-							job.opts.on_stdout(job_id, response)
+							job.opts.on_stdout(job_id, to_stdout_payload(response))
 						end, 10)
 					end
 				end

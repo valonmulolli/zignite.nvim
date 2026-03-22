@@ -78,21 +78,30 @@ local function decode_buffered_lines(buffer, data)
 		return {}
 	end
 
-	local chunk = buffer.value or ""
-	for _, raw_line in ipairs(data) do
-		chunk = chunk .. tostring(raw_line or "")
+	if #data == 0 then
+		return {}
 	end
-	local trailing_newline = chunk:sub(-1) == "\n"
+
 	---@type string[]
 	local lines = {}
-	for line in (chunk .. "\n"):gmatch("(.-)\n") do
-		lines[#lines + 1] = line
+	local first = tostring(data[1] or "")
+	lines[1] = (buffer.value or "") .. first
+
+	for index = 2, #data - 1 do
+		lines[#lines + 1] = tostring(data[index] or "")
 	end
-	if not trailing_newline then
-		buffer.value = table.remove(lines) or ""
-	else
+
+	buffer.value = tostring(data[#data] or "")
+	if #data == 1 then
+		buffer.value = lines[1]
+		return {}
+	end
+
+	if buffer.value == "" then
 		buffer.value = ""
+		return lines
 	end
+
 	return lines
 end
 
