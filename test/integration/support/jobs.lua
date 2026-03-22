@@ -13,6 +13,7 @@ local M = {}
 ---@return function
 function M.attach(ctx, simulation)
 	local original_jobstart = vim.fn.jobstart
+	local original_jobstop = vim.fn.jobstop
 	local original_chansend = vim.fn.chansend
 	local original_chanclose = vim.fn.chanclose
 	local original_setqflist = vim.fn.setqflist
@@ -28,6 +29,7 @@ function M.attach(ctx, simulation)
 		ctx.mock_jobs[job_id] = { cmd = cmd, opts = opts, input = "" }
 
 		if simulation.is_quickfix_backend_cmd(cmd)
+			or simulation.is_unified_daemon_cmd(cmd)
 			or simulation.is_detect_daemon_cmd(cmd)
 			or simulation.is_project_daemon_cmd(cmd)
 		then
@@ -63,6 +65,112 @@ function M.attach(ctx, simulation)
 		local job = ctx.mock_jobs[job_id]
 		if not job then
 			return 0
+		end
+
+		if simulation.is_unified_daemon_cmd(job.cmd) then
+			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+			if text:match("^@@ZQF_BEGIN%s+") then
+				if ctx.state.next_quickfix_backend_exit_code ~= 0 then
+					local exit_code = ctx.state.next_quickfix_backend_exit_code
+					ctx.state.next_quickfix_backend_exit_code = 0
+					if job.opts and job.opts.on_exit then
+						vim.defer_fn(function()
+							job.opts.on_exit(job_id, exit_code)
+						end, 10)
+					end
+					return 1
+				end
+
+				local response = simulation.parse_unified_daemon_request(text)
+				if response and job.opts and job.opts.on_stdout then
+					ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+					end, 10)
+				end
+				return 1
+			end
+
+			if text:match("^@@ZDET_REQ_BEGIN%s+") then
+				ctx.state.detect_backend_request_count = ctx.state.detect_backend_request_count + 1
+				if ctx.state.next_detect_backend_exit_code ~= 0 then
+					local exit_code = ctx.state.next_detect_backend_exit_code
+					ctx.state.next_detect_backend_exit_code = 0
+					if job.opts and job.opts.on_exit then
+						vim.defer_fn(function()
+							job.opts.on_exit(job_id, exit_code)
+						end, 10)
+					end
+					return 1
+				end
+				if type(ctx.state.next_detect_backend_error) == "string" and ctx.state.next_detect_backend_error ~= "" then
+					local request_id = text:match("^@@ZDET_REQ_BEGIN%s+(%d+)%s+[%w_%-]+")
+					local error_message = ctx.state.next_detect_backend_error
+					ctx.state.next_detect_backend_error = nil
+					if request_id and job.opts and job.opts.on_stdout then
+						local response = {
+							"@@ZDET_RES_BEGIN " .. request_id,
+							"@@ZDET_RES_ERR " .. request_id .. " " .. error_message,
+							"@@ZDET_RES_END " .. request_id,
+						}
+						ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
+						vim.defer_fn(function()
+							job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+						end, 10)
+					end
+					return 1
+				end
+
+				local response = simulation.parse_unified_daemon_request(text)
+				if response and job.opts and job.opts.on_stdout then
+					ctx.state.detect_backend_invocations = ctx.state.detect_backend_invocations + 1
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+					end, 10)
+				end
+				return 1
+			end
+
+			if text:match("^@@ZPRJ_REQ_BEGIN%s+") then
+				ctx.state.project_backend_request_count = ctx.state.project_backend_request_count + 1
+				if type(ctx.state.next_project_backend_error) == "string" and ctx.state.next_project_backend_error ~= "" then
+					local request_id = text:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)$") or text:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)")
+					local error_message = ctx.state.next_project_backend_error
+					ctx.state.next_project_backend_error = nil
+					if request_id and job.opts and job.opts.on_stdout then
+						local response = {
+							"@@ZPRJ_RES_BEGIN " .. request_id,
+							"@@ZPRJ_RES_ERR " .. request_id .. " " .. error_message,
+							"@@ZPRJ_RES_END " .. request_id,
+						}
+						ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
+						vim.defer_fn(function()
+							job.opts.on_stdout(job_id, { table.concat(response, "\n") .. "\n" })
+						end, 10)
+					end
+					return 1
+				end
+
+				local response = simulation.parse_unified_daemon_request(text)
+				if response and job.opts and job.opts.on_stdout then
+					ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
+					local chunk_sets = ctx.state.next_project_backend_stdout_chunks
+					ctx.state.next_project_backend_stdout_chunks = nil
+					if type(chunk_sets) == "table" and #chunk_sets > 0 then
+						for _, chunk in ipairs(chunk_sets) do
+							local payload = type(chunk) == "table" and chunk or { tostring(chunk or "") }
+							vim.defer_fn(function()
+								job.opts.on_stdout(job_id, payload)
+							end, 10)
+						end
+					else
+						vim.defer_fn(function()
+							job.opts.on_stdout(job_id, response)
+						end, 10)
+					end
+				end
+				return 1
+			end
 		end
 
 		if simulation.is_quickfix_daemon_cmd(job.cmd) then
@@ -132,13 +240,42 @@ function M.attach(ctx, simulation)
 
 		if simulation.is_project_daemon_cmd(job.cmd) then
 			ctx.state.project_backend_request_count = ctx.state.project_backend_request_count + 1
+			if type(ctx.state.next_project_backend_error) == "string" and ctx.state.next_project_backend_error ~= "" then
+				local text = type(data) == "table" and table.concat(data) or tostring(data or "")
+				local request_id = text:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)$") or text:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)")
+				local error_message = ctx.state.next_project_backend_error
+				ctx.state.next_project_backend_error = nil
+				if request_id and job.opts and job.opts.on_stdout then
+					local response = {
+						"@@ZPRJ_RES_BEGIN " .. request_id,
+						"@@ZPRJ_RES_ERR " .. request_id .. " " .. error_message,
+						"@@ZPRJ_RES_END " .. request_id,
+					}
+					ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, response)
+					end, 10)
+				end
+				return 1
+			end
 			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
 			local response = simulation.parse_project_daemon_request(text)
 			if response and job.opts and job.opts.on_stdout then
 				ctx.state.project_backend_invocations = ctx.state.project_backend_invocations + 1
-				vim.defer_fn(function()
-					job.opts.on_stdout(job_id, response)
-				end, 10)
+				local chunk_sets = ctx.state.next_project_backend_stdout_chunks
+				ctx.state.next_project_backend_stdout_chunks = nil
+				if type(chunk_sets) == "table" and #chunk_sets > 0 then
+					for _, chunk in ipairs(chunk_sets) do
+						local payload = type(chunk) == "table" and chunk or { tostring(chunk or "") }
+						vim.defer_fn(function()
+							job.opts.on_stdout(job_id, payload)
+						end, 10)
+					end
+				else
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, response)
+					end, 10)
+				end
 			end
 			return 1
 		end
@@ -149,6 +286,17 @@ function M.attach(ctx, simulation)
 			end
 		else
 			job.input = job.input .. tostring(data or "")
+		end
+		return 1
+	end
+
+	vim.fn.jobstop = function(job_id)
+		ctx.state.jobstop_count = ctx.state.jobstop_count + 1
+		local job = ctx.mock_jobs[job_id]
+		if job and job.opts and job.opts.on_exit then
+			vim.defer_fn(function()
+				job.opts.on_exit(job_id, 1)
+			end, 10)
 		end
 		return 1
 	end
@@ -198,8 +346,9 @@ function M.attach(ctx, simulation)
 	end
 
 	return function()
-		vim.fn.jobstart = original_jobstart
-		vim.fn.chansend = original_chansend
+			vim.fn.jobstart = original_jobstart
+			vim.fn.jobstop = original_jobstop
+			vim.fn.chansend = original_chansend
 		vim.fn.chanclose = original_chanclose
 		vim.fn.setqflist = original_setqflist
 		vim.cmd = original_cmd
