@@ -33,12 +33,18 @@ local PROJECT_PROTOCOL = {
 	res_err = PROJECT_RES_ERR,
 }
 
+---@param value string
+---@return boolean
+local function contains_control_characters(value)
+	return type(value) ~= "string" or value == "" or value:find("[%c]") ~= nil
+end
+
 ---@param request_id integer
 ---@param params table
 ---@return string|nil
 local function build_detect_payload(request_id, params)
 	local tool = type(params) == "table" and params.tool or nil
-	if type(tool) ~= "string" or tool == "" then
+	if contains_control_characters(tool) then
 		return nil
 	end
 	return string.format("%s %d %s\n%s %d\n", DETECT_REQ_BEGIN, request_id, tool, DETECT_REQ_END, request_id)
@@ -50,7 +56,7 @@ end
 local function build_project_payload(request_id, params)
 	local kind = type(params) == "table" and params.kind or nil
 	local path = type(params) == "table" and params.path or nil
-	if type(kind) ~= "string" or kind == "" or type(path) ~= "string" or path == "" then
+	if contains_control_characters(kind) or contains_control_characters(path) then
 		return nil
 	end
 
@@ -61,6 +67,9 @@ local function build_project_payload(request_id, params)
 	}
 	for _, arg in ipairs((type(params) == "table" and params.extra_args) or {}) do
 		if type(arg) == "string" and arg ~= "" then
+			if contains_control_characters(arg) then
+				return nil
+			end
 			payload_lines[#payload_lines + 1] = "\t" .. arg
 		end
 	end
@@ -72,7 +81,7 @@ end
 ---@return string[]|nil
 local function build_detect_once_argv(params)
 	local tool = type(params) == "table" and params.tool or nil
-	if type(tool) ~= "string" or tool == "" then
+	if contains_control_characters(tool) then
 		return nil
 	end
 	return { ZIG_EXECUTABLE, "--detect", "--tool=" .. tool }
@@ -83,7 +92,7 @@ end
 local function build_project_once_argv(params)
 	local kind = type(params) == "table" and params.kind or nil
 	local path = type(params) == "table" and params.path or nil
-	if type(kind) ~= "string" or kind == "" or type(path) ~= "string" or path == "" then
+	if contains_control_characters(kind) or contains_control_characters(path) then
 		return nil
 	end
 
@@ -96,6 +105,9 @@ local function build_project_once_argv(params)
 	}
 	for _, arg in ipairs((type(params) == "table" and params.extra_args) or {}) do
 		if type(arg) == "string" and arg ~= "" then
+			if contains_control_characters(arg) then
+				return nil
+			end
 			argv[#argv + 1] = arg
 		end
 	end
@@ -104,7 +116,7 @@ end
 
 local detect_client = backend_client.new({
 	executable = ZIG_EXECUTABLE,
-	worker_argv = { ZIG_EXECUTABLE, "--detect-daemon" },
+	worker_argv = { ZIG_EXECUTABLE, "--daemon" },
 	protocol = DETECT_PROTOCOL,
 	worker_wait_ms = DETECT_WORKER_WAIT_MS,
 	request_timeout_ms = DETECT_WORKER_REQUEST_TIMEOUT_MS,
@@ -114,7 +126,7 @@ local detect_client = backend_client.new({
 
 local project_client = backend_client.new({
 	executable = ZIG_EXECUTABLE,
-	worker_argv = { ZIG_EXECUTABLE, "--project-parse-daemon" },
+	worker_argv = { ZIG_EXECUTABLE, "--daemon" },
 	protocol = PROJECT_PROTOCOL,
 	worker_wait_ms = PROJECT_WORKER_WAIT_MS,
 	buffered_stdout = true,
@@ -148,7 +160,12 @@ function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
 			on_done(nil)
 			return
 		end
-		on_done(cache_utils.copy_string_map(build_from_names(tool, lines)))
+		local commands = build_from_names(tool, lines)
+		if vim.tbl_isempty(commands) then
+			on_done(nil)
+			return
+		end
+		on_done(cache_utils.copy_string_map(commands))
 	end)
 end
 
@@ -177,7 +194,12 @@ function M.detect_with_zig_once_async(tool, on_done, build_from_names)
 			on_done(nil)
 			return
 		end
-		on_done(build_from_names(tool, lines))
+		local commands = build_from_names(tool, lines)
+		if vim.tbl_isempty(commands) then
+			on_done(nil)
+			return
+		end
+		on_done(commands)
 	end)
 end
 

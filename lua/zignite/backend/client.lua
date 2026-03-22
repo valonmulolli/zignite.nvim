@@ -1,6 +1,9 @@
 ---@type table
 local M = {}
 
+---@type table<string, table>
+local shared_workers = {}
+
 ---@param value string
 ---@return string
 local function trim_text(value)
@@ -51,112 +54,31 @@ local function stop_request_timer(timer)
 	end)
 end
 
----@param worker table
----@return nil
-local function clear_active_state(worker)
-	worker.active_id = nil
-	worker.active_lines = {}
-	worker.active_error = nil
-end
-
----@param worker table
----@param request_id integer
----@return table|nil, string[], string|nil
-local function finish_active_request(worker, request_id)
-	local request = worker.pending[request_id]
-	worker.pending[request_id] = nil
-	local completed_lines = worker.active_lines
-	local completed_error = worker.active_error
-	clear_active_state(worker)
-	if request then
-		stop_request_timer(request.timer)
-		request.lines = completed_lines
-		request.completed = true
-		request.error = completed_error
-		request.failed = completed_error ~= nil and completed_error ~= ""
-	end
-	return request, completed_lines, completed_error
-end
-
 ---@param line string
 ---@return boolean
 local function should_skip_line(line)
 	return line == ""
 end
 
----@param worker table
+---@param request table
 ---@param line string
 ---@return nil
-local function append_active_line(worker, line)
+local function append_request_line(request, line)
 	if line:sub(1, 1) == "\t" then
-		worker.active_lines[#worker.active_lines + 1] = line:sub(2)
+		request.lines[#request.lines + 1] = line:sub(2)
 	else
-		worker.active_lines[#worker.active_lines + 1] = line
+		request.lines[#request.lines + 1] = line
 	end
 end
 
----@param worker table
----@param line string
----@param protocol table
----@param on_complete fun(request: table|nil, completed_lines: string[], completed_error: string|nil):nil
----@return nil
-local function process_protocol_line(worker, line, protocol, on_complete)
-	if should_skip_line(line) then
-		return
-	end
-
-	local begin_id = line:match("^" .. protocol.res_begin .. "%s+(%d+)$")
-	if begin_id then
-		clear_active_state(worker)
-		worker.active_id = tonumber(begin_id)
-		return
-	end
-
-	if not worker.active_id then
-		return
-	end
-
-	local error_id, error_message = line:match("^" .. protocol.res_err .. "%s+(%d+)%s+(.+)$")
-	if error_id and tonumber(error_id) == worker.active_id then
-		worker.active_error = trim_text(error_message)
-		return
-	end
-
-	local end_id = line:match("^" .. protocol.res_end .. "%s+(%d+)$")
-	if end_id and tonumber(end_id) == worker.active_id then
-		local request, completed_lines, completed_error = finish_active_request(worker, worker.active_id)
-		on_complete(request, completed_lines, completed_error)
-		return
-	end
-
-	append_active_line(worker, line)
-end
-
----@param _worker table
 ---@param data string[]|nil
 ---@return string[]
-local function decode_plain_lines(_worker, data)
-	if type(data) ~= "table" then
-		return {}
-	end
-	---@type string[]
-	local lines = {}
-	for _, raw_line in ipairs(data) do
-		lines[#lines + 1] = tostring(raw_line or "")
-	end
-	return lines
-end
-
----@param worker table
----@param data string[]|nil
----@return string[]
-local function decode_buffered_lines(worker, data)
+local function decode_buffered_lines(buffer, data)
 	if type(data) ~= "table" then
 		return {}
 	end
 
-	worker.stdout_buffer = worker.stdout_buffer or ""
-	local chunk = worker.stdout_buffer
+	local chunk = buffer.value or ""
 	for _, raw_line in ipairs(data) do
 		chunk = chunk .. tostring(raw_line or "")
 	end
@@ -167,11 +89,17 @@ local function decode_buffered_lines(worker, data)
 		lines[#lines + 1] = line
 	end
 	if not trailing_newline then
-		worker.stdout_buffer = table.remove(lines) or ""
+		buffer.value = table.remove(lines) or ""
 	else
-		worker.stdout_buffer = ""
+		buffer.value = ""
 	end
 	return lines
+end
+
+---@param argv string[]
+---@return string
+local function worker_key(argv)
+	return table.concat(argv, "\0")
 end
 
 ---@param request table
@@ -188,71 +116,176 @@ local function complete_request_callbacks(request, payload)
 	end
 end
 
----@param worker table
+---@param request table
+---@param payload string[]|nil
+---@param failed boolean
 ---@return nil
-local function flush_worker(worker)
-	if not worker or type(worker.pending) ~= "table" then
+local function finalize_request(request, payload, failed)
+	if request.completed then
 		return
 	end
-	for _, request in pairs(worker.pending) do
-		stop_request_timer(request.timer)
-		request.failed = true
-		request.completed = true
-		complete_request_callbacks(request, nil)
-	end
-	worker.pending = {}
-	clear_active_state(worker)
-	if worker.stdout_buffer ~= nil then
-		worker.stdout_buffer = ""
-	end
+	request.completed = true
+	request.failed = failed == true
+	request.lines = type(payload) == "table" and payload or {}
+	stop_request_timer(request.timer)
+	complete_request_callbacks(request, request.failed and nil or request.lines)
 end
 
----@param worker table
----@param initial table|nil
----@return integer, table
-local function start_worker_request(worker, initial)
-	worker.next_request_id = worker.next_request_id + 1
-	local request_id = worker.next_request_id
-	local request = initial or {}
-	request.completed = false
-	request.failed = false
-	request.lines = request.lines or {}
-	worker.pending[request_id] = request
-	return request_id, request
-end
-
----@param worker table
----@param request_id integer
+---@param queue table[]
 ---@param request table
----@return nil
-local function cancel_worker_request(worker, request_id, request)
-	if worker.pending[request_id] == request then
-		worker.pending[request_id] = nil
+---@return boolean
+local function remove_queued_request(queue, request)
+	for index, queued in ipairs(queue) do
+		if queued == request then
+			table.remove(queue, index)
+			return true
+		end
 	end
-	if worker.active_id == request_id then
-		clear_active_state(worker)
-	end
+	return false
 end
 
----@param client table
 ---@param worker table
----@param request_id integer
 ---@return nil
-local function stop_failed_worker(client, worker, request_id)
-	worker.pending[request_id] = nil
+local function start_next_request(worker)
+	if worker.stopped or worker.active_request or #worker.queue == 0 then
+		return
+	end
+
+	local request = table.remove(worker.queue, 1)
+	worker.active_request = request
+	request.lines = {}
+	request.error = nil
+	request.started = false
+
+	local ok_send = pcall(vim.fn.chansend, worker.job_id, request.payload)
+	if ok_send then
+		return
+	end
+
+	worker.active_request = nil
+	finalize_request(request, nil, true)
 	if type(vim.fn.jobstop) == "function" then
 		pcall(vim.fn.jobstop, worker.job_id)
 	end
-	if client.worker == worker then
-		client.worker = nil
-	end
 end
 
 ---@param worker table
----@param payload string
----@return boolean
-local function send_worker_payload(worker, payload)
-	return pcall(vim.fn.chansend, worker.job_id, payload)
+---@param skip_jobstop boolean|nil
+---@return nil
+local function stop_shared_worker(worker, skip_jobstop)
+	if not worker or worker.stopped then
+		return
+	end
+	worker.stopped = true
+
+	if shared_workers[worker.key] == worker then
+		shared_workers[worker.key] = nil
+	end
+
+	if not skip_jobstop and type(vim.fn.jobstop) == "function" then
+		pcall(vim.fn.jobstop, worker.job_id)
+	end
+
+	if worker.active_request then
+		finalize_request(worker.active_request, nil, true)
+		worker.active_request = nil
+	end
+
+	for _, request in ipairs(worker.queue) do
+		finalize_request(request, nil, true)
+	end
+	worker.queue = {}
+	worker.stdout_buffer.value = ""
+end
+
+---@param worker table
+---@param line string
+---@return nil
+local function process_protocol_line(worker, line)
+	if should_skip_line(line) then
+		return
+	end
+
+	local request = worker.active_request
+	if not request then
+		return
+	end
+	local protocol = request.protocol
+
+	local begin_id = line:match("^" .. protocol.res_begin .. "%s+(%d+)$")
+	if begin_id and tonumber(begin_id) == request.request_id then
+		request.lines = {}
+		request.error = nil
+		request.started = true
+		return
+	end
+
+	if not request.started then
+		return
+	end
+
+	local error_id, error_message = line:match("^" .. protocol.res_err .. "%s+(%d+)%s+(.+)$")
+	if error_id and tonumber(error_id) == request.request_id then
+		request.error = trim_text(error_message)
+		return
+	end
+
+	local end_id = line:match("^" .. protocol.res_end .. "%s+(%d+)$")
+	if end_id and tonumber(end_id) == request.request_id then
+		if request.error and request.error ~= "" then
+			finalize_request(request, nil, true)
+		else
+			finalize_request(request, request.lines, false)
+		end
+		worker.active_request = nil
+		start_next_request(worker)
+		return
+	end
+
+	append_request_line(request, line)
+end
+
+---@param opts table
+---@return table|nil
+local function ensure_shared_worker(opts)
+	if type(vim.fn.jobstart) ~= "function" or type(vim.fn.chansend) ~= "function" then
+		return nil
+	end
+
+	local key = worker_key(opts.worker_argv)
+	local existing = shared_workers[key]
+	if existing and type(existing.job_id) == "number" and existing.job_id > 0 and not existing.stopped then
+		return existing
+	end
+
+	local worker = {
+		key = key,
+		job_id = nil,
+		next_request_id = 0,
+		queue = {},
+		active_request = nil,
+		stdout_buffer = { value = "" },
+		stopped = false,
+	}
+
+	local job_id = vim.fn.jobstart(opts.worker_argv, {
+		stdout_buffered = false,
+		on_stdout = function(_, data)
+			for _, line in ipairs(decode_buffered_lines(worker.stdout_buffer, data)) do
+				process_protocol_line(worker, line)
+			end
+		end,
+		on_exit = function()
+			stop_shared_worker(worker, true)
+		end,
+	})
+	if type(job_id) ~= "number" or job_id <= 0 then
+		return nil
+	end
+
+	worker.job_id = job_id
+	shared_workers[key] = worker
+	return worker
 end
 
 ---@param opts table
@@ -260,13 +293,12 @@ end
 function M.new(opts)
 	local client = {
 		executable = opts.executable,
-		worker = nil,
+		worker_key = worker_key(opts.worker_argv),
 	}
 
 	local protocol = opts.protocol
 	local worker_wait_ms = tonumber(opts.worker_wait_ms) or 1200
 	local request_timeout_ms = tonumber(opts.request_timeout_ms) or 0
-	local decode_lines = opts.buffered_stdout and decode_buffered_lines or decode_plain_lines
 
 	---@return boolean
 	function client.has_backend()
@@ -278,55 +310,47 @@ function M.new(opts)
 		return client.has_backend() and type(vim.fn.jobstart) == "function" and type(vim.fn.chansend) == "function"
 	end
 
-	---@return table|nil
-	local function ensure_worker()
+	---@param params table
+	---@param callbacks function[]|nil
+	---@param timer table|nil
+	---@return table|nil, table|nil
+	local function enqueue_request(params, callbacks, timer)
 		if not can_use_worker_backend() then
-			return nil
-		end
-		if client.worker and type(client.worker.job_id) == "number" and client.worker.job_id > 0 then
-			return client.worker
+			stop_request_timer(timer)
+			return nil, nil
 		end
 
-		local worker = {
-			job_id = nil,
-			next_request_id = 0,
-			pending = {},
-			active_id = nil,
-			active_lines = {},
-			active_error = nil,
+		local worker = ensure_shared_worker(opts)
+		if not worker then
+			stop_request_timer(timer)
+			return nil, nil
+		end
+
+		worker.next_request_id = worker.next_request_id + 1
+		local request_id = worker.next_request_id
+		local payload = opts.build_worker_payload(request_id, params)
+		if type(payload) ~= "string" or payload == "" then
+			stop_request_timer(timer)
+			return nil, nil
+		end
+
+		local request = {
+			worker = worker,
+			request_id = request_id,
+			params = params,
+			protocol = protocol,
+			payload = payload,
+			callbacks = callbacks,
+			timer = timer,
+			lines = {},
+			error = nil,
+			started = false,
+			completed = false,
+			failed = false,
 		}
-		if opts.buffered_stdout then
-			worker.stdout_buffer = ""
-		end
-
-		local job_id = vim.fn.jobstart(opts.worker_argv, {
-			stdout_buffered = false,
-			on_stdout = function(_, data)
-				for _, line in ipairs(decode_lines(worker, data)) do
-					process_protocol_line(worker, line, protocol, function(request, completed_lines, completed_error)
-						if request then
-							if completed_error and completed_error ~= "" then
-								complete_request_callbacks(request, nil)
-							else
-								complete_request_callbacks(request, completed_lines)
-							end
-						end
-					end)
-				end
-			end,
-			on_exit = function()
-				if client.worker == worker then
-					client.worker = nil
-				end
-				flush_worker(worker)
-			end,
-		})
-		if type(job_id) ~= "number" or job_id <= 0 then
-			return nil
-		end
-		worker.job_id = job_id
-		client.worker = worker
-		return worker
+		worker.queue[#worker.queue + 1] = request
+		start_next_request(worker)
+		return worker, request
 	end
 
 	---@param params table
@@ -335,19 +359,9 @@ function M.new(opts)
 		if type(vim.wait) ~= "function" then
 			return nil
 		end
-		local worker = ensure_worker()
-		if not worker then
-			return nil
-		end
 
-		local request_id, request = start_worker_request(worker, { params = params })
-		local payload = opts.build_worker_payload(request_id, params)
-		if type(payload) ~= "string" or payload == "" then
-			cancel_worker_request(worker, request_id, request)
-			return nil
-		end
-		if not send_worker_payload(worker, payload) then
-			stop_failed_worker(client, worker, request_id)
+		local worker, request = enqueue_request(params, nil, nil)
+		if not worker or not request then
 			return nil
 		end
 
@@ -355,10 +369,10 @@ function M.new(opts)
 			return request.completed == true
 		end, 20)
 		if not ok_wait then
-			if opts.reset_on_sync_timeout then
-				stop_failed_worker(client, worker, request_id)
-			else
-				cancel_worker_request(worker, request_id, request)
+			if worker.active_request == request then
+				stop_shared_worker(worker)
+			elseif remove_queued_request(worker.queue, request) then
+				finalize_request(request, nil, true)
 			end
 			return nil
 		end
@@ -372,42 +386,21 @@ function M.new(opts)
 	---@param on_done fun(lines: string[]|nil):nil
 	---@return boolean
 	function client.async_request(params, on_done)
-		local worker = ensure_worker()
-		if not worker then
+		local worker, request = enqueue_request(params, { on_done }, nil)
+		if not worker or not request then
 			return false
 		end
 
-		local request_id, request = start_worker_request(worker, {
-			params = params,
-			callbacks = { on_done },
-			timer = nil,
-		})
 		request.timer = start_request_timer(request_timeout_ms, function()
-			if worker.pending[request_id] ~= request then
+			if request.completed then
 				return
 			end
-			cancel_worker_request(worker, request_id, request)
-			complete_request_callbacks(request, nil)
-			if opts.reset_on_async_timeout ~= false and type(vim.fn.jobstop) == "function" then
-				pcall(vim.fn.jobstop, worker.job_id)
-			end
-			if client.worker == worker then
-				client.worker = nil
+			if worker.active_request == request then
+				stop_shared_worker(worker)
+			elseif remove_queued_request(worker.queue, request) then
+				finalize_request(request, nil, true)
 			end
 		end)
-
-		local payload = opts.build_worker_payload(request_id, params)
-		if type(payload) ~= "string" or payload == "" then
-			stop_request_timer(request.timer)
-			cancel_worker_request(worker, request_id, request)
-			return false
-		end
-		if not send_worker_payload(worker, payload) then
-			stop_request_timer(request.timer)
-			stop_failed_worker(client, worker, request_id)
-			return false
-		end
-
 		return true
 	end
 
@@ -479,12 +472,10 @@ function M.new(opts)
 
 	---@return nil
 	function client.reset()
-		if client.worker and type(client.worker.job_id) == "number" and client.worker.job_id > 0 then
-			if type(vim.fn.jobstop) == "function" then
-				pcall(vim.fn.jobstop, client.worker.job_id)
-			end
+		local worker = shared_workers[client.worker_key]
+		if worker then
+			stop_shared_worker(worker)
 		end
-		client.worker = nil
 	end
 
 	return client

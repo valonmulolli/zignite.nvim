@@ -126,7 +126,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn processQuickfixPayload(
+pub fn processQuickfixPayload(
     allocator: std.mem.Allocator,
     input: []const u8,
     options: Options,

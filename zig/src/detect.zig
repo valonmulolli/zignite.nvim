@@ -106,7 +106,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn parseTool(value: []const u8) !Tool {
+pub fn parseTool(value: []const u8) !Tool {
     if (std.ascii.eqlIgnoreCase(value, "zig")) return .zig;
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
@@ -155,14 +155,14 @@ fn stripTrailingCR(line: []const u8) []const u8 {
     return line;
 }
 
-fn freeOwnedCommandList(allocator: std.mem.Allocator, commands: [][]u8) void {
+pub fn freeOwnedCommandList(allocator: std.mem.Allocator, commands: [][]u8) void {
     for (commands) |command| {
         allocator.free(command);
     }
     allocator.free(commands);
 }
 
-fn detectToolCommands(allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
+pub fn detectToolCommands(allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
     const output = detectToolOutput(allocator, tool) catch |err| switch (err) {
         error.FileNotFound => return try allocator.alloc([]u8, 0),
         else => return err,
@@ -289,11 +289,7 @@ fn parseCargoCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList
         }
 
         if (extractCommandToken(trimmed)) |token| {
-            if (
-                token.len > 1
-                and !std.mem.eql(u8, token, "help")
-                and !isCargoNoiseLine(trimmed, token)
-            ) {
+            if (token.len > 1 and !std.mem.eql(u8, token, "help") and !isCargoNoiseLine(trimmed, token)) {
                 try pushUniqueCommand(allocator, commands, token);
             }
         }
@@ -358,9 +354,7 @@ fn pushUniqueCommand(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8
 
 fn isCargoNoiseLine(line: []const u8, token: []const u8) bool {
     _ = token;
-    return std.mem.indexOf(u8, line, "alias:") != null
-        or std.mem.indexOf(u8, line, "DEPRECATED:") != null
-        or std.mem.indexOf(u8, line, "REMOVED:") != null;
+    return std.mem.indexOf(u8, line, "alias:") != null or std.mem.indexOf(u8, line, "DEPRECATED:") != null or std.mem.indexOf(u8, line, "REMOVED:") != null;
 }
 
 fn trimSpaces(input: []const u8) []const u8 {

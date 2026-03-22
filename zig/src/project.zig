@@ -70,7 +70,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
 }
 
 pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    const contents = try common.readFileAlloc(allocator, options.path);
+    const contents = try readProjectFile(allocator, options.path);
     defer allocator.free(contents);
 
     const stdout = std.fs.File.stdout().deprecatedWriter();
@@ -124,7 +124,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
         const options = parseArgs(request_args.items);
         if (options) |parsed| {
-            const contents = common.readFileAlloc(allocator, parsed.path);
+            const contents = readProjectFile(allocator, parsed.path);
             if (contents) |payload| {
                 defer allocator.free(payload);
                 writeOutput(stdout, allocator, parsed, payload) catch |err| {
@@ -192,7 +192,11 @@ fn stripTrailingCR(line: []const u8) []const u8 {
     return line;
 }
 
-fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
+pub fn readProjectFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return common.readFileAlloc(allocator, path);
+}
+
+pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     if (options.kind == .cmake) {
         const items = try cmake.parseTargets(allocator, contents, options.path, options.match_path);
         defer cmake.freeOwnedTargets(allocator, items);

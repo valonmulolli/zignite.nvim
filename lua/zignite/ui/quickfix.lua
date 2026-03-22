@@ -300,7 +300,7 @@ end
 
 local quickfix_client = backend_client.new({
 	executable = QUICKFIX_BACKEND,
-	worker_argv = { QUICKFIX_BACKEND, "--quickfix-daemon" },
+	worker_argv = { QUICKFIX_BACKEND, "--daemon" },
 	protocol = QUICKFIX_PROTOCOL,
 	request_timeout_ms = QUICKFIX_WORKER_REQUEST_TIMEOUT_MS,
 	build_worker_payload = build_quickfix_worker_payload,

@@ -2,7 +2,7 @@
 -- luacheck: globals command_to_string reset_job_results reset_quickfix_results reset_notify_results
 -- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
--- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
+-- luacheck: globals get_upvalue_by_name detect_backend_tool_commands
 
 local build_module = require("zignite.build")
 local runtime_module = require("zignite.runtime")
@@ -157,9 +157,10 @@ local function test_picker_async_live_merge_refresh()
 		},
 	})
 
+	local targets_module = require("zignite.build.targets")
+	local original_detect_async = targets_module.detect_tool_commands_for_filetype_async
 	vim.bo.filetype = "go"
 	local original_expand = vim.fn.expand
-	local original_chansend_fn = vim.fn.chansend
 	local original_buf_set_lines = vim.api.nvim_buf_set_lines
 	local rendered_lines = {}
 	local deferred_detect = nil
@@ -178,19 +179,17 @@ local function test_picker_async_live_merge_refresh()
 			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
 		end
 	end
-	vim.fn.chansend = function(job_id, data)
-		local job = mock_jobs[job_id]
-		if job and is_detect_daemon_cmd(job.cmd) then
-			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
-			deferred_detect = {
-				job_id = job_id,
-				opts = job.opts,
-				response = parse_detect_daemon_request(text),
-			}
-			state.detect_backend_invocations = state.detect_backend_invocations + 1
-			return 1
-		end
-		return original_chansend_fn(job_id, data)
+	targets_module.detect_tool_commands_for_filetype_async = function(filetype, filepath, on_done)
+		assert(filetype == "go", "Picker live refresh test should request Go tool detection")
+		assert(filepath == "/tmp/asyncrefresh/main.go", "Picker live refresh test should pass the current file path")
+		deferred_detect = {
+			on_done = on_done,
+			commands = {
+				build = "go build",
+				env = "go env",
+				fmt = "go fmt",
+			},
+		}
 	end
 
 	reset_job_results()
@@ -199,16 +198,16 @@ local function test_picker_async_live_merge_refresh()
 	local initial_render = table.concat(rendered_lines, "\n")
 	assert(initial_render:match("cmd:%s+go build"), "Initial picker render should keep selected command preview")
 	assert(not initial_render:match("go env"), "Initial picker render should not include deferred detected commands")
-	assert(deferred_detect and deferred_detect.opts and deferred_detect.response, "Detect response should be deferred")
+	assert(deferred_detect and type(deferred_detect.on_done) == "function", "Detect response should be deferred")
 
-	deferred_detect.opts.on_stdout(deferred_detect.job_id, deferred_detect.response)
+	deferred_detect.on_done(deferred_detect.commands)
 	local refreshed_render = table.concat(rendered_lines, "\n")
 	assert(refreshed_render:match("go env"), "Live refresh should merge detected commands into picker")
 	assert(refreshed_render:match("cmd:%s+go build"), "Live refresh should preserve selected command preview")
 
 	vim.fn.expand = original_expand
-	vim.fn.chansend = original_chansend_fn
 	vim.api.nvim_buf_set_lines = original_buf_set_lines
+	targets_module.detect_tool_commands_for_filetype_async = original_detect_async
 
 	print("✓ Picker async live-merge refresh test passed")
 end
