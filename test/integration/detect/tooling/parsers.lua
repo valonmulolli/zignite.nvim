@@ -1159,6 +1159,90 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
     print("✓ Zig project daemon buffered chunk test passed")
 end
 
+-- Test project daemon parsing handles multi-line stdout callbacks without losing line boundaries.
+local function test_make_targets_use_multiline_project_daemon_response()
+    init.setup({
+        build_commands = {},
+    })
+
+    local make_parser = require("zignite.build.parsers.make")
+    local utils_module = require("zignite.utils")
+    local detect_backend = require("zignite.build.detect.backend")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+    local original_wait = vim.wait
+
+    utils_module.get_project_root = function()
+        return "/tmp/cdetect"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.wait = function(_, condition)
+        return condition()
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" then
+            error("Project parser should not fall back to one-shot parsing when the daemon succeeds")
+        end
+        vim.v.shell_error = 0
+        return {}
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/cdetect/Makefile" then
+            return 1
+        end
+        return 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/cdetect/Makefile" then
+            error("Lua Makefile parser should not be used when the project daemon succeeds")
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    state.next_project_backend_stdout_chunks = {
+        {
+            "@@ZPRJ_RES_BEGIN 1",
+            "\tbench",
+            "\ttest",
+            "@@ZPRJ_RES_END 1",
+            "",
+        },
+    }
+
+    detect_backend.reset()
+    reset_job_results()
+    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
+    assert(commands.bench == "make bench", "Project daemon should decode bench from multiline stdout callback")
+    assert(commands.test == "make test", "Project daemon should decode test from multiline stdout callback")
+    assert(count_project_backend_requests() == 1, "Project daemon should send one request for multiline stdout")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+    vim.wait = original_wait
+    state.next_project_backend_stdout_chunks = nil
+    detect_backend.reset()
+    reset_job_results()
+
+    print("✓ Zig project daemon multiline response test passed")
+end
+
 -- Test run_build_command can execute zig commands detected from `zig --help`.
 
 test_c_detected_make_targets_in_picker()
@@ -1178,3 +1262,4 @@ test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
 test_make_targets_fall_back_after_project_daemon_timeout()
 test_make_targets_use_buffered_project_daemon_chunks()
+test_make_targets_use_multiline_project_daemon_response()
