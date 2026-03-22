@@ -271,6 +271,58 @@ local function test_python_project_marker_uses_uv()
     print("✓ Python project uv marker test passed")
 end
 
+-- Test Gradle project marker detection resolves the build root without inventing a fallback command.
+local function test_gradle_project_marker_detection()
+    local original_filereadable = vim.fn.filereadable
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = function(path)
+        if path == "/home/user/gradle-app/settings.gradle" then
+            return 1
+        end
+        return 0
+    end
+
+    local filepath = "/home/user/gradle-app/src/main/java/com/example/App.java"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Gradle project should be detected by marker")
+    assert(project.name == "Gradle Project", "Gradle project name not correct")
+    assert(project.command == nil, "Gradle marker fallback should not invent a run command")
+    assert(project.root == "/home/user/gradle-app", "Gradle project root should use the settings.gradle root")
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Gradle project marker detection test passed")
+end
+
+-- Test Maven project marker detection resolves the build root without inventing a fallback command.
+local function test_maven_project_marker_detection()
+    local original_filereadable = vim.fn.filereadable
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = function(path)
+        if path == "/home/user/maven-app/pom.xml" then
+            return 1
+        end
+        return 0
+    end
+
+    local filepath = "/home/user/maven-app/src/main/java/com/example/App.java"
+    local project = utils.detect_project(filepath, {})
+
+    assert(project, "Maven project should be detected by marker")
+    assert(project.name == "Maven Project", "Maven project name not correct")
+    assert(project.command == nil, "Maven marker fallback should not invent a run command")
+    assert(project.root == "/home/user/maven-app", "Maven project root should use the pom.xml root")
+
+    utils.clear_project_cache()
+    vim.fn.filereadable = original_filereadable
+
+    print("✓ Maven project marker detection test passed")
+end
+
 -- Run all tests
 test_substitute_variables()
 test_normalize_command()
@@ -280,5 +332,7 @@ test_bazel_project_marker_detection()
 test_node_project_marker_uses_detected_package_manager()
 test_go_workspace_marker_detection()
 test_python_project_marker_uses_uv()
+test_gradle_project_marker_detection()
+test_maven_project_marker_detection()
 
 print("All utils tests passed!")

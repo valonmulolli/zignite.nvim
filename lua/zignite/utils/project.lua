@@ -13,6 +13,12 @@ local MAX_PROJECT_LOOKUP_UP = 10
 ---@type table<string, table>
 local default_project_markers = {
 	["package.json"] = { name = "Node.js Project", command = "npm start" },
+	["pom.xml"] = { name = "Maven Project", command = nil },
+	["settings.gradle"] = { name = "Gradle Project", command = nil },
+	["settings.gradle.kts"] = { name = "Gradle Project", command = nil },
+	["build.gradle"] = { name = "Gradle Project", command = nil },
+	["build.gradle.kts"] = { name = "Gradle Project", command = nil },
+	gradlew = { name = "Gradle Project", command = nil },
 	["Cargo.toml"] = { name = "Rust Project", command = "cargo run" },
 	["go.work"] = { name = "Go Project", command = nil },
 	["go.mod"] = { name = "Go Project", command = "go run ." },
@@ -39,6 +45,12 @@ local PROJECT_MARKER_PRIORITY = {
 	"MODULE.bazel",
 	"WORKSPACE.bazel",
 	"WORKSPACE",
+	"settings.gradle.kts",
+	"settings.gradle",
+	"build.gradle.kts",
+	"build.gradle",
+	"gradlew",
+	"pom.xml",
 	"meson.build",
 	"CMakeLists.txt",
 	"build.zig",
@@ -53,6 +65,12 @@ local PROJECT_MARKER_PRIORITY = {
 local PROJECT_MARKERS_WITHOUT_FALLBACK_COMMAND = {
 	["package.json"] = true,
 	["pyproject.toml"] = true,
+	["pom.xml"] = true,
+	["settings.gradle"] = true,
+	["settings.gradle.kts"] = true,
+	["build.gradle"] = true,
+	["build.gradle.kts"] = true,
+	gradlew = true,
 }
 
 ---@param pattern string

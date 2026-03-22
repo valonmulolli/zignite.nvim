@@ -411,8 +411,13 @@ local function test_run_build_command_with_detected_kotlin_gradle_command()
     reset_job_results()
     init.run_build_command("gradle-build", "float")
     assert(#job_results > 0, "Detected Kotlin Gradle command should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
+    local last_job = job_results[#job_results]
+    local command = command_to_string(last_job.cmd)
     assert(command:match("./gradlew build"), "Detected Kotlin Gradle command should execute via ./gradlew build")
+    assert(
+        last_job.opts and last_job.opts.cwd == "/tmp/ktdetect",
+        "Detected Kotlin Gradle command should execute from the Gradle project root"
+    )
 
     vim.fn.expand = original_expand
     vim.fn.filereadable = original_filereadable
