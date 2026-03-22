@@ -3,6 +3,12 @@ local project = require("zignite.utils.project")
 ---@type table
 local M = {}
 
+---@param value string
+---@return boolean
+local function contains_control_characters(value)
+	return type(value) ~= "string" or value:find("[%c]") ~= nil
+end
+
 ---@param s string
 ---@return string
 local function trim(s)
@@ -107,6 +113,17 @@ function M.substitute_variables_raw(command, filepath)
 	end)
 
 	return result
+end
+
+---@param value string
+---@return string|nil
+function M.quote_cli_argument(value)
+	if contains_control_characters(value) then
+		return nil
+	end
+	return "'" .. tostring(value):gsub("'", function()
+		return [["'"']]
+	end) .. "'"
 end
 
 ---@param runner string|string[]|table

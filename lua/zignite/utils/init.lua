@@ -20,6 +20,7 @@ M.detect_python_project_tool_fast = package_utils.detect_python_project_tool_fas
 
 M.substitute_variables = command.substitute_variables
 M.substitute_variables_raw = command.substitute_variables_raw
+M.quote_cli_argument = command.quote_cli_argument
 M.normalize_command = command.normalize_command
 
 return M
