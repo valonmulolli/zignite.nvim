@@ -67,6 +67,32 @@ local function replace_default_commands(updated, default_commands, replacements)
 	end
 end
 
+---@param info table|nil
+---@return table<string, string>
+local function get_info_preferred_commands(info)
+	if type(info) ~= "table" or type(info.preferred_commands) ~= "table" then
+		return {}
+	end
+	return state.copy_string_map(info.preferred_commands)
+end
+
+---@param updated table<string, string>
+---@param default_commands table<string, string>
+---@param info table|nil
+---@return nil
+local function apply_info_preferred_commands(updated, default_commands, info)
+	replace_default_commands(updated, default_commands, get_info_preferred_commands(info))
+end
+
+---@param info table|nil
+---@param key string
+---@return string|nil
+local function get_info_preferred_command(info, key)
+	local commands = get_info_preferred_commands(info)
+	local value = commands[key]
+	return type(value) == "string" and value ~= "" and value or nil
+end
+
 ---@param target table<string, string>
 ---@param alias string
 ---@param source_key string
@@ -163,7 +189,7 @@ local function build_cmake_commands(configured, filepath, root)
 		configured,
 		"cmake-run",
 		"cmake-run",
-		cmake_info and cmake_info.primary_run or nil,
+		get_info_preferred_command(cmake_info, "run"),
 		systems.has_cmake_build_tree(root),
 		systems.cmake_config_command(root)
 	)
@@ -196,7 +222,7 @@ local function build_meson_commands(configured, filepath, root)
 		configured,
 		"meson-run",
 		"meson-run",
-		meson_info and meson_info.primary_run or nil,
+		get_info_preferred_command(meson_info, "run"),
 		systems.has_meson_build_tree(root),
 		systems.meson_setup_command(root)
 	)
@@ -363,11 +389,7 @@ function M.get_configured_build_commands(filetype, filepath)
 		local go_commands, go_info = parsers.detect_go_project_commands(filepath)
 		M.extend_string_map(updated, go_commands)
 		local default_commands = get_default_build_commands("go")
-		replace_default_commands(updated, default_commands, {
-			build = go_info and go_info.primary_build or nil,
-			run = go_info and go_info.primary_run or nil,
-			test = go_info and go_info.primary_test or nil,
-		})
+		apply_info_preferred_commands(updated, default_commands, go_info)
 		return updated
 	end
 	if filetype == "rust" then
@@ -379,13 +401,7 @@ function M.get_configured_build_commands(filetype, filepath)
 		local cargo_commands, cargo_info = parsers.detect_cargo_project_commands(filepath)
 		M.extend_string_map(updated, cargo_commands)
 		local default_commands = get_default_build_commands("rust")
-		replace_default_command(updated, default_commands, "run", cargo_info and cargo_info.primary_run or nil)
-		replace_default_command(
-			updated,
-			default_commands,
-			"release-run",
-			cargo_info and cargo_info.primary_release_run or nil
-		)
+		apply_info_preferred_commands(updated, default_commands, cargo_info)
 		return updated
 	end
 	if filetype ~= "c" and filetype ~= "cpp" then

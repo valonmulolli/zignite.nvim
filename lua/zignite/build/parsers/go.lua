@@ -6,6 +6,16 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 
+---@param commands table<string, string>|nil
+---@return table<string, string>|nil
+local function copy_preferred_commands(commands)
+	if type(commands) ~= "table" then
+		return nil
+	end
+	local copied = state.copy_string_map(commands)
+	return next(copied) ~= nil and copied or nil
+end
+
 ---@param info table|nil
 ---@return table|nil
 local function copy_info(info)
@@ -18,6 +28,7 @@ local function copy_info(info)
 		primary_build = info.primary_build,
 		primary_run = info.primary_run,
 		primary_test = info.primary_test,
+		preferred_commands = copy_preferred_commands(info.preferred_commands),
 	}
 end
 
@@ -42,6 +53,11 @@ local function build_go_info(selector, module_name)
 		info.primary_build = "go build " .. quoted_selector
 		info.primary_run = "go run " .. quoted_selector
 		info.primary_test = "go test " .. quoted_selector
+		info.preferred_commands = {
+			build = info.primary_build,
+			run = info.primary_run,
+			test = info.primary_test,
+		}
 	end
 	return info
 end
@@ -68,7 +84,7 @@ local function parse_zig_go_info(zig_lines)
 	local info = {}
 	for _, raw_line in ipairs(zig_lines) do
 		local line = tostring(raw_line or "")
-		local kind, value = line:match("^([^\t]+)\t(.*)$")
+		local kind, value, extra = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
 		if kind == "MODULE" and value ~= "" then
 			info.module_name = value
 		elseif kind == "PRIMARY_SELECTOR" and value ~= "" then
@@ -79,6 +95,9 @@ local function parse_zig_go_info(zig_lines)
 			info.primary_run = value
 		elseif kind == "PRIMARY_TEST" and value ~= "" then
 			info.primary_test = value
+		elseif kind == "PREFERRED" and value ~= "" and extra ~= "" then
+			info.preferred_commands = info.preferred_commands or {}
+			info.preferred_commands[value] = extra
 		end
 	end
 

@@ -7,6 +7,16 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 
+---@param commands table<string, string>|nil
+---@return table<string, string>|nil
+local function copy_preferred_commands(commands)
+	if type(commands) ~= "table" then
+		return nil
+	end
+	local copied = state.copy_string_map(commands)
+	return next(copied) ~= nil and copied or nil
+end
+
 ---@param info table|nil
 ---@return table|nil
 local function copy_info(info)
@@ -17,6 +27,7 @@ local function copy_info(info)
 		primary_bin = info.primary_bin,
 		primary_run = info.primary_run,
 		primary_release_run = info.primary_release_run,
+		preferred_commands = copy_preferred_commands(info.preferred_commands),
 	}
 end
 
@@ -47,6 +58,10 @@ local function build_primary_info(primary_bin)
 		primary_bin = primary_bin,
 		primary_run = "cargo run --bin " .. quoted_bin,
 		primary_release_run = "cargo run --release --bin " .. quoted_bin,
+		preferred_commands = {
+			run = "cargo run --bin " .. quoted_bin,
+			["release-run"] = "cargo run --release --bin " .. quoted_bin,
+		},
 	}
 end
 
@@ -89,7 +104,7 @@ local function parse_zig_targets(zig_lines)
 				primary_bin = bin_name
 			end
 		else
-			local value_kind, value = line:match("^([^\t]+)\t(.*)$")
+			local value_kind, value = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
 			if value_kind == "PRIMARY_BIN" and value ~= "" then
 				primary_bin = value
 			elseif value_kind == "PRIMARY_RUN" and value ~= "" then
@@ -103,6 +118,13 @@ local function parse_zig_targets(zig_lines)
 	if info then
 		info.primary_run = primary_run or info.primary_run
 		info.primary_release_run = primary_release_run or info.primary_release_run
+	end
+	for _, raw_line in ipairs(zig_lines) do
+		local value_kind, value, extra = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]*)\t?(.*)$")
+		if value_kind == "PREFERRED" and value ~= "" and extra ~= "" and info then
+			info.preferred_commands = info.preferred_commands or {}
+			info.preferred_commands[value] = extra
+		end
 	end
 	return commands, info
 end

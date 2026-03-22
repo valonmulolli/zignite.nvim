@@ -6,6 +6,16 @@ local systems = require("zignite.build.systems")
 ---@type table
 local M = {}
 
+---@param commands table<string, string>|nil
+---@return table<string, string>|nil
+local function copy_preferred_commands(commands)
+	if type(commands) ~= "table" then
+		return nil
+	end
+	local copied = state.copy_string_map(commands)
+	return next(copied) ~= nil and copied or nil
+end
+
 ---@param info table|nil
 ---@return table|nil
 local function copy_info(info)
@@ -16,6 +26,7 @@ local function copy_info(info)
 		primary_target = info.primary_target,
 		primary_run_path = info.primary_run_path,
 		primary_run = info.primary_run,
+		preferred_commands = copy_preferred_commands(info.preferred_commands),
 	}
 end
 
@@ -60,6 +71,9 @@ local function build_target_info(root, primary_target, primary_run_path)
 		primary_target = primary_target,
 		primary_run_path = primary_run_path,
 		primary_run = systems.cmake_run_command(root, primary_target, primary_run_path),
+		preferred_commands = {
+			run = systems.cmake_run_command(root, primary_target, primary_run_path),
+		},
 	}
 end
 
@@ -138,7 +152,17 @@ local function parse_zig_targets(root, zig_lines)
 	if not primary_run_path and primary_target then
 		primary_run_path = run_paths[primary_target]
 	end
-	return commands, build_target_info(root, primary_target, primary_run_path)
+	local info = build_target_info(root, primary_target, primary_run_path)
+	if info then
+		for _, raw_line in ipairs(zig_lines) do
+			local value_kind, value, extra = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]*)\t?(.*)$")
+			if value_kind == "PREFERRED" and value ~= "" and extra ~= "" then
+				info.preferred_commands = info.preferred_commands or {}
+				info.preferred_commands[value] = extra
+			end
+		end
+	end
+	return commands, info
 end
 
 ---@param lines string[]

@@ -238,6 +238,9 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             if (primary_run_path) |value| {
                 try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
             }
+            const preferred_run = try common.cmakeRunCommandAlloc(allocator, root, name, primary_run_path);
+            defer allocator.free(preferred_run);
+            try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
     }
@@ -275,6 +278,9 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             if (primary_run_path) |value| {
                 try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
             }
+            const preferred_run = try common.mesonRunCommandAlloc(allocator, root, name, primary_run_path);
+            defer allocator.free(preferred_run);
+            try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
     }
@@ -299,6 +305,8 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("PRIMARY_BIN\t{s}\n", .{name});
             try stdout.print("PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted});
             try stdout.print("PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted});
+            try stdout.print("PREFERRED\trun\tcargo run --bin {s}\n", .{quoted});
+            try stdout.print("PREFERRED\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
         }
         return;
     }
@@ -315,12 +323,15 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
         if (info.primary_build) |command| {
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
+            try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
         }
         return;
     }
@@ -452,6 +463,16 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
             "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n"
         ) != null
     );
+    try std.testing.expect(
+        std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            out.items,
+            "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n"
+        ) != null
+    );
 }
 
 test "writeOutput emits go primary command metadata" {
@@ -477,6 +498,9 @@ test "writeOutput emits go primary command metadata" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tgo build './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tgo run './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TEST\tgo test './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tgo build './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tgo run './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tgo test './cmd/api'\n") != null);
 }
 
 test "writeOutput emits cmake primary target and discovered run path" {
@@ -517,6 +541,13 @@ test "writeOutput emits cmake primary target and discovered run path" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TARGET\tdemo-app\n") != null);
     try std.testing.expect(
         std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            out.items,
+            "PREFERRED\trun\tcmake --build build --target demo-app && ./build/bin/demo-app\n"
+        ) != null
     );
 }
 

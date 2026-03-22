@@ -88,6 +88,57 @@ pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     return try quoted.toOwnedSlice(allocator);
 }
 
+pub fn hasCmakeBuildTree(root: []const u8) bool {
+    return buildJoinedPathExists(std.heap.page_allocator, root, &.{ "build", "CMakeCache.txt" });
+}
+
+pub fn hasMesonBuildTree(root: []const u8) bool {
+    if (buildJoinedPathExists(std.heap.page_allocator, root, &.{ "build", "build.ninja" })) {
+        return true;
+    }
+    return buildJoinedPathExists(std.heap.page_allocator, root, &.{ "build", "meson-private", "coredata.dat" });
+}
+
+pub fn cmakeRunCommandAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    target: []const u8,
+    run_path: ?[]const u8,
+) ![]u8 {
+    const build_command = if (hasCmakeBuildTree(root))
+        try std.fmt.allocPrint(allocator, "cmake --build build --target {s}", .{target})
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target {s}",
+            .{target},
+        );
+    defer allocator.free(build_command);
+
+    const run_suffix = try buildDiscoveredRunSuffixAlloc(allocator, target, run_path);
+    defer allocator.free(run_suffix);
+
+    return try std.fmt.allocPrint(allocator, "{s} && {s}", .{ build_command, run_suffix });
+}
+
+pub fn mesonRunCommandAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    target: []const u8,
+    run_path: ?[]const u8,
+) ![]u8 {
+    const build_command = if (hasMesonBuildTree(root))
+        try std.fmt.allocPrint(allocator, "meson compile -C build {s}", .{target})
+    else
+        try std.fmt.allocPrint(allocator, "meson setup build && meson compile -C build {s}", .{target});
+    defer allocator.free(build_command);
+
+    const run_suffix = try buildDiscoveredRunSuffixAlloc(allocator, target, run_path);
+    defer allocator.free(run_suffix);
+
+    return try std.fmt.allocPrint(allocator, "{s} && {s}", .{ build_command, run_suffix });
+}
+
 pub fn discoverBuildRunPathAlloc(
     allocator: std.mem.Allocator,
     root: []const u8,
@@ -178,6 +229,108 @@ fn pathContainsIgnoredBuildDir(path: []const u8) bool {
         }
     }
     return false;
+}
+
+fn buildJoinedPathExists(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    parts: []const []const u8,
+) bool {
+    var joined_parts = std.ArrayList([]const u8).empty;
+    defer joined_parts.deinit(allocator);
+    joined_parts.append(allocator, root) catch return false;
+    for (parts) |part| {
+        joined_parts.append(allocator, part) catch return false;
+    }
+
+    const full_path = std.fs.path.join(allocator, joined_parts.items) catch return false;
+    defer allocator.free(full_path);
+
+    if (std.fs.path.isAbsolute(full_path)) {
+        std.fs.accessAbsolute(full_path, .{}) catch return false;
+        return true;
+    }
+    std.fs.cwd().access(full_path, .{}) catch return false;
+    return true;
+}
+
+fn buildDiscoveredRunSuffixAlloc(
+    allocator: std.mem.Allocator,
+    target: []const u8,
+    run_path: ?[]const u8,
+) ![]u8 {
+    if (run_path) |value| {
+        return allocator.dupe(u8, value);
+    }
+
+    const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
+    defer allocator.free(target_exe);
+
+    const candidate_paths = [_][]const u8{
+        try std.fmt.allocPrint(allocator, "./build/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/bin/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/bin/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/Debug/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/Debug/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/Release/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/Release/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/RelWithDebInfo/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/RelWithDebInfo/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/MinSizeRel/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/MinSizeRel/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/bin/Debug/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/bin/Debug/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/bin/Release/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/bin/Release/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/bin/RelWithDebInfo/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/bin/RelWithDebInfo/{s}", .{target_exe}),
+        try std.fmt.allocPrint(allocator, "./build/bin/MinSizeRel/{s}", .{target}),
+        try std.fmt.allocPrint(allocator, "./build/bin/MinSizeRel/{s}", .{target_exe}),
+    };
+    defer for (candidate_paths) |candidate| allocator.free(candidate);
+
+    var escaped_candidates: std.ArrayList([]u8) = .empty;
+    defer {
+        for (escaped_candidates.items) |candidate| allocator.free(candidate);
+        escaped_candidates.deinit(allocator);
+    }
+    for (candidate_paths) |candidate| {
+        try escaped_candidates.append(allocator, try quoteShellArgAlloc(allocator, candidate));
+    }
+
+    const quoted_target = try quoteShellArgAlloc(allocator, target);
+    defer allocator.free(quoted_target);
+    const quoted_target_exe = try quoteShellArgAlloc(allocator, target_exe);
+    defer allocator.free(quoted_target_exe);
+    const quoted_default_path = try quoteShellArgAlloc(allocator, candidate_paths[0]);
+    defer allocator.free(quoted_default_path);
+
+    var candidate_list: std.ArrayList(u8) = .empty;
+    defer candidate_list.deinit(allocator);
+    for (escaped_candidates.items, 0..) |candidate, index| {
+        if (index > 0) {
+            try candidate_list.append(allocator, ' ');
+        }
+        try candidate_list.appendSlice(allocator, candidate);
+    }
+
+    const find_clause = try std.fmt.allocPrint(
+        allocator,
+        "find build -type f \\( -name {s} -o -name {s} \\) ! -path '*/CMakeFiles/*' ! -path '*/meson-private/*' ! -path '*/meson-logs/*' | head -n 1",
+        .{ quoted_target, quoted_target_exe },
+    );
+    defer allocator.free(find_clause);
+
+    return try std.fmt.allocPrint(
+        allocator,
+        "for ZIGNITE_CANDIDATE in {s}; do if [ -x \"$ZIGNITE_CANDIDATE\" ]; then \"$ZIGNITE_CANDIDATE\"; exit $?; fi; done; ZIGNITE_BIN=$({s}) && if [ -n \"$ZIGNITE_BIN\" ] && [ -x \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; elif [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; else {s}; fi",
+        .{
+            candidate_list.items,
+            find_clause,
+            quoted_default_path,
+        },
+    );
 }
 
 test "quoteShellArgAlloc escapes embedded single quotes" {
