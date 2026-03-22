@@ -177,6 +177,82 @@ local function test_rust_detected_commands_skip_cargo_noise()
     print("✓ Rust cargo noise filtering test passed")
 end
 
+-- Test detect worker async timeouts tear down the stale worker and allow later requests to recover.
+local function test_detect_worker_async_timeout_resets_client()
+    init.setup({
+        build_commands = {},
+    })
+
+    local detect_module = require("zignite.build.detect")
+    local detect_backend = require("zignite.build.detect.backend")
+    local original_executable = vim.fn.executable
+    local original_chansend = vim.fn.chansend
+    local original_new_timer = vim.loop and vim.loop.new_timer or nil
+    local timer_callbacks = {}
+    local timeout_result = false
+    local recovered_commands = nil
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    if vim.loop then
+        vim.loop.new_timer = function()
+            return {
+                start = function(_, _, _, callback)
+                    timer_callbacks[#timer_callbacks + 1] = callback
+                end,
+                stop = function() end,
+                close = function() end,
+            }
+        end
+    end
+    vim.fn.chansend = function(job_id, data)
+        local job = mock_jobs[job_id]
+        if job and is_detect_daemon_cmd(job.cmd) then
+            job.input = job.input .. tostring(data or "")
+            return 1
+        end
+        if original_chansend then
+            return original_chansend(job_id, data)
+        end
+        return 0
+    end
+
+    detect_backend.reset()
+    reset_job_results()
+    detect_module.detect_go_tool_commands_async(function(commands)
+        timeout_result = commands
+    end, true)
+    assert(#timer_callbacks > 0, "Detect worker async request should arm a timeout timer")
+    timer_callbacks[1]()
+    assert(type(timeout_result) == "table", "Timed out detect worker should fall back to plain tool detection")
+    assert(timeout_result.env == "go env", "Timed out detect worker should still surface fallback commands")
+    assert(state.jobstop_count > 0, "Timed out detect worker should stop the stale job")
+
+    vim.fn.chansend = original_chansend
+    if vim.loop then
+        vim.loop.new_timer = original_new_timer
+    end
+
+    detect_module.detect_go_tool_commands_async(function(commands)
+        recovered_commands = commands
+    end, true)
+    assert(type(recovered_commands) == "table", "Detect worker should recover after a timeout reset")
+    assert(recovered_commands.env == "go env", "Detect worker should still return commands after recovery")
+
+    vim.fn.executable = original_executable
+    detect_backend.reset()
+    reset_job_results()
+
+    print("✓ Detect worker async timeout reset test passed")
+end
+
 -- Test run_build_command can execute cpp commands detected from Makefile targets.
 local function test_run_build_command_with_detected_cpp_make_target()
     init.setup({
@@ -350,6 +426,7 @@ test_run_build_command_with_detected_zig_command()
 test_run_build_command_with_detected_go_command()
 test_run_build_command_with_detected_rust_command()
 test_rust_detected_commands_skip_cargo_noise()
+test_detect_worker_async_timeout_resets_client()
 test_run_build_command_with_detected_cpp_make_target()
 test_run_build_command_with_detected_odin_command()
 test_run_build_command_with_detected_java_maven_command()
