@@ -167,8 +167,12 @@ local function test_bazel_targets_use_zig_project_parser()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
-				"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
-				"TARGET\tcc_test\tmain_test\t0\t1\tmain_test.cc",
+				"COMMAND\tbazel-build-main\tbazel build //app:main",
+				"COMMAND\tbazel-run-main\tbazel run //app:main",
+				"COMMAND\tbazel-build-main_test\tbazel build //app:main_test",
+				"COMMAND\tbazel-test-main_test\tbazel test //app:main_test",
+				"PRIMARY_BUILD\tbazel build //app:main",
+				"PRIMARY_RUN\tbazel run //app:main",
 			},
 		}),
 		readfile = function()
@@ -204,7 +208,10 @@ local function test_run_build_command_with_inferred_bazel_target()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
-				"TARGET\tcc_binary\tmain\t1\t0\tmain.cc",
+				"COMMAND\tbazel-build-main\tbazel build //app:main",
+				"COMMAND\tbazel-run-main\tbazel run //app:main",
+				"PRIMARY_BUILD\tbazel build //app:main",
+				"PRIMARY_RUN\tbazel run //app:main",
 			},
 		}),
 		input = function(prompt, default_value)
@@ -237,8 +244,10 @@ local function test_bazel_related_test_inference()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazeltests/app/BUILD.bazel"] = {
-				"TARGET\tcc_library\tfoo_lib\t0\t0\tfoo.cc",
-				"TARGET\tcc_test\tfoo_test\t0\t1\tfoo_test.cc",
+				"COMMAND\tbazel-build-foo_lib\tbazel build //app:foo_lib",
+				"COMMAND\tbazel-build-foo_test\tbazel build //app:foo_test",
+				"COMMAND\tbazel-test-foo_test\tbazel test //app:foo_test",
+				"PRIMARY_TEST\tbazel test //app:foo_test",
 			},
 		}),
 		input = function(prompt, default_value)
@@ -273,7 +282,10 @@ local function test_bazel_parent_package_inference()
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelparent/app/BUILD.bazel"] = {},
 			["--path=/tmp/bazelparent/BUILD.bazel"] = {
-				"TARGET\tcc_binary\troot_app\t1\t0\tapp/main.cc",
+				"COMMAND\tbazel-build-root_app\tbazel build //:root_app",
+				"COMMAND\tbazel-run-root_app\tbazel run //:root_app",
+				"PRIMARY_BUILD\tbazel build //:root_app",
+				"PRIMARY_RUN\tbazel run //:root_app",
 			},
 		}),
 		input = function(prompt, default_value)
