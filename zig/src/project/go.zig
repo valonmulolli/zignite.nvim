@@ -130,3 +130,23 @@ test "parse go module info" {
     try std.testing.expect(info.primary_run != null);
     try std.testing.expectEqualStrings("go run './cmd/app'", info.primary_run.?);
 }
+
+test "parse go module info at project root keeps selector dot without package commands" {
+    const allocator = std.testing.allocator;
+    const info = try parseInfo(
+        allocator,
+        \\module example.com/demo
+        \\
+        \\go 1.24.0
+    ,
+        "/tmp/demo/go.mod",
+        "/tmp/demo/main.go",
+    );
+    defer freeOwnedInfo(allocator, info);
+
+    try std.testing.expect(info.primary_selector != null);
+    try std.testing.expectEqualStrings(".", info.primary_selector.?);
+    try std.testing.expect(info.primary_build == null);
+    try std.testing.expect(info.primary_run == null);
+    try std.testing.expect(info.primary_test == null);
+}

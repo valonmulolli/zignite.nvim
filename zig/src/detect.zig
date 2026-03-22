@@ -385,3 +385,42 @@ test "parse cargo commands skips aliases and removed entries" {
     try std.testing.expectEqualStrings("check", commands[1]);
     try std.testing.expectEqualStrings("test", commands[2]);
 }
+
+test "parse go commands excludes help and extra topics" {
+    const allocator = std.testing.allocator;
+    const output =
+        \\The commands are:
+        \\    build       compile packages and dependencies
+        \\    help        Help about any command
+        \\    test        test packages
+        \\
+        \\Additional help topics:
+        \\    modules     module support
+    ;
+    const commands = try parseDetectCommandNames(allocator, .go, output);
+    defer freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 2), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
+    try std.testing.expectEqualStrings("test", commands[1]);
+}
+
+test "parse zig commands stops at general options" {
+    const allocator = std.testing.allocator;
+    const output =
+        \\Usage: zig [command] [options]
+        \\
+        \\Commands:
+        \\  build-exe    Build an executable
+        \\  fmt          Reformat Zig source into canonical style
+        \\
+        \\General Options:
+        \\  -h, --help   Print command-specific usage
+    ;
+    const commands = try parseDetectCommandNames(allocator, .zig, output);
+    defer freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 2), commands.len);
+    try std.testing.expectEqualStrings("build-exe", commands[0]);
+    try std.testing.expectEqualStrings("fmt", commands[1]);
+}

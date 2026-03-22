@@ -397,3 +397,100 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
 
     return try names.toOwnedSlice(allocator);
 }
+
+test "writeOutput emits cargo primary run metadata with quoted bin names" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(
+        out.writer(allocator),
+        allocator,
+        .{
+            .kind = .cargo,
+            .path = "/tmp/rustproj/Cargo.toml",
+            .match_path = "/tmp/rustproj/src/bin/demo's-tool.rs",
+        },
+        \\[package]
+        \\name = "demo"
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "BIN\tdemo's-tool\t1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BIN\tdemo's-tool\n") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            out.items,
+            "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n"
+        ) != null
+    );
+}
+
+test "writeOutput emits go primary command metadata" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(
+        out.writer(allocator),
+        allocator,
+        .{
+            .kind = .go,
+            .path = "/tmp/goproj/go.mod",
+            .match_path = "/tmp/goproj/cmd/api/main.go",
+        },
+        \\module example.com/demo
+        \\
+        \\go 1.24.0
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "MODULE\texample.com/demo\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_SELECTOR\t./cmd/api\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tgo build './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tgo run './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TEST\tgo test './cmd/api'\n") != null);
+}
+
+test "writeOutput emits cmake primary target and discovered run path" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("build/bin");
+    try tmp.dir.writeFile(.{
+        .sub_path = "build/bin/demo-app",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const cmake_path = try std.fs.path.join(allocator, &.{ root, "CMakeLists.txt" });
+    defer allocator.free(cmake_path);
+    const match_path = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(match_path);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(
+        out.writer(allocator),
+        allocator,
+        .{
+            .kind = .cmake,
+            .path = cmake_path,
+            .match_path = match_path,
+        },
+        \\project(demo-app)
+        \\add_executable(${PROJECT_NAME} src/main.cpp)
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "TARGET\tdemo-app\t1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "RUN_PATH\tdemo-app\t./build/bin/demo-app\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TARGET\tdemo-app\n") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null
+    );
+}
