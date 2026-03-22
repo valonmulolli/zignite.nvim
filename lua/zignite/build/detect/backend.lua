@@ -135,15 +135,29 @@ local project_client = backend_client.new({
 	build_once_argv = build_project_once_argv,
 })
 
+---@param lines string[]|nil
+---@return table<string, string>
+local function decode_detect_command_lines(lines)
+	---@type table<string, string>
+	local commands = {}
+	for _, raw_line in ipairs(lines or {}) do
+		local line = tostring(raw_line or "")
+		local name, command = line:match("^([^\t]+)\t(.+)$")
+		if type(name) == "string" and name ~= "" and type(command) == "string" and command ~= "" then
+			commands[name] = command
+		end
+	end
+	return commands
+end
+
 ---@param tool string
----@param build_from_names fun(tool: string, names: string[]): table<string, string>
 ---@return table<string, string>|nil
-function M.detect_with_zig_worker(tool, build_from_names)
+function M.detect_with_zig_worker(tool)
 	local lines = detect_client.sync_request({ tool = tool })
 	if type(lines) ~= "table" then
 		return nil
 	end
-	local commands = build_from_names(tool, lines)
+	local commands = decode_detect_command_lines(lines)
 	if vim.tbl_isempty(commands) then
 		return nil
 	end
@@ -152,15 +166,14 @@ end
 
 ---@param tool string
 ---@param on_done fun(commands: table<string, string>|nil):nil
----@param build_from_names fun(tool: string, names: string[]): table<string, string>
 ---@return boolean
-function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
+function M.detect_with_zig_worker_async(tool, on_done)
 	return detect_client.async_request({ tool = tool }, function(lines)
 		if type(lines) ~= "table" then
 			on_done(nil)
 			return
 		end
-		local commands = build_from_names(tool, lines)
+		local commands = decode_detect_command_lines(lines)
 		if vim.tbl_isempty(commands) then
 			on_done(nil)
 			return
@@ -170,14 +183,13 @@ function M.detect_with_zig_worker_async(tool, on_done, build_from_names)
 end
 
 ---@param tool string
----@param build_from_names fun(tool: string, names: string[]): table<string, string>
 ---@return table<string, string>|nil
-function M.detect_with_zig_once(tool, build_from_names)
+function M.detect_with_zig_once(tool)
 	local lines = detect_client.once_request({ tool = tool })
 	if type(lines) ~= "table" then
 		return nil
 	end
-	local commands = build_from_names(tool, lines)
+	local commands = decode_detect_command_lines(lines)
 	if vim.tbl_isempty(commands) then
 		return nil
 	end
@@ -186,15 +198,14 @@ end
 
 ---@param tool string
 ---@param on_done fun(commands: table<string, string>|nil):nil
----@param build_from_names fun(tool: string, names: string[]): table<string, string>
 ---@return boolean
-function M.detect_with_zig_once_async(tool, on_done, build_from_names)
+function M.detect_with_zig_once_async(tool, on_done)
 	return detect_client.once_request_async({ tool = tool }, function(lines)
 		if type(lines) ~= "table" then
 			on_done(nil)
 			return
 		end
-		local commands = build_from_names(tool, lines)
+		local commands = decode_detect_command_lines(lines)
 		if vim.tbl_isempty(commands) then
 			on_done(nil)
 			return
