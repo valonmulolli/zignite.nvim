@@ -376,7 +376,7 @@ function M.parse_project_daemon_request(request_text)
 		response[#response + 1] = "\t" .. line
 	end
 	response[#response + 1] = "@@ZPRJ_RES_END " .. request_id
-	return { table.concat(response, "\n") .. "\n" }
+	return response
 end
 
 ---@param request_text string
