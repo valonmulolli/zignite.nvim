@@ -175,6 +175,7 @@ local function test_cmake_targets_use_zig_project_parser()
             "RUN_PATH\tapp\t./build/bin/app",
             "PRIMARY_TARGET\tapp",
             "PRIMARY_RUN_PATH\t./build/bin/app",
+            "PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
         }
     end
     vim.fn.filereadable = function(path)
@@ -211,6 +212,10 @@ local function test_cmake_targets_use_zig_project_parser()
     assert(
         cmake_info.primary_run == "cmake --build build --target app && ./build/bin/app",
         "Zig CMake parser should expose the primary run command"
+    )
+    assert(
+        cmake_info.preferred_commands.run == "cmake --build build --target app && ./build/bin/app",
+        "Zig CMake parser should expose preferred run commands from backend records"
     )
 
     vim.fn.executable = original_executable
@@ -253,6 +258,7 @@ local function test_meson_targets_use_zig_project_parser()
             "RUN_PATH\tdemo-app\t./build/demo-app",
             "PRIMARY_TARGET\tdemo-app",
             "PRIMARY_RUN_PATH\t./build/demo-app",
+            "PREFERRED\trun\tmeson compile -C build demo-app && ./build/demo-app",
         }
     end
     vim.fn.filereadable = function(path)
@@ -289,6 +295,10 @@ local function test_meson_targets_use_zig_project_parser()
     assert(
         meson_info.primary_run == "meson compile -C build demo-app && ./build/demo-app",
         "Zig Meson parser should expose the primary run command"
+    )
+    assert(
+        meson_info.preferred_commands.run == "meson compile -C build demo-app && ./build/demo-app",
+        "Zig Meson parser should expose preferred run commands from backend records"
     )
 
     vim.fn.executable = original_executable
@@ -682,6 +692,8 @@ local function test_cargo_targets_use_zig_project_parser()
             "PRIMARY_BIN\tdemo",
             "PRIMARY_RUN\tcargo run --bin 'demo'",
             "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'",
+            "PREFERRED\trun\tcargo run --bin 'demo'",
+            "PREFERRED\trelease-run\tcargo run --release --bin 'demo'",
         }
     end
     vim.fn.filereadable = function(path)
@@ -711,6 +723,10 @@ local function test_cargo_targets_use_zig_project_parser()
     assert(
         cargo_info.primary_release_run == "cargo run --release --bin 'demo'",
         "Zig Cargo parser should expose the primary release run command"
+    )
+    assert(
+        cargo_info.preferred_commands["release-run"] == "cargo run --release --bin 'demo'",
+        "Zig Cargo parser should expose preferred commands from backend records"
     )
 
     vim.fn.executable = original_executable
@@ -874,6 +890,9 @@ local function test_go_project_commands_use_zig_project_parser()
             "PRIMARY_BUILD\tgo build './app/cmd/web'",
             "PRIMARY_RUN\tgo run './app/cmd/web'",
             "PRIMARY_TEST\tgo test './app/cmd/web'",
+            "PREFERRED\tbuild\tgo build './app/cmd/web'",
+            "PREFERRED\trun\tgo run './app/cmd/web'",
+            "PREFERRED\ttest\tgo test './app/cmd/web'",
         }
     end
     vim.fn.filereadable = function(path)
@@ -905,6 +924,10 @@ local function test_go_project_commands_use_zig_project_parser()
     assert(
         go_info.primary_run == "go run './app/cmd/web'",
         "Zig Go parser should expose the primary run command through parser metadata"
+    )
+    assert(
+        go_info.preferred_commands.test == "go test './app/cmd/web'",
+        "Zig Go parser should expose preferred commands from backend records"
     )
 
     vim.fn.executable = original_executable
