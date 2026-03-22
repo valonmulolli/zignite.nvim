@@ -11,18 +11,17 @@
 
 ---
 
-Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, timeouts, quickfix processing, and command detection.
+Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, timeouts, project parsing, quickfix processing, and command detection.
 
 ## Features
 
 - **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
 - **Full ANSI Colors**: Compiler errors and logs retain their rich coloring.
-- **Zig Backend**: Core process management, command detection, and quickfix processing run through a native backend.
+- **Zig Backend**: Core process management, command detection, project parsing, and quickfix processing run through a native backend.
 - **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Zig backend.
 - **Quickfix Integration**: Non-zero exits can populate the quickfix list so errors are easy to jump through.
-- **Persistent Quickfix Worker**: Reuses a Zig daemon for quickfix processing to reduce repeat-run latency.
-- **Persistent Detect Worker**: Reuses a Zig daemon for build-command detection parsing (`zig/go/cargo/odin`) with Lua fallback.
-- **Build System Support**: Supports `cargo`, `zig build`, `npm`, `make`, CMake, Meson, Bazel, and more.
+- **Unified Zig Daemon**: Reuses one backend daemon for detection, project parsing, and quickfix processing to reduce repeat-run latency.
+- **Build System Support**: Supports `cargo`, `zig build`, `npm`, `make`, CMake, Meson, Bazel, Maven, Gradle, Go modules/workspaces, and more.
 - **Interactive Command Picker**: Choose between `run`, `test`, `build`, `clean`, and detected project commands.
 - **Project Detection**: Detects project roots so project-aware commands run from the correct working directory.
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
@@ -252,9 +251,9 @@ detect = {
 }
 ```
 
-When the Zig backend is available, command detection uses a persistent worker
-(`--detect-daemon`) for lower overhead. If the backend is unavailable or a
-request fails, parsing falls back to Lua automatically.
+When the Zig backend is available, detection and project parsing reuse a
+persistent backend daemon (`--daemon`) for lower overhead. If the backend is
+unavailable or a request fails, parsing falls back to Lua automatically.
 
 `RunBuild`, `RunLive`, and `:RunBuild` completion use configured commands plus
 cached detected commands first, then refresh detection in the background. That
@@ -311,7 +310,7 @@ zig fetch --save git+https://github.com/<owner>/<repo>
 
 - `quickfix.processor = "auto"`: uses Lua for small outputs, Zig for large outputs (`zig_min_lines` threshold).
 - `quickfix.processor = "zig"`: always uses Zig processing with immediate Lua fallback on backend errors.
-- `quickfix.zig_worker = true`: keeps a persistent Zig worker (`--quickfix-daemon`) to avoid per-run process spawn cost.
+- `quickfix.zig_worker = true`: keeps quickfix requests on the persistent Zig backend daemon (`--daemon`) to avoid per-run process spawn cost.
 - `quickfix.zig_worker = false`: disables worker reuse and uses one-shot Zig quickfix jobs.
 
 Recommended low-latency setup:
