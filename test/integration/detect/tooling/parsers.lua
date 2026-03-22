@@ -671,10 +671,15 @@ local function test_cargo_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, primary_bin = cargo_parser.detect_cargo_project_commands("/tmp/rustproj/src/main.rs")
+    local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustproj/src/main.rs")
     assert(commands["cargo-build-demo"] == "cargo build --bin demo", "Zig Cargo parser should build the inferred bin")
     assert(commands["cargo-run-demo"] == "cargo run --bin demo", "Zig Cargo parser should run the inferred bin")
-    assert(primary_bin == "demo", "Zig Cargo parser should preserve the primary bin")
+    assert(cargo_info.primary_bin == "demo", "Zig Cargo parser should preserve the primary bin")
+    assert(cargo_info.primary_run == "cargo run --bin demo", "Zig Cargo parser should expose the primary run command")
+    assert(
+        cargo_info.primary_release_run == "cargo run --release --bin demo",
+        "Zig Cargo parser should expose the primary release run command"
+    )
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -724,7 +729,7 @@ local function test_cargo_targets_use_basic_lua_fallback()
         return {}
     end
 
-    local commands, primary_bin = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/bin/tool.rs")
+    local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/bin/tool.rs")
     assert(
         commands["cargo-build-tool"] == "cargo build --bin tool",
         "Lua Cargo fallback should keep src/bin builds usable"
@@ -733,7 +738,8 @@ local function test_cargo_targets_use_basic_lua_fallback()
         commands["cargo-run-tool"] == "cargo run --bin tool",
         "Lua Cargo fallback should keep src/bin runs usable"
     )
-    assert(primary_bin == "tool", "Lua Cargo fallback should preserve the obvious src/bin target")
+    assert(cargo_info.primary_bin == "tool", "Lua Cargo fallback should preserve the obvious src/bin target")
+    assert(cargo_info.primary_run == "cargo run --bin tool", "Lua Cargo fallback should expose the primary run command")
 
     local main_commands, main_primary = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/main.rs")
     assert(vim.tbl_isempty(main_commands), "Lua Cargo fallback should not infer package-name bins from Cargo.toml")
