@@ -6,6 +6,92 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 
+---@param info table|nil
+---@return table|nil
+local function copy_info(info)
+	if type(info) ~= "table" then
+		return nil
+	end
+	return {
+		module_name = info.module_name,
+		primary_selector = info.primary_selector,
+		primary_build = info.primary_build,
+		primary_run = info.primary_run,
+		primary_test = info.primary_test,
+	}
+end
+
+---@param selector string|nil
+---@param module_name string|nil
+---@return table|nil
+local function build_go_info(selector, module_name)
+	if type(selector) ~= "string" or selector == "" then
+		return nil
+	end
+
+	local quoted_selector = utils.quote_cli_argument(selector)
+	if quoted_selector == nil then
+		return nil
+	end
+
+	local info = {
+		module_name = module_name,
+		primary_selector = selector,
+	}
+	if selector ~= "." then
+		info.primary_build = "go build " .. quoted_selector
+		info.primary_run = "go run " .. quoted_selector
+		info.primary_test = "go test " .. quoted_selector
+	end
+	return info
+end
+
+---@param commands table<string, string>
+---@param info table
+---@return nil
+local function add_commands_from_info(commands, info)
+	if type(info.primary_build) == "string" and info.primary_build ~= "" then
+		commands["go-build-package"] = info.primary_build
+	end
+	if type(info.primary_run) == "string" and info.primary_run ~= "" then
+		commands["go-run-package"] = info.primary_run
+	end
+	if type(info.primary_test) == "string" and info.primary_test ~= "" then
+		commands["go-test-package"] = info.primary_test
+	end
+end
+
+---@param zig_lines string[]
+---@return table<string, string>, table|nil
+local function parse_zig_go_info(zig_lines)
+	---@type table
+	local info = {}
+	for _, raw_line in ipairs(zig_lines) do
+		local line = tostring(raw_line or "")
+		local kind, value = line:match("^([^\t]+)\t(.*)$")
+		if kind == "MODULE" and value ~= "" then
+			info.module_name = value
+		elseif kind == "PRIMARY_SELECTOR" and value ~= "" then
+			info.primary_selector = value
+		elseif kind == "PRIMARY_BUILD" and value ~= "" then
+			info.primary_build = value
+		elseif kind == "PRIMARY_RUN" and value ~= "" then
+			info.primary_run = value
+		elseif kind == "PRIMARY_TEST" and value ~= "" then
+			info.primary_test = value
+		end
+	end
+
+	if next(info) == nil then
+		return {}, nil
+	end
+
+	---@type table<string, string>
+	local commands = {}
+	add_commands_from_info(commands, info)
+	return commands, copy_info(info)
+end
+
 ---@param raw_path string
 ---@return string
 local function normalize_path(raw_path)
@@ -122,15 +208,15 @@ local function detect_workspace_use_root(go_work_path, filepath)
 end
 
 ---@param filepath string
----@return table<string, string>, string|nil, string|nil
+---@return table<string, string>, table|nil
 function M.detect_go_project_commands(filepath)
 	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
-		return {}, nil, nil
+		return {}, nil
 	end
 
 	local root = utils.get_project_root(filepath, config.options.project)
 	if not root or root == "" then
-		return {}, nil, nil
+		return {}, nil
 	end
 	root = normalize_path(root)
 
@@ -148,18 +234,56 @@ function M.detect_go_project_commands(filepath)
 		cache_key
 	)
 	if cached and cached.mtime_key == mtime_key then
-		return state.copy_string_map(cached.commands), cached.primary_selector, cached.module_name
+		return state.copy_string_map(cached.commands), copy_info(cached.info)
 	end
 
 	local selector
 	local module_name
 	if vim.fn.filereadable(go_work_path) == 1 then
+		local zig_lines = detect_backend.parse_project_lines_once("go", go_work_path, {
+			"--match-path=" .. filepath,
+		})
+		if type(zig_lines) == "table" and #zig_lines > 0 then
+			local commands, info = parse_zig_go_info(zig_lines)
+			state.set_bounded_cache_entry(
+				state.go_project_cache,
+				state.go_project_cache_order,
+				state.GO_PROJECT_CACHE_MAX,
+				cache_key,
+				{
+					mtime_key = mtime_key,
+					commands = state.copy_string_map(commands),
+					info = copy_info(info),
+				}
+			)
+			return state.copy_string_map(commands), copy_info(info)
+		end
+
 		local matched_root = detect_workspace_use_root(go_work_path, filepath)
 		if matched_root and matched_root ~= "" then
 			module_name = parse_go_module_name(vim.fs.joinpath(matched_root, "go.mod"))
 		end
 		selector = package_selector(root, filepath)
 	elseif vim.fn.filereadable(go_mod_path) == 1 then
+		local zig_lines = detect_backend.parse_project_lines_once("go", go_mod_path, {
+			"--match-path=" .. filepath,
+		})
+		if type(zig_lines) == "table" and #zig_lines > 0 then
+			local commands, info = parse_zig_go_info(zig_lines)
+			state.set_bounded_cache_entry(
+				state.go_project_cache,
+				state.go_project_cache_order,
+				state.GO_PROJECT_CACHE_MAX,
+				cache_key,
+				{
+					mtime_key = mtime_key,
+					commands = state.copy_string_map(commands),
+					info = copy_info(info),
+				}
+			)
+			return state.copy_string_map(commands), copy_info(info)
+		end
+
 		module_name = parse_go_module_name(go_mod_path)
 		selector = package_selector(root, filepath)
 	else
@@ -168,20 +292,33 @@ function M.detect_go_project_commands(filepath)
 			state.go_project_cache_order,
 			state.GO_PROJECT_CACHE_MAX,
 			cache_key,
-			{ mtime_key = mtime_key, commands = {}, primary_selector = nil, module_name = nil }
+			{ mtime_key = mtime_key, commands = {}, info = nil }
 		)
-		return {}, nil, nil
+			return {}, nil
 	end
 
 	if type(selector) ~= "string" or selector == "" then
 		selector = "."
 	end
 
+	local quoted_selector = utils.quote_cli_argument(selector)
+	if quoted_selector == nil then
+		state.set_bounded_cache_entry(
+			state.go_project_cache,
+			state.go_project_cache_order,
+			state.GO_PROJECT_CACHE_MAX,
+			cache_key,
+			{ mtime_key = mtime_key, commands = {}, info = nil }
+		)
+		return {}, nil
+	end
+
 	local commands = {
-		["go-build-package"] = "go build " .. selector,
-		["go-run-package"] = "go run " .. selector,
-		["go-test-package"] = "go test " .. selector,
+		["go-build-package"] = "go build " .. quoted_selector,
+		["go-run-package"] = "go run " .. quoted_selector,
+		["go-test-package"] = "go test " .. quoted_selector,
 	}
+	local info = build_go_info(selector, module_name)
 
 	state.set_bounded_cache_entry(
 		state.go_project_cache,
@@ -191,12 +328,11 @@ function M.detect_go_project_commands(filepath)
 		{
 			mtime_key = mtime_key,
 			commands = state.copy_string_map(commands),
-			primary_selector = selector,
-			module_name = module_name,
+			info = copy_info(info),
 		}
 	)
 
-	return commands, selector, module_name
+	return commands, copy_info(info)
 end
 
 return M

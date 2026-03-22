@@ -102,23 +102,21 @@ end
 ---@param configured table<string, string>
 ---@param command_key string
 ---@param configured_key string
----@param primary_target string|nil
+---@param primary_run string|nil
 ---@param build_tree_ready boolean
 ---@param setup_command string
----@param run_builder fun(target: string): string
 ---@return nil
 local function set_system_run_command(
 	filtered,
 	configured,
 	command_key,
 	configured_key,
-	primary_target,
+	primary_run,
 	build_tree_ready,
-	setup_command,
-	run_builder
+	setup_command
 )
-	if primary_target and primary_target ~= "" then
-		filtered[command_key] = run_builder(primary_target)
+	if type(primary_run) == "string" and primary_run ~= "" then
+		filtered[command_key] = primary_run
 		filtered.run = filtered[command_key]
 		return
 	end
@@ -159,18 +157,15 @@ local function build_cmake_commands(configured, filepath, root)
 		config = "cmake-config",
 	})
 
-	local _, primary_target = parsers.detect_cmake_project_commands(filepath)
+	local _, cmake_info = parsers.detect_cmake_project_commands(filepath)
 	set_system_run_command(
 		filtered,
 		configured,
 		"cmake-run",
 		"cmake-run",
-		primary_target,
+		cmake_info and cmake_info.primary_run or nil,
 		systems.has_cmake_build_tree(root),
-		systems.cmake_config_command(root),
-		function(target)
-			return systems.cmake_run_command(root, target)
-		end
+		systems.cmake_config_command(root)
 	)
 
 	return filtered
@@ -195,18 +190,15 @@ local function build_meson_commands(configured, filepath, root)
 		setup = "meson-setup",
 	})
 
-	local _, primary_target = parsers.detect_meson_project_commands(filepath)
+	local _, meson_info = parsers.detect_meson_project_commands(filepath)
 	set_system_run_command(
 		filtered,
 		configured,
 		"meson-run",
 		"meson-run",
-		primary_target,
+		meson_info and meson_info.primary_run or nil,
 		systems.has_meson_build_tree(root),
-		systems.meson_setup_command(root),
-		function(target)
-			return systems.meson_run_command(root, target)
-		end
+		systems.meson_setup_command(root)
 	)
 
 	return filtered
@@ -368,14 +360,14 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 	if filetype == "go" then
 		local updated = copy_commands(configured)
-		local go_commands, primary_selector = parsers.detect_go_project_commands(filepath)
+		local go_commands, go_info = parsers.detect_go_project_commands(filepath)
 		M.extend_string_map(updated, go_commands)
 		local default_commands = get_default_build_commands("go")
-		if primary_selector and primary_selector ~= "." then
-			replace_default_command(updated, default_commands, "build", go_commands["go-build-package"])
-			replace_default_command(updated, default_commands, "run", go_commands["go-run-package"])
-			replace_default_command(updated, default_commands, "test", go_commands["go-test-package"])
-		end
+		replace_default_commands(updated, default_commands, {
+			build = go_info and go_info.primary_build or nil,
+			run = go_info and go_info.primary_run or nil,
+			test = go_info and go_info.primary_test or nil,
+		})
 		return updated
 	end
 	if filetype == "rust" then

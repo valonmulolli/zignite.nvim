@@ -6,6 +6,19 @@ local systems = require("zignite.build.systems")
 ---@type table
 local M = {}
 
+---@param info table|nil
+---@return table|nil
+local function copy_info(info)
+	if type(info) ~= "table" then
+		return nil
+	end
+	return {
+		primary_target = info.primary_target,
+		primary_run_path = info.primary_run_path,
+		primary_run = info.primary_run,
+	}
+end
+
 ---@param root string
 ---@param filepath string
 ---@return string, string
@@ -28,10 +41,26 @@ end
 ---@param root string
 ---@param commands table<string, string>
 ---@param target string
+---@param run_path string|nil
 ---@return nil
-local function add_target_commands(root, commands, target)
+local function add_target_commands(root, commands, target, run_path)
 	commands["meson-build-" .. target] = systems.meson_build_command(root, target)
-	commands["meson-run-" .. target] = systems.meson_run_command(root, target)
+	commands["meson-run-" .. target] = systems.meson_run_command(root, target, run_path)
+end
+
+---@param root string
+---@param primary_target string|nil
+---@param primary_run_path string|nil
+---@return table|nil
+local function build_target_info(root, primary_target, primary_run_path)
+	if type(primary_target) ~= "string" or primary_target == "" then
+		return nil
+	end
+	return {
+		primary_target = primary_target,
+		primary_run_path = primary_run_path,
+		primary_run = systems.meson_run_command(root, primary_target, primary_run_path),
+	}
 end
 
 ---@param commands table<string, string>
@@ -49,47 +78,73 @@ end
 ---@param cache_key string
 ---@param mtime_key string
 ---@param commands table<string, string>
----@param primary_target string|nil
----@return table<string, string>, string|nil
-local function store_cached_result(cache_key, mtime_key, commands, primary_target)
+---@param info table|nil
+---@return table<string, string>, table|nil
+local function store_cached_result(cache_key, mtime_key, commands, info)
 	state.set_bounded_cache_entry(
 		state.meson_target_cache,
 		state.meson_target_cache_order,
 		state.MESON_TARGET_CACHE_MAX,
 		cache_key,
-		{
-			mtime_key = mtime_key,
-			commands = state.copy_string_map(commands),
-			primary_target = primary_target,
-		}
-	)
-	return commands, primary_target
+			{
+				mtime_key = mtime_key,
+				commands = state.copy_string_map(commands),
+				info = copy_info(info),
+			}
+		)
+	return commands, copy_info(info)
 end
 
 ---@param root string
 ---@param zig_lines string[]
----@return table<string, string>, string|nil
+---@return table<string, string>, table|nil
 local function parse_zig_targets(root, zig_lines)
 	---@type table<string, string>
 	local commands = {}
 	local primary_target = nil
+	---@type table<string, string>
+	local run_paths = {}
+	local primary_run_path = nil
+	---@type string[]
+	local targets = {}
+	---@type table<string, boolean>
+	local seen_targets = {}
 	for _, raw_line in ipairs(zig_lines) do
 		local line = tostring(raw_line or "")
 		local kind, target, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
 		if kind == "TARGET" and target and target ~= "" then
-			add_target_commands(root, commands, target)
+			if not seen_targets[target] then
+				seen_targets[target] = true
+				targets[#targets + 1] = target
+			end
 			if matched_flag == "1" and not primary_target then
 				primary_target = target
 			end
+		else
+			local value_kind, value, extra = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
+			if value_kind == "RUN_PATH" and value ~= "" and extra ~= "" then
+				run_paths[value] = extra
+			elseif value_kind == "PRIMARY_RUN_PATH" and value ~= "" then
+				primary_run_path = value
+			elseif value_kind == "PRIMARY_TARGET" and value ~= "" then
+				primary_target = value
+			end
 		end
 	end
-	return commands, primary_target or first_target_name(commands)
+	for _, target in ipairs(targets) do
+		add_target_commands(root, commands, target, run_paths[target])
+	end
+	primary_target = primary_target or first_target_name(commands)
+	if not primary_run_path and primary_target then
+		primary_run_path = run_paths[primary_target]
+	end
+	return commands, build_target_info(root, primary_target, primary_run_path)
 end
 
 ---@param lines string[]
 ---@param root string
 ---@param filepath string
----@return table<string, string>, string|nil
+---@return table<string, string>, table|nil
 local function parse_basic_lua_targets(lines, root, filepath)
 	local relative_filepath, basename = make_match_context(root, filepath)
 	---@type table<string, string>
@@ -153,11 +208,11 @@ local function parse_basic_lua_targets(lines, root, filepath)
 		end
 	end
 
-	return commands, primary_target or first_target_name(commands)
+	return commands, build_target_info(root, primary_target or first_target_name(commands), nil)
 end
 
 ---@param filepath string
----@return table<string, string>, string|nil
+---@return table<string, string>, table|nil
 function M.detect_meson_project_commands(filepath)
 	if not filepath or filepath == "" then
 		return {}, nil
@@ -189,15 +244,15 @@ function M.detect_meson_project_commands(filepath)
 		cache_key
 	)
 	if cached and cached.mtime_key == mtime_key then
-		return state.copy_string_map(cached.commands), cached.primary_target
+		return state.copy_string_map(cached.commands), copy_info(cached.info)
 	end
 
 	local zig_lines = detect_backend.parse_project_lines_once("meson", meson_build_path, {
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands, primary_target = parse_zig_targets(root, zig_lines)
-		return store_cached_result(cache_key, mtime_key, commands, primary_target)
+			local commands, info = parse_zig_targets(root, zig_lines)
+			return store_cached_result(cache_key, mtime_key, commands, info)
 	end
 
 	local lines = vim.fn.readfile(meson_build_path)
@@ -205,8 +260,8 @@ function M.detect_meson_project_commands(filepath)
 		return store_cached_result(cache_key, mtime_key, {}, nil)
 	end
 
-	local commands, primary_target = parse_basic_lua_targets(lines, root, filepath)
-	return store_cached_result(cache_key, mtime_key, commands, primary_target)
+	local commands, info = parse_basic_lua_targets(lines, root, filepath)
+	return store_cached_result(cache_key, mtime_key, commands, info)
 end
 
 return M
