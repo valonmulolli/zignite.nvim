@@ -170,7 +170,7 @@ function M.is_quickfix_daemon_cmd(cmd)
 		return false
 	end
 	for _, arg in ipairs(cmd) do
-		if arg == "--quickfix-daemon" then
+		if arg == "--quickfix-daemon" or arg == "--daemon" then
 			return true
 		end
 	end
@@ -184,7 +184,7 @@ function M.is_detect_daemon_cmd(cmd)
 		return false
 	end
 	for _, arg in ipairs(cmd) do
-		if arg == "--detect-daemon" then
+		if arg == "--detect-daemon" or arg == "--daemon" then
 			return true
 		end
 	end
@@ -198,7 +198,21 @@ function M.is_project_daemon_cmd(cmd)
 		return false
 	end
 	for _, arg in ipairs(cmd) do
-		if arg == "--project-parse-daemon" then
+		if arg == "--project-parse-daemon" or arg == "--daemon" then
+			return true
+		end
+	end
+	return false
+end
+
+---@param cmd string[]|string
+---@return boolean
+function M.is_unified_daemon_cmd(cmd)
+	if type(cmd) ~= "table" then
+		return false
+	end
+	for _, arg in ipairs(cmd) do
+		if arg == "--daemon" then
 			return true
 		end
 	end
@@ -341,6 +355,22 @@ function M.parse_project_daemon_request(request_text)
 	end
 	response[#response + 1] = "@@ZPRJ_RES_END " .. request_id
 	return { table.concat(response, "\n") .. "\n" }
+end
+
+---@param request_text string
+---@return string[]|nil
+function M.parse_unified_daemon_request(request_text)
+	local begin_line = split_lines(request_text or "")[1] or ""
+	if begin_line:match("^@@ZQF_BEGIN%s+") then
+		return M.parse_daemon_request(request_text)
+	end
+	if begin_line:match("^@@ZDET_REQ_BEGIN%s+") then
+		return M.parse_detect_daemon_request(request_text)
+	end
+	if begin_line:match("^@@ZPRJ_REQ_BEGIN%s+") then
+		return M.parse_project_daemon_request(request_text)
+	end
+	return nil
 end
 
 ---@param cmd string[]|string

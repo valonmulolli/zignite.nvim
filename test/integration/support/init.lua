@@ -13,7 +13,10 @@ local state = {
 	next_quickfix_backend_exit_code = 0,
 	next_detect_backend_exit_code = 0,
 	next_detect_backend_error = nil,
+	next_project_backend_error = nil,
+	next_project_backend_stdout_chunks = nil,
 	next_job_id = 123,
+	jobstop_count = 0,
 	quickfix_backend_invocations = 0,
 	detect_backend_invocations = 0,
 	detect_backend_request_count = 0,
@@ -96,6 +99,9 @@ local function reset_job_results()
 	state.project_backend_invocations = 0
 	state.project_backend_request_count = 0
 	state.next_detect_backend_error = nil
+	state.next_project_backend_error = nil
+	state.next_project_backend_stdout_chunks = nil
+	state.jobstop_count = 0
 end
 
 ---@return nil
@@ -189,7 +195,9 @@ M.count_project_backend_requests = count_project_backend_requests
 M.get_upvalue_by_name = get_upvalue_by_name
 M.detect_backend_tool_commands = simulation.detect_backend_tool_commands
 M.is_detect_daemon_cmd = simulation.is_detect_daemon_cmd
+M.is_unified_daemon_cmd = simulation.is_unified_daemon_cmd
 M.parse_detect_daemon_request = simulation.parse_detect_daemon_request
+M.parse_unified_daemon_request = simulation.parse_unified_daemon_request
 M.is_project_daemon_cmd = simulation.is_project_daemon_cmd
 M.parse_project_daemon_request = simulation.parse_project_daemon_request
 

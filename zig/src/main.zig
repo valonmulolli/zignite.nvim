@@ -1,5 +1,6 @@
 const std = @import("std");
 const command = @import("command.zig");
+const daemon = @import("daemon.zig");
 const quickfix = @import("quickfix.zig");
 const detect = @import("detect.zig");
 const project = @import("project.zig");
@@ -13,6 +14,11 @@ pub fn main() !void {
     if (args.len < 2) {
         printUsage();
         std.process.exit(1);
+    }
+
+    if (hasFlag(args[1..], "--daemon")) {
+        try daemon.run(allocator);
+        return;
     }
 
     if (hasFlag(args[1..], "--quickfix-daemon")) {
@@ -65,13 +71,14 @@ fn printUsage() void {
         \\Usage:
         \\  zignite [--timeout=MS] <full command string>
         \\  zignite [--timeout=MS] --argv <program> [args...]
+        \\  zignite --daemon
         \\  zignite --quickfix [--max-lines=N] [--max-bytes=N] [--strip-ansi=0|1]
         \\                    [--strip-max-lines=N] [--parse-diagnostics=0|1]
         \\  zignite --quickfix-daemon
         \\  zignite --detect --tool=zig|go|cargo|odin
         \\  zignite --detect-daemon
         \\  zignite --project-parse-daemon
-        \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|meson|cargo|pyproject|go-mod|go-work --path=/abs/path
+        \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
     , .{});
 }
 
