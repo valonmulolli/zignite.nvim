@@ -33,6 +33,7 @@ M.project_backend_lines = {
 		"RUN_PATH\tapp\t./build/bin/app",
 		"PRIMARY_TARGET\tapp",
 		"PRIMARY_RUN_PATH\t./build/bin/app",
+		"PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
 	},
 	bazel = {
 		"TARGET\tcc_binary\tapp\t1\t0\tmain.cc",
@@ -46,12 +47,15 @@ M.project_backend_lines = {
 		"RUN_PATH\tapp\t./build/app",
 		"PRIMARY_TARGET\tapp",
 		"PRIMARY_RUN_PATH\t./build/app",
+		"PREFERRED\trun\tmeson compile -C build app && ./build/app",
 	},
 	cargo = {
 		"BIN\tapp\t1",
 		"PRIMARY_BIN\tapp",
 		"PRIMARY_RUN\tcargo run --bin 'app'",
 		"PRIMARY_RELEASE_RUN\tcargo run --release --bin 'app'",
+		"PREFERRED\trun\tcargo run --bin 'app'",
+		"PREFERRED\trelease-run\tcargo run --release --bin 'app'",
 	},
 	go = {
 		"MODULE\texample.com/app",
@@ -59,6 +63,9 @@ M.project_backend_lines = {
 		"PRIMARY_BUILD\tgo build './cmd/app'",
 		"PRIMARY_RUN\tgo run './cmd/app'",
 		"PRIMARY_TEST\tgo test './cmd/app'",
+		"PREFERRED\tbuild\tgo build './cmd/app'",
+		"PREFERRED\trun\tgo run './cmd/app'",
+		"PREFERRED\ttest\tgo test './cmd/app'",
 	},
 	pyproject = { "TOOL\tuv" },
 }
