@@ -446,3 +446,53 @@ test "quickfix max_bytes keeps newest lines" {
         out.items,
     );
 }
+
+test "quickfix strips ansi and canonicalizes arrow diagnostics" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try processQuickfixPayload(
+        allocator,
+        "--> src/main.zig:12:4: unexpected token\n\x1b[31mplain error\x1b[0m\n",
+        .{
+            .max_lines = 10,
+            .max_bytes = 1024,
+            .strip_ansi = true,
+            .strip_max_lines = 10,
+            .parse_diagnostics = true,
+        },
+        false,
+        out.writer(allocator),
+    );
+
+    try std.testing.expectEqualStrings(
+        "src/main.zig:12:4: unexpected token\nplain error\n",
+        out.items,
+    );
+}
+
+test "quickfix canonicalizes paren diagnostics" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try processQuickfixPayload(
+        allocator,
+        "src/main.c(7:2) missing semicolon\n",
+        .{
+            .max_lines = 10,
+            .max_bytes = 1024,
+            .strip_ansi = false,
+            .strip_max_lines = 10,
+            .parse_diagnostics = true,
+        },
+        false,
+        out.writer(allocator),
+    );
+
+    try std.testing.expectEqualStrings(
+        "src/main.c:7:2: missing semicolon\n",
+        out.items,
+    );
+}

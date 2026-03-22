@@ -256,3 +256,33 @@ fn parseBool(value: []const u8) !bool {
     if (std.mem.eql(u8, value, "0") or std.ascii.eqlIgnoreCase(value, "false")) return false;
     return error.InvalidBoolean;
 }
+
+test "parseQuickfixBegin decodes request header" {
+    const header = try parseQuickfixBegin("@@ZQF_BEGIN 42 100 2048 1 50 0");
+
+    try std.testing.expectEqual(@as(u64, 42), header.request_id);
+    try std.testing.expectEqual(@as(usize, 100), header.options.max_lines);
+    try std.testing.expectEqual(@as(usize, 2048), header.options.max_bytes);
+    try std.testing.expectEqual(true, header.options.strip_ansi);
+    try std.testing.expectEqual(@as(usize, 50), header.options.strip_max_lines);
+    try std.testing.expectEqual(false, header.options.parse_diagnostics);
+}
+
+test "parseDetectBegin decodes detect request header" {
+    const header = try parseDetectBegin("@@ZDET_REQ_BEGIN 7 cargo");
+
+    try std.testing.expectEqual(@as(u64, 7), header.request_id);
+    try std.testing.expectEqual(detect.Tool.cargo, header.tool);
+}
+
+test "parseProjectBegin decodes project request header" {
+    const header = try parseProjectBegin("@@ZPRJ_REQ_BEGIN 19");
+
+    try std.testing.expectEqual(@as(u64, 19), header.request_id);
+}
+
+test "isFrameEndLine validates marker and request id" {
+    try std.testing.expect(isFrameEndLine("@@ZPRJ_REQ_END 19", PROJECT_REQ_END, 19));
+    try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 18", PROJECT_REQ_END, 19));
+    try std.testing.expect(!isFrameEndLine("@@ZDET_REQ_END 19", PROJECT_REQ_END, 19));
+}

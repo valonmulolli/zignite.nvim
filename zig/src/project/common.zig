@@ -179,3 +179,60 @@ fn pathContainsIgnoredBuildDir(path: []const u8) bool {
     }
     return false;
 }
+
+test "quoteShellArgAlloc escapes embedded single quotes" {
+    const allocator = std.testing.allocator;
+    const quoted = try quoteShellArgAlloc(allocator, "cmd/app's");
+    defer allocator.free(quoted);
+
+    try std.testing.expectEqualStrings("'cmd/app'\"'\"'s'", quoted);
+}
+
+test "normalizePathAlloc collapses separators and trims trailing slash" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalizePathAlloc(allocator, "C:\\\\work//demo///src/");
+    defer allocator.free(normalized);
+
+    try std.testing.expectEqualStrings("C:/work/demo/src", normalized);
+}
+
+test "discoverBuildRunPathAlloc prefers common build output directories" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("build/bin");
+    try tmp.dir.writeFile(.{
+        .sub_path = "build/bin/demo-app",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+
+    const run_path = try discoverBuildRunPathAlloc(allocator, root, "demo-app");
+    defer if (run_path) |value| allocator.free(value);
+
+    try std.testing.expect(run_path != null);
+    try std.testing.expectEqualStrings("./build/bin/demo-app", run_path.?);
+}
+
+test "discoverBuildRunPathAlloc ignores generated build internals" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("build/CMakeFiles");
+    try tmp.dir.writeFile(.{
+        .sub_path = "build/CMakeFiles/demo-app",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+
+    const run_path = try discoverBuildRunPathAlloc(allocator, root, "demo-app");
+    defer if (run_path) |value| allocator.free(value);
+
+    try std.testing.expect(run_path == null);
+}

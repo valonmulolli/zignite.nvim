@@ -274,6 +274,52 @@ fn tokenizeWhitespaceArgsAlloc(allocator: std.mem.Allocator, text: []const u8) !
     return try tokens.toOwnedSlice(allocator);
 }
 
+test "parse cmake targets resolves project name and matches relative source" {
+    const allocator = std.testing.allocator;
+    const contents =
+        \\project(demo-app)
+        \\add_executable(${PROJECT_NAME}
+        \\  src/main.cpp
+        \\  src/lib.cpp
+        \\)
+        \\add_executable(helper tools/helper.cpp)
+    ;
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expectEqualStrings("demo-app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+    try std.testing.expectEqualStrings("helper", targets[1].name);
+    try std.testing.expect(!targets[1].matched);
+}
+
+test "parse cmake targets merges duplicate target matches" {
+    const allocator = std.testing.allocator;
+    const contents =
+        \\add_executable(app src/main.cpp)
+        \\add_executable(app src/other.cpp)
+    ;
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
 test "parse cmake targets with primary match" {
     const allocator = std.testing.allocator;
     const targets = try parseTargets(
