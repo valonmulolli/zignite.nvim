@@ -198,6 +198,147 @@ local function test_run_build_command_with_zig_fetch_github_ref()
     print("✓ Zig fetch GitHub ref expansion test passed")
 end
 
+-- Test argv conversion preserves quoted shell metacharacters inside a single argument.
+local function test_command_to_argv_preserves_quoted_metacharacters()
+    local runtime = require("zignite.runtime")
+    local argv = runtime.command_to_argv("cargo run --bin 'demo;touch /tmp/pwn'", "/tmp/rustproj/src/main.rs")
+    assert(
+        type(argv) == "table" and #argv == 4,
+        "Quoted metacharacter command should stay eligible for argv mode"
+    )
+    assert(
+        argv[1] == "cargo" and argv[2] == "run",
+        "Quoted metacharacter command should preserve the program tokens"
+    )
+    assert(argv[3] == "--bin", "Quoted metacharacter command should preserve option boundaries")
+    assert(
+        argv[4] == "demo;touch /tmp/pwn",
+        "Quoted metacharacter argument should survive tokenization as one argv item"
+    )
+
+    print("✓ Quoted argv metacharacter test passed")
+end
+
+-- Test Go package selectors with shell metacharacters remain safe in argv mode.
+local function test_go_project_commands_quote_package_selectors()
+    local go_parser = require("zignite.build.parsers.go")
+    local runtime = require("zignite.runtime")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    local original_readfile = vim.fn.readfile
+
+    utils_module.get_project_root = function()
+        return "/tmp/goselector"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go" then
+            return {
+                "MODULE\texample.com/goselector",
+                "PRIMARY_SELECTOR\t./cmd/web;touch",
+                "PRIMARY_BUILD\tgo build './cmd/web;touch'",
+                "PRIMARY_RUN\tgo run './cmd/web;touch'",
+                "PRIMARY_TEST\tgo test './cmd/web;touch'",
+            }
+        end
+        return {}
+    end
+    vim.fn.filereadable = function(path)
+        return path == "/tmp/goselector/go.mod" and 1 or 0
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/goselector/go.mod" then
+            return { "module example.com/goselector" }
+        end
+        if original_readfile then
+            return original_readfile(path)
+        end
+        return {}
+    end
+
+    local commands, go_info = go_parser.detect_go_project_commands("/tmp/goselector/cmd/web;touch/main.go")
+    local argv = runtime.command_to_argv(commands["go-run-package"], "/tmp/goselector/cmd/web;touch/main.go")
+    assert(go_info.primary_selector == "./cmd/web;touch", "Go parser should preserve the raw selector in metadata")
+    assert(type(argv) == "table" and #argv == 3, "Go package command with metacharacters should still use argv mode")
+    assert(argv[1] == "go" and argv[2] == "run", "Go package command should preserve go run argv tokens")
+    assert(argv[3] == "./cmd/web;touch", "Go package selector should stay a single argv argument")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.fn.readfile = original_readfile
+
+    print("✓ Go selector argv safety test passed")
+end
+
+-- Test Cargo bin names with shell metacharacters remain safe in argv mode.
+local function test_cargo_project_commands_quote_bin_names()
+    local cargo_parser = require("zignite.build.parsers.cargo")
+    local runtime = require("zignite.runtime")
+    local utils_module = require("zignite.utils")
+    local original_get_project_root = utils_module.get_project_root
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+
+    utils_module.get_project_root = function()
+        return "/tmp/cargobin"
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
+            return {
+                "BIN\tdemo;touch /tmp/pwn\t1",
+                "PRIMARY_BIN\tdemo;touch /tmp/pwn",
+                "PRIMARY_RUN\tcargo run --bin 'demo;touch /tmp/pwn'",
+                "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo;touch /tmp/pwn'",
+            }
+        end
+        return {}
+    end
+    vim.fn.filereadable = function(path)
+        return path == "/tmp/cargobin/Cargo.toml" and 1 or 0
+    end
+
+    local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/cargobin/src/main.rs")
+    local argv = runtime.command_to_argv(commands["cargo-run-demo;touch /tmp/pwn"], "/tmp/cargobin/src/main.rs")
+    assert(cargo_info.primary_bin == "demo;touch /tmp/pwn", "Cargo parser should preserve the raw bin name in metadata")
+    assert(type(argv) == "table" and #argv == 4, "Cargo bin command with metacharacters should still use argv mode")
+    assert(argv[1] == "cargo" and argv[2] == "run", "Cargo bin command should preserve cargo run argv tokens")
+    assert(argv[3] == "--bin", "Cargo bin command should preserve the --bin option boundary")
+    assert(argv[4] == "demo;touch /tmp/pwn", "Cargo bin name should stay a single argv argument")
+
+    utils_module.get_project_root = original_get_project_root
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    vim.v.shell_error = 0
+
+    print("✓ Cargo bin argv safety test passed")
+end
+
 -- Test show_output respects split mode and renders in-window (not notify fallback).
 local function test_show_output_respects_mode()
     config.setup({
@@ -610,6 +751,9 @@ end
 test_run_build_command_with_detected_zig_fetch_prompt()
 test_run_build_command_with_zig_fetch_github_url()
 test_run_build_command_with_zig_fetch_github_ref()
+test_command_to_argv_preserves_quoted_metacharacters()
+test_go_project_commands_quote_package_selectors()
+test_cargo_project_commands_quote_bin_names()
 test_show_output_respects_mode()
 test_vsplit_respects_left_position()
 test_vsplit_respects_configured_width()
