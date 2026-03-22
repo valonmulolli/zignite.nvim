@@ -20,7 +20,7 @@ local function test_run_build_command_with_detected_zig_command()
 			value = function(cmd)
 				vim.v.shell_error = 0
 				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=zig" then
-					return { "fmt" }
+					return { "fmt\tzig fmt $file" }
 				end
 				return {
 					"Usage: zig [command] [options]",
@@ -61,13 +61,7 @@ local function test_run_build_command_with_detected_go_command()
 			value = function(cmd)
 				vim.v.shell_error = 0
 				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=go" then
-					return { "env" }
-				end
-				if type(cmd) == "table" and cmd[1] == "go" and cmd[2] == "help" then
-					return {
-						"The commands are:",
-						"    env         print Go environment information",
-					}
+					return { "env\tgo env" }
 				end
 				return {}
 			end,
@@ -95,20 +89,14 @@ local function test_run_build_command_with_detected_rust_command()
 	with_overrides({
 		{ tbl = vim.bo, key = "filetype", value = "rust" },
 		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/rustdetect/main.rs") },
-		{ tbl = detect_backend_tool_commands, key = "cargo", value = { "metadata" } },
+		{ tbl = detect_backend_tool_commands, key = "cargo", value = { "metadata\tcargo metadata" } },
 		{
 			tbl = vim.fn,
 			key = "systemlist",
 			value = function(cmd)
 				vim.v.shell_error = 0
 				if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=cargo" then
-					return { "metadata" }
-				end
-				if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
-					return {
-						"Installed Commands:",
-						"    metadata    Output metadata about local package",
-					}
+					return { "metadata\tcargo metadata" }
 				end
 				return {}
 			end,
@@ -127,8 +115,8 @@ local function test_run_build_command_with_detected_rust_command()
     print("✓ RunBuild with detected rust command test passed")
 end
 
--- Test cargo detection ignores aliases and removed/deprecated commands.
-local function test_rust_detected_commands_skip_cargo_noise()
+-- Test tool detection no longer shells out to cargo --list when the Zig backend is unavailable.
+local function test_rust_detected_commands_require_backend()
     init.setup({
         build_commands = {},
     })
@@ -147,34 +135,19 @@ local function test_rust_detected_commands_skip_cargo_noise()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        vim.v.shell_error = 0
         if type(cmd) == "table" and cmd[1] == "cargo" and cmd[2] == "--list" then
-            return {
-                "Installed Commands:",
-                "    b                    alias: build",
-                "    build                Compile a local package and all of its dependencies",
-                "    check                Check a local package and all of its dependencies for errors",
-                "    git-checkout         REMOVED: This command has been removed",
-                "    read-manifest        DEPRECATED: Print a JSON representation of a Cargo.toml manifest",
-                "    rm                   alias: remove",
-                "    test                 Execute all unit and integration tests and build examples of a local package",
-            }
+            error("Lua cargo --list fallback should not run without the Zig backend")
         end
         return original_systemlist(cmd)
     end
 
     local commands = detect_module.detect_rust_tool_commands()
-    assert(commands.build == "cargo build", "Cargo build should stay available")
-    assert(commands.check == "cargo check", "Cargo check should stay available")
-    assert(commands.test == "cargo test", "Cargo test should stay available")
-    assert(commands.rm == nil, "Cargo aliases should not be surfaced")
-    assert(commands["verify-project"] == nil, "Deprecated cargo commands should not be surfaced")
+    assert(vim.tbl_isempty(commands), "Rust tool detection should require the Zig backend now")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
-    vim.v.shell_error = 0
 
-    print("✓ Rust cargo noise filtering test passed")
+    print("✓ Rust tool detection backend-only test passed")
 end
 
 -- Test detect worker async timeouts tear down the stale worker and allow later requests to recover.
@@ -231,7 +204,7 @@ local function test_detect_worker_async_timeout_resets_client()
     end, true)
     assert(#timer_callbacks > 0, "Detect worker async request should arm a timeout timer")
     timer_callbacks[1]()
-    assert(type(timeout_result) == "table", "Timed out detect worker should fall back to plain tool detection")
+    assert(type(timeout_result) == "table", "Timed out detect worker should fall back to one-shot Zig detection")
     assert(timeout_result.env == "go env", "Timed out detect worker should still surface fallback commands")
     assert(state.jobstop_count > 0, "Timed out detect worker should stop the stale job")
 
@@ -366,19 +339,11 @@ local function test_run_build_command_with_detected_odin_command()
 	    if expr == "%:p" then return "/tmp/odindetect/main.odin" end
 	    return original_expand(expr)
 	end
-	detect_backend_tool_commands.odin = { "version" }
+	detect_backend_tool_commands.odin = { "version\todin version" }
 	vim.fn.systemlist = function(cmd)
 		vim.v.shell_error = 0
 		if type(cmd) == "table" and cmd[2] == "--detect" and cmd[3] == "--tool=odin" then
-			return { "version" }
-		end
-		if type(cmd) == "table" and cmd[1] == "odin" and cmd[2] == "help" then
-			return {
-				"Commands:",
-				"    version     Print version information",
-				"",
-				"Flags:",
-			}
+			return { "version\todin version" }
 		end
 		return original_systemlist(cmd)
 	end
@@ -479,7 +444,7 @@ end
 test_run_build_command_with_detected_zig_command()
 test_run_build_command_with_detected_go_command()
 test_run_build_command_with_detected_rust_command()
-test_rust_detected_commands_skip_cargo_noise()
+test_rust_detected_commands_require_backend()
 test_detect_worker_async_timeout_resets_client()
 test_run_build_command_with_detected_cpp_make_target()
 test_detect_worker_sync_multiline_response()

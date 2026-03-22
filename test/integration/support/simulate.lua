@@ -2,10 +2,27 @@
 local M = {}
 
 M.detect_backend_tool_commands = {
-	zig = { "build", "fmt", "fetch", "run" },
-	go = { "build", "env", "fmt" },
-	cargo = { "build", "check", "run" },
-	odin = { "build", "run", "test" },
+	zig = {
+		"build	zig build",
+		"fmt	zig fmt $file",
+		"fetch	zig fetch $zignite_args",
+		"run	zig run $file",
+	},
+	go = {
+		"build	go build",
+		"env	go env",
+		"fmt	go fmt ./...",
+	},
+	cargo = {
+		"build	cargo build",
+		"check	cargo check",
+		"run	cargo run",
+	},
+	odin = {
+		"build	odin build .",
+		"run	odin run .",
+		"test	odin test .",
+	},
 }
 
 M.project_backend_lines = {
@@ -400,6 +417,13 @@ end
 function M.simulated_tool_help_output(cmd)
 	if type(cmd) ~= "table" or type(cmd[1]) ~= "string" then
 		return nil
+	end
+
+	if cmd[2] == "--detect" and type(cmd[3]) == "string" then
+		local tool = cmd[3]:match("^%-%-tool=(.+)$")
+		if tool then
+			return M.detect_backend_tool_commands[tool] or {}
+		end
 	end
 
 	if cmd[1] == "zig" and cmd[2] == "--help" then

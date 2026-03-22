@@ -222,10 +222,10 @@ M.defaults = {
 		-- Auto-detection toggles for build command picker/RunBuild.
 		-- Keep defaults enabled for "smart by default" behavior.
 		detect = {
-			zig = true, -- Parse zig commands from `zig --help`
-			go = true, -- Parse go commands from `go help`
-			rust = true, -- Parse cargo commands from `cargo --list`
-			odin = true, -- Parse odin commands from `odin help`
+			zig = true, -- Detect Zig subcommands via the Zig backend
+			go = true, -- Detect Go subcommands via the Zig backend
+			rust = true, -- Detect Cargo subcommands via the Zig backend
+			odin = true, -- Detect Odin subcommands via the Zig backend
 			c_cpp_make = true, -- Parse Makefile targets for c/cpp
 			js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
 			java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects

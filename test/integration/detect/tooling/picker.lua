@@ -161,7 +161,7 @@ local function test_go_detected_commands_with_zig_worker()
     print("✓ Go detected commands via zig worker test passed")
 end
 
--- Test Go command detection falls back to Lua parsing when zig detect worker fails.
+-- Test Go command detection falls back to one-shot Zig detect when the daemon worker fails.
 local function test_go_detected_commands_worker_fallback()
     init.setup({
         build_commands = {},
@@ -196,28 +196,38 @@ local function test_go_detected_commands_worker_fallback()
     init.select_build_command("float")
 
     local go_help_spawned = false
-    for _, job in ipairs(job_results) do
-        if type(job.cmd) == "table" and job.cmd[1] == "go" and job.cmd[2] == "help" then
-            go_help_spawned = true
-            break
-        end
-    end
+    local one_shot_detect_spawned = false
+	    for _, job in ipairs(job_results) do
+	        if type(job.cmd) == "table" and job.cmd[1] == "go" and job.cmd[2] == "help" then
+	            go_help_spawned = true
+	        end
+	        if type(job.cmd) == "table"
+	            and tostring(job.cmd[2] or "") == "--detect"
+	            and tostring(job.cmd[3] or "") == "--tool=go"
+	        then
+	            one_shot_detect_spawned = true
+	        end
+	    end
 
-    assert(picker_opened, "Picker should open when falling back from worker to Lua parser")
-    assert(go_help_spawned, "Fallback should spawn go help when worker fails")
+    assert(
+        picker_opened,
+        "Picker should open when detect falls back from worker to one-shot backend"
+    )
+    assert(one_shot_detect_spawned, "Fallback should spawn one-shot Zig detect when worker fails")
+    assert(not go_help_spawned, "Lua go help fallback should not run anymore")
     local rendered = table.concat(rendered_lines, "\n")
-    assert(rendered:match("go env"), "Fallback-detected go commands should include env")
-    assert(rendered:match("go fmt"), "Fallback-detected go commands should include fmt")
+    assert(rendered:match("go env"), "Backend fallback should still include env")
+    assert(rendered:match("go fmt"), "Backend fallback should still include fmt")
 
     vim.fn.expand = original_expand
     vim.api.nvim_open_win = original_open_win
     vim.api.nvim_buf_set_lines = original_buf_set_lines
     vim.v.shell_error = 0
 
-    print("✓ Go detected commands worker fallback test passed")
+    print("✓ Go detected commands worker one-shot fallback test passed")
 end
 
--- Test Go command detection falls back when the detect daemon returns an explicit error frame.
+-- Test Go command detection retries through one-shot Zig detect when the daemon returns an error frame.
 local function test_go_detected_commands_worker_error_frame_fallback()
     init.setup({
         build_commands = {},
@@ -233,22 +243,32 @@ local function test_go_detected_commands_worker_error_frame_fallback()
     end, true)
 
     local go_help_spawned = false
-    for _, job in ipairs(job_results) do
-        if type(job.cmd) == "table" and job.cmd[1] == "go" and job.cmd[2] == "help" then
-            go_help_spawned = true
-            break
-        end
-    end
+    local one_shot_detect_spawned = false
+	    for _, job in ipairs(job_results) do
+	        if type(job.cmd) == "table" and job.cmd[1] == "go" and job.cmd[2] == "help" then
+	            go_help_spawned = true
+	        end
+	        if type(job.cmd) == "table"
+	            and tostring(job.cmd[2] or "") == "--detect"
+	            and tostring(job.cmd[3] or "") == "--tool=go"
+	        then
+	            one_shot_detect_spawned = true
+	        end
+	    end
 
-    assert(go_help_spawned, "Explicit daemon errors should fall back to go help")
-    assert(type(callback_commands) == "table", "Fallback should still produce detected go commands")
-    assert(callback_commands.env == "go env", "Fallback-detected go commands should include env")
-    assert(callback_commands.fmt == "go fmt ./...", "Fallback-detected go commands should include fmt")
+    assert(one_shot_detect_spawned, "Explicit daemon errors should retry with one-shot Zig detect")
+    assert(not go_help_spawned, "Lua go help fallback should not run on daemon errors")
+    assert(
+        type(callback_commands) == "table",
+        "One-shot fallback should still produce detected go commands"
+    )
+    assert(callback_commands.env == "go env", "One-shot fallback should include env")
+    assert(callback_commands.fmt == "go fmt ./...", "One-shot fallback should include fmt")
 
     state.next_detect_backend_error = nil
     vim.v.shell_error = 0
 
-    print("✓ Go detected commands worker error-frame fallback test passed")
+    print("✓ Go detected commands worker error-frame one-shot fallback test passed")
 end
 
 -- Test disabling go auto-detection removes detected commands and avoids probing.
