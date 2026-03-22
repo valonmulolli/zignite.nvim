@@ -123,6 +123,66 @@ local function test_quickfix_zig_processor()
     print("✓ Quickfix zig processor test passed")
 end
 
+-- Test explicit zig one-shot quickfix path works when the daemon worker is disabled.
+local function test_quickfix_zig_one_shot_processor()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            zig_worker = false,
+            max_lines = 2,
+            max_bytes = 1024,
+            strip_ansi = true,
+            strip_ansi_max_lines = 2,
+            parse_diagnostics = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    state.next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(count_quickfix_daemon_jobs() == 0, "One-shot quickfix path should not start the quickfix daemon")
+    assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the Zig backend")
+    assert(#quickfix_results > 0, "One-shot quickfix path should populate quickfix output")
+    local qf = quickfix_results[#quickfix_results]
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "One-shot quickfix should include truncation notice")
+    assert(qf.lines[2] == "error-2", "One-shot quickfix should strip ANSI from retained lines")
+    assert(qf.lines[3] == "error-3", "One-shot quickfix should strip ANSI from retained lines")
+
+    state.next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig one-shot processor test passed")
+end
+
 -- Test setup resets cached quickfix backend availability after the Zig binary becomes available.
 local function test_quickfix_backend_availability_resets_on_setup()
     local quickfix_config = {
@@ -262,6 +322,10 @@ end
 
 -- Test auto processor routes to Lua below threshold and Zig above threshold.
 local function test_quickfix_auto_threshold_behavior()
+    require("zignite.ui.quickfix").reset()
+    local quickfix_module = require("zignite.ui.quickfix")
+    local choose_quickfix_processor =
+        get_upvalue_by_name(quickfix_module.populate_from_buffer, "choose_quickfix_processor")
     local original_expand = vim.fn.expand
     local original_line_count = vim.api.nvim_buf_line_count
     local original_get_lines = vim.api.nvim_buf_get_lines
@@ -284,6 +348,8 @@ local function test_quickfix_auto_threshold_behavior()
             parse_diagnostics = false,
         },
     })
+    reset_job_results()
+    reset_quickfix_results()
 
     local small_lines = {
         "line-1",
@@ -299,10 +365,13 @@ local function test_quickfix_auto_threshold_behavior()
         return out
     end
 
-    state.next_exit_code = 1
-    init.run_code(0, "float")
-    assert(count_quickfix_backend_jobs() == 0, "Auto mode should use Lua processor below threshold")
+    assert(type(choose_quickfix_processor) == "function", "Quickfix test should be able to inspect processor selection")
+    assert(
+        choose_quickfix_processor(config.options.quickfix, #small_lines) == "lua",
+        "Auto mode should select the Lua quickfix processor below threshold"
+    )
 
+    state.next_exit_code = 1
     reset_job_results()
     reset_quickfix_results()
 
@@ -318,6 +387,11 @@ local function test_quickfix_auto_threshold_behavior()
         end
         return out
     end
+
+    assert(
+        choose_quickfix_processor(config.options.quickfix, #large_lines) == "zig",
+        "Auto mode should select the Zig quickfix processor above threshold"
+    )
 
     init.run_code(0, "float")
     assert(count_quickfix_backend_jobs() > 0, "Auto mode should use zig processor above threshold")
@@ -444,6 +518,7 @@ end
 
 test_quickfix_on_error_lua_processor()
 test_quickfix_zig_processor()
+test_quickfix_zig_one_shot_processor()
 test_quickfix_backend_availability_resets_on_setup()
 test_quickfix_zig_processor_keeps_tail_on_byte_cap()
 test_quickfix_auto_threshold_behavior()
