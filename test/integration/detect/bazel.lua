@@ -28,7 +28,7 @@ local function make_bazel_systemlist_override(outputs)
 			end
 			return {}
 		end
-		if cmd[2] ~= "--project-parse" or cmd[3] ~= "--kind=bazel" then
+		if cmd[2] ~= "--project-parse" or cmd[3] ~= "--kind=bazel-workspace" then
 			if original_systemlist then
 				return original_systemlist(cmd)
 			end
@@ -166,7 +166,7 @@ local function test_bazel_targets_use_zig_project_parser()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+			["--path=/tmp/bazelzig"] = {
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -216,7 +216,7 @@ local function test_run_build_command_with_inferred_bazel_target()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+			["--path=/tmp/bazelzig"] = {
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -257,7 +257,7 @@ local function test_detected_bazel_preferred_run_alias()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+			["--path=/tmp/bazelzig"] = {
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -290,7 +290,7 @@ local function test_bazel_related_test_inference()
 			"/tmp/bazeltests/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazeltests/app/BUILD.bazel"] = {
+			["--path=/tmp/bazeltests"] = {
 				"COMMAND\tbazel-build-foo_lib\tbazel build //app:foo_lib",
 				"COMMAND\tbazel-build-foo_test\tbazel build //app:foo_test",
 				"COMMAND\tbazel-test-foo_test\tbazel test //app:foo_test",
@@ -330,8 +330,7 @@ local function test_bazel_parent_package_inference()
 			"/tmp/bazelparent/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelparent/app/BUILD.bazel"] = {},
-			["--path=/tmp/bazelparent/BUILD.bazel"] = {
+			["--path=/tmp/bazelparent"] = {
 				"COMMAND\tbazel-build-root_app\tbazel build //:root_app",
 				"COMMAND\tbazel-run-root_app\tbazel run //:root_app",
 				"COMMAND\tbazel-build\tbazel build //:root_app",

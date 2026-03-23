@@ -1,4 +1,3 @@
-local common = require("zignite.build.common")
 local config = require("zignite.config")
 local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
@@ -467,93 +466,6 @@ function M.detect_java_like_project_commands(filepath)
 	return commands
 end
 
----@param build_dir string
----@param workspace_root string
----@return string
-local function bazel_package_path_from_dir(build_dir, workspace_root)
-	local normalized_dir = common.normalize_path_text(build_dir)
-	local normalized_root = common.normalize_path_text(workspace_root)
-	if normalized_dir == normalized_root then
-		return ""
-	end
-	if normalized_dir:sub(1, #normalized_root + 1) == (normalized_root .. "/") then
-		return normalized_dir:sub(#normalized_root + 2)
-	end
-	return ""
-end
-
----@param start_path string
----@param workspace_root string
----@return table[]
-local function find_bazel_build_files_for_path(start_path, workspace_root)
-	---@type table[]
-	local build_files = {}
-	local dir = vim.fn.fnamemodify(start_path, ":h")
-	local normalized_root = common.normalize_path_text(workspace_root)
-
-	while type(dir) == "string" and dir ~= "" do
-		for _, file_name in ipairs({ "BUILD.bazel", "BUILD" }) do
-			local candidate = vim.fs.joinpath(dir, file_name)
-			if vim.fn.filereadable(candidate) == 1 then
-				build_files[#build_files + 1] = {
-					build_file = candidate,
-					package_dir = dir,
-					package_path = bazel_package_path_from_dir(dir, workspace_root),
-				}
-				break
-			end
-		end
-
-		local normalized_dir = common.normalize_path_text(dir)
-		if normalized_dir == normalized_root then
-			break
-		end
-
-		local parent = vim.fn.fnamemodify(dir, ":h")
-		if parent == dir then
-			break
-		end
-		dir = parent
-	end
-
-	return build_files
-end
-
----@param line string
----@return string[]
-local function split_tab_fields(line)
-	---@type string[]
-	local fields = {}
-	local start_idx = 1
-	while true do
-		local tab_idx = line:find("\t", start_idx, true)
-		if not tab_idx then
-			fields[#fields + 1] = line:sub(start_idx)
-			break
-		end
-		fields[#fields + 1] = line:sub(start_idx, tab_idx - 1)
-		start_idx = tab_idx + 1
-	end
-	return fields
-end
-
----@param lines string[]
----@return table<string, string>, table<string, string>
-local function parse_bazel_backend_command_lines(lines)
-	---@type table<string, string>
-	local commands = {}
-	for _, raw_line in ipairs(lines or {}) do
-		local line = tostring(raw_line or "")
-		if line ~= "" then
-			local fields = split_tab_fields(line)
-			if fields[1] == "COMMAND" and type(fields[2]) == "string" and type(fields[3]) == "string" then
-				commands[fields[2]] = fields[3]
-			end
-		end
-	end
-	return commands
-end
-
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_bazel_project_commands(filepath)
@@ -577,25 +489,13 @@ function M.detect_bazel_project_commands(filepath)
 		["bazel-test-all"] = "bazel test //...",
 	}
 
-	local build_files = find_bazel_build_files_for_path(filepath, root)
-	if #build_files == 0 then
-		return commands
-	end
-	for _, build_info in ipairs(build_files) do
-		local zig_lines = detect_backend.parse_project_lines_once("bazel", build_info.build_file, {
-			"--package-path=" .. build_info.package_path,
-			"--match-path=" .. filepath,
-		})
-		if type(zig_lines) ~= "table" or #zig_lines == 0 then
-			goto continue
-		end
-
-		local parsed_commands = parse_bazel_backend_command_lines(zig_lines)
-		for name, command in pairs(parsed_commands) do
+	local zig_lines = detect_backend.parse_project_lines_once("bazel-workspace", root, {
+		"--match-path=" .. filepath,
+	})
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		for name, command in pairs(decode_backend_commands(zig_lines)) do
 			commands[name] = command
 		end
-
-		::continue::
 	end
 	return commands
 end
