@@ -256,21 +256,38 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
 
         const root = std.fs.path.dirname(options.path) orelse "";
-        try stdout.print("COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n", .{});
+        const cmake_config_command = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1";
+        const cmake_clean_command = if (build_common.hasCmakeBuildTree(root))
+            "cmake --build build --target clean"
+        else
+            "cmake -E rm -rf build";
+        const cmake_debug_command =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build";
+        const cmake_release_command =
+            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build";
+        const cmake_test_command = "ctest --test-dir build";
+        const cmake_install_command = "cmake --build build --target install";
+        try stdout.print("COMMAND\tcmake-config\t{s}\n", .{cmake_config_command});
         try stdout.print(
             "COMMAND\tcmake-clean\t{s}\n",
-            .{if (build_common.hasCmakeBuildTree(root)) "cmake --build build --target clean" else "cmake -E rm -rf build"},
+            .{cmake_clean_command},
         );
         try stdout.print(
-            "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n",
-            .{},
+            "COMMAND\tcmake-debug\t{s}\n",
+            .{cmake_debug_command},
         );
         try stdout.print(
-            "COMMAND\tcmake-release\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n",
-            .{},
+            "COMMAND\tcmake-release\t{s}\n",
+            .{cmake_release_command},
         );
-        try stdout.print("COMMAND\tcmake-test\tctest --test-dir build\n", .{});
-        try stdout.print("COMMAND\tinstall\tcmake --build build --target install\n", .{});
+        try stdout.print("COMMAND\tcmake-test\t{s}\n", .{cmake_test_command});
+        try stdout.print("COMMAND\tinstall\t{s}\n", .{cmake_install_command});
+        try stdout.print("PREFERRED\tconfig\t{s}\n", .{cmake_config_command});
+        try stdout.print("PREFERRED\tclean\t{s}\n", .{cmake_clean_command});
+        try stdout.print("PREFERRED\tdebug\t{s}\n", .{cmake_debug_command});
+        try stdout.print("PREFERRED\trelease\t{s}\n", .{cmake_release_command});
+        try stdout.print("PREFERRED\ttest\t{s}\n", .{cmake_test_command});
+        try stdout.print("PREFERRED\tinstall\t{s}\n", .{cmake_install_command});
         var primary_run_path: ?[]u8 = null;
         defer if (primary_run_path) |value| allocator.free(value);
 
@@ -325,13 +342,24 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
 
         const root = std.fs.path.dirname(options.path) orelse "";
-        try stdout.print("COMMAND\tmeson-setup\tmeson setup build\n", .{});
+        const meson_setup_command = "meson setup build";
+        const meson_clean_command = if (build_common.hasMesonBuildTree(root))
+            "meson compile -C build --clean"
+        else
+            "cmake -E rm -rf build";
+        const meson_test_command = "meson test -C build";
+        const meson_install_command = "meson install -C build";
+        try stdout.print("COMMAND\tmeson-setup\t{s}\n", .{meson_setup_command});
         try stdout.print(
             "COMMAND\tmeson-clean\t{s}\n",
-            .{if (build_common.hasMesonBuildTree(root)) "meson compile -C build --clean" else "cmake -E rm -rf build"},
+            .{meson_clean_command},
         );
-        try stdout.print("COMMAND\tmeson-test\tmeson test -C build\n", .{});
-        try stdout.print("COMMAND\tinstall\tmeson install -C build\n", .{});
+        try stdout.print("COMMAND\tmeson-test\t{s}\n", .{meson_test_command});
+        try stdout.print("COMMAND\tinstall\t{s}\n", .{meson_install_command});
+        try stdout.print("PREFERRED\tsetup\t{s}\n", .{meson_setup_command});
+        try stdout.print("PREFERRED\tclean\t{s}\n", .{meson_clean_command});
+        try stdout.print("PREFERRED\ttest\t{s}\n", .{meson_test_command});
+        try stdout.print("PREFERRED\tinstall\t{s}\n", .{meson_install_command});
         var primary_run_path: ?[]u8 = null;
         defer if (primary_run_path) |value| allocator.free(value);
 
@@ -767,8 +795,63 @@ test "writeOutput emits cmake primary target and discovered run path" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "RUN_PATH\tdemo-app\t./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TARGET\tdemo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tclean\tcmake --build build --target clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tctest --test-dir build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tinstall\tcmake --build build --target install\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tcmake --build build\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
+}
+
+test "writeOutput emits meson preferred command aliases" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("build");
+    try tmp.dir.writeFile(.{
+        .sub_path = "meson.build",
+        .data =
+            \\project('demo', 'cpp')
+            \\executable('demo-app', 'src/main.cpp')
+        ,
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "build/build.ninja",
+        .data = "",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "build/demo-app",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const meson_path = try std.fs.path.join(allocator, &.{ root, "meson.build" });
+    defer allocator.free(meson_path);
+    const match_path = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(match_path);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .meson,
+        .path = meson_path,
+        .match_path = match_path,
+    },
+        \\project('demo', 'cpp')
+        \\executable('demo-app', 'src/main.cpp')
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tsetup\tmeson setup build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tclean\tmeson compile -C build --clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tmeson test -C build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tinstall\tmeson install -C build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tmeson compile -C build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tmeson compile -C build demo-app && ./build/demo-app\n") != null);
 }
 
 test "writeOutput emits bazel commands and primary targets" {
