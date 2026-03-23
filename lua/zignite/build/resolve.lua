@@ -139,11 +139,12 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		end
 	end
 
-	if systems.prime_system_detection_async(filetype, filepath, is_detection_enabled, function()
+	pending = pending + 1
+	if not systems.prime_system_detection_async(filetype, filepath, is_detection_enabled, function()
 		latest_mtime_signature = systems.get_mtime_signature_for_filetype(filetype, filepath, is_detection_enabled)
 		complete_refresh()
 	end) then
-		pending = pending + 1
+		pending = pending - 1
 	end
 
 	commands.detect_tool_commands_for_filetype_async(
