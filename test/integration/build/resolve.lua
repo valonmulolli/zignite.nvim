@@ -7,6 +7,40 @@
 local build_module = require("zignite.build")
 local runtime_module = require("zignite.runtime")
 
+---@param tbl table
+---@return table
+local function shallow_copy(tbl)
+	local copied = {}
+	for key, value in pairs(tbl or {}) do
+		copied[key] = value
+	end
+	return copied
+end
+
+---@param query string
+---@param filepath string
+---@param project_root string|nil
+---@param result table
+---@return nil
+local function seed_system_runtime_cache(query, filepath, project_root, result)
+	local build_state = require("zignite.build.state")
+	local cache_key = table.concat({
+		tostring(query or ""),
+		tostring(project_root or ""),
+		vim.fs.normalize(tostring(filepath or "")),
+	}, "::")
+	build_state.set_bounded_cache_entry(
+		build_state.system_runtime_cache,
+		build_state.system_runtime_cache_order,
+		build_state.SYSTEM_RUNTIME_CACHE_MAX,
+		cache_key,
+		{
+			result = shallow_copy(result),
+			updated_at_ms = build_state.now_ms(),
+		}
+	)
+end
+
 -- Test picker path never relies on vim.wait when async picker mode is enabled.
 ---@return nil
 local function test_picker_async_path_without_wait()
@@ -426,6 +460,80 @@ local function test_detect_runtime_cache_is_bounded()
 	print("✓ Detect runtime cache bound test passed")
 end
 
+-- Test warmed Zig system cache wins over local fallback heuristics.
+---@return nil
+local function test_cached_zig_system_results_take_precedence()
+	init.setup({
+		build_commands = {},
+	})
+
+	local systems = require("zignite.build.systems")
+	local utils_module = require("zignite.utils")
+	local original_get_project_root = utils_module.get_project_root
+	local original_filereadable = vim.fn.filereadable
+
+	build_module.reset()
+
+	utils_module.get_project_root = function(path)
+		if type(path) ~= "string" then
+			return nil
+		end
+		if path:match("^/tmp/cached%-cfamily/") then
+			return "/tmp/cached-cfamily"
+		end
+		if path:match("^/tmp/cached%-bazel/") then
+			return "/tmp/cached-bazel/app"
+		end
+		if path:match("^/tmp/cached%-jvm/") then
+			return "/tmp/cached-jvm/src"
+		end
+		if original_get_project_root then
+			return original_get_project_root(path)
+		end
+		return nil
+	end
+	vim.fn.filereadable = function(path)
+		if path == "/tmp/cached-cfamily/CMakeLists.txt" then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+
+	seed_system_runtime_cache("c-family", "/tmp/cached-cfamily/src/main.cpp", "/tmp/cached-cfamily", {
+		root = "/tmp/zig-cfamily",
+		system = "meson",
+		build_ready = true,
+	})
+	seed_system_runtime_cache("bazel-root", "/tmp/cached-bazel/app/main.cc", "/tmp/cached-bazel/app", {
+		root = "/tmp/zig-bazel",
+		system = "bazel",
+	})
+	seed_system_runtime_cache("jvm-root", "/tmp/cached-jvm/src/Main.kt", "/tmp/cached-jvm/src", {
+		root = "/tmp/zig-jvm",
+		system = "gradle",
+	})
+
+	local c_family_system, c_family_root = systems.detect_c_family_build_system("/tmp/cached-cfamily/src/main.cpp")
+	assert(c_family_system == "meson", "Cached Zig c-family result should beat local marker fallback")
+	assert(c_family_root == "/tmp/zig-cfamily", "Cached Zig c-family root should be returned")
+
+	local bazel_root = systems.resolve_bazel_root("/tmp/cached-bazel/app/main.cc")
+	assert(bazel_root == "/tmp/zig-bazel", "Cached Zig Bazel root should beat local fallback")
+
+	local jvm_root, jvm_system = systems.resolve_jvm_root("/tmp/cached-jvm/src/Main.kt")
+	assert(jvm_root == "/tmp/zig-jvm", "Cached Zig JVM root should beat local fallback")
+	assert(jvm_system == "gradle", "Cached Zig JVM system should beat local fallback")
+
+	utils_module.get_project_root = original_get_project_root
+	vim.fn.filereadable = original_filereadable
+	build_module.reset()
+
+	print("✓ Cached Zig system precedence test passed")
+end
+
 test_picker_async_path_without_wait()
 test_run_build_async_detect_without_wait()
 test_run_build_completion_nonblocking_prefix()
@@ -434,3 +542,4 @@ test_picker_detection_cache_ttl_and_mtime()
 test_picker_detection_failed_cache_retries_early()
 test_shebang_cache_is_bounded()
 test_detect_runtime_cache_is_bounded()
+test_cached_zig_system_results_take_precedence()
