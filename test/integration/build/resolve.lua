@@ -534,6 +534,96 @@ local function test_cached_zig_system_results_take_precedence()
 	print("✓ Cached Zig system precedence test passed")
 end
 
+-- Test async system prewarm still asks Zig even when local markers already identify the project.
+---@return nil
+local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = false,
+		},
+	})
+
+	local systems = require("zignite.build.systems")
+	local detect_backend = require("zignite.build.detect.backend")
+	local utils_module = require("zignite.utils")
+	local original_get_project_root = utils_module.get_project_root
+	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
+	local original_filereadable = vim.fn.filereadable
+	local queries = {}
+
+	build_module.reset()
+
+	utils_module.get_project_root = function(path)
+		if type(path) ~= "string" then
+			return nil
+		end
+		if path:match("^/tmp/warm%-make/") then
+			return "/tmp/warm-make"
+		end
+		if path:match("^/tmp/warm%-jvm/") then
+			return "/tmp/warm-jvm"
+		end
+		if original_get_project_root then
+			return original_get_project_root(path)
+		end
+		return nil
+	end
+	vim.fn.filereadable = function(path)
+		if path == "/tmp/warm-make/Makefile" then
+			return 1
+		end
+		if path == "/tmp/warm-jvm/gradlew" or path == "/tmp/warm-jvm/build.gradle.kts" then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+	detect_backend.parse_project_lines_async = function(kind, path, extra_args, on_done)
+		assert(kind == "system", "System prewarm should use the system backend kind")
+		local query = nil
+		for _, arg in ipairs(extra_args or {}) do
+			query = arg:match("^%-%-query=(.+)$") or query
+		end
+		queries[#queries + 1] = string.format("%s::%s", tostring(path), tostring(query))
+		on_done({})
+		return true
+	end
+
+	local always_enabled = function()
+		return true
+	end
+	local finished = 0
+
+	systems.prime_system_detection_async("cpp", "/tmp/warm-make/src/main.cpp", always_enabled, function()
+		finished = finished + 1
+	end)
+	systems.prime_system_detection_async("java", "/tmp/warm-jvm/src/Main.kt", always_enabled, function()
+		finished = finished + 1
+	end)
+
+	assert(finished == 2, "Immediate backend callbacks should complete both prewarm requests")
+	assert(
+		vim.tbl_contains(queries, "/tmp/warm-make/src/main.cpp::c-family"),
+		"C/C++ prewarm should request the Zig c-family query"
+	)
+	assert(
+		vim.tbl_contains(queries, "/tmp/warm-jvm/src/Main.kt::jvm-root"),
+		"JVM prewarm should request the Zig jvm-root query"
+	)
+
+	detect_backend.parse_project_lines_async = original_parse_project_lines_async
+	utils_module.get_project_root = original_get_project_root
+	vim.fn.filereadable = original_filereadable
+	build_module.reset()
+
+	print("✓ Async system prewarm Zig query test passed")
+end
+
 test_picker_async_path_without_wait()
 test_run_build_async_detect_without_wait()
 test_run_build_completion_nonblocking_prefix()
@@ -543,3 +633,4 @@ test_picker_detection_failed_cache_retries_early()
 test_shebang_cache_is_bounded()
 test_detect_runtime_cache_is_bounded()
 test_cached_zig_system_results_take_precedence()
+test_async_system_prewarm_prefers_zig_queries_over_local_gating()

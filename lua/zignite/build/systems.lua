@@ -587,9 +587,7 @@ end
 function M.prime_system_detection_async(filetype, filepath, is_detection_enabled, on_done)
 	local pending = 0
 	local completed = false
-	local c_family_system = nil
-	local jvm_root = nil
-	local jvm_system = nil
+	local started_any = false
 
 	local function finish_one()
 		if completed then
@@ -598,7 +596,7 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 		pending = pending - 1
 		if pending <= 0 then
 			completed = true
-			on_done()
+			vim.schedule(on_done)
 		end
 	end
 
@@ -609,31 +607,20 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 		end)
 		if not started then
 			pending = pending - 1
+		else
+			started_any = true
 		end
 	end
 
 	local project_root = utils.get_project_root(filepath, config.options.project)
 	if filetype == "c" or filetype == "cpp" then
-		c_family_system = detect_c_family_build_system_local(filepath)
-	end
-	if
-		(filetype == "c" or filetype == "cpp")
-		and (
-			not c_family_system
-			or c_family_system == "cmake"
-			or c_family_system == "meson"
-		)
-	then
 		start_query("c-family", project_root)
 	end
 	if
 		(filetype == "java" or filetype == "kotlin")
 		and is_detection_enabled("java_kotlin_project")
 	then
-		jvm_root, jvm_system = resolve_jvm_root_local(filepath)
-		if not jvm_root or not jvm_system then
-			start_query("jvm-root", project_root)
-		end
+		start_query("jvm-root", project_root)
 	end
 	if
 		is_detection_enabled("bazel_project")
@@ -644,7 +631,7 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 		if filetype == "c" or filetype == "cpp" then
 			should_check_bazel = false
 		elseif filetype == "java" or filetype == "kotlin" then
-			should_check_bazel = bazel_root ~= nil or not (jvm_root and jvm_system)
+			should_check_bazel = bazel_root ~= nil
 		elseif filetype == "bazel" or filetype == "bzl" then
 			should_check_bazel = true
 		else
@@ -655,10 +642,7 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 		end
 	end
 
-	if pending == 0 then
-		return false
-	end
-	return true
+	return started_any
 end
 
 ---@param filetype string
