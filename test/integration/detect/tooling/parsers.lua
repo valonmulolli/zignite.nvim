@@ -5,6 +5,7 @@
 -- luacheck: globals count_project_backend_jobs count_project_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 -- luacheck: globals is_project_daemon_cmd parse_project_daemon_request
+-- luacheck: ignore 631
 
 
 local function test_c_detected_make_targets_in_picker()
@@ -171,10 +172,22 @@ local function test_cmake_targets_use_zig_project_parser()
         assert(cmd[2] == "--project-parse", "CMake parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=cmake", "CMake parser should use the cmake parser kind")
         return {
+            "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            "COMMAND\tcmake-clean\tcmake --build build --target clean",
+            "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "COMMAND\tcmake-release\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "COMMAND\tcmake-test\tctest --test-dir build",
+            "COMMAND\tinstall\tcmake --build build --target install",
             "TARGET\tapp\t1",
             "COMMAND\tcmake-build-app\tcmake --build build --target app",
             "COMMAND\tcmake-run-app\tcmake --build build --target app && ./build/bin/app",
             "RUN_PATH\tapp\t./build/bin/app",
+            "PREFERRED\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            "PREFERRED\tclean\tcmake --build build --target clean",
+            "PREFERRED\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "PREFERRED\trelease\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "PREFERRED\ttest\tctest --test-dir build",
+            "PREFERRED\tinstall\tcmake --build build --target install",
             "PREFERRED\tbuild\tcmake --build build",
             "PRIMARY_TARGET\tapp",
             "PRIMARY_RUN_PATH\t./build/bin/app",
@@ -215,6 +228,14 @@ local function test_cmake_targets_use_zig_project_parser()
     assert(
         cmake_info.primary_run == "cmake --build build --target app && ./build/bin/app",
         "Zig CMake parser should expose the primary run command"
+    )
+    assert(
+        cmake_info.preferred_commands.config == "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+        "Zig CMake parser should expose preferred config commands from backend records"
+    )
+    assert(
+        cmake_info.preferred_commands.clean == "cmake --build build --target clean",
+        "Zig CMake parser should expose preferred clean commands from backend records"
     )
     assert(
         cmake_info.preferred_commands.build == "cmake --build build",
@@ -261,10 +282,18 @@ local function test_meson_targets_use_zig_project_parser()
         assert(cmd[2] == "--project-parse", "Meson parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=meson", "Meson parser should use the meson parser kind")
         return {
+            "COMMAND\tmeson-setup\tmeson setup build",
+            "COMMAND\tmeson-clean\tmeson compile -C build --clean",
+            "COMMAND\tmeson-test\tmeson test -C build",
+            "COMMAND\tinstall\tmeson install -C build",
             "TARGET\tdemo-app\t1",
             "COMMAND\tmeson-build-demo-app\tmeson compile -C build demo-app",
             "COMMAND\tmeson-run-demo-app\tmeson compile -C build demo-app && ./build/demo-app",
             "RUN_PATH\tdemo-app\t./build/demo-app",
+            "PREFERRED\tsetup\tmeson setup build",
+            "PREFERRED\tclean\tmeson compile -C build --clean",
+            "PREFERRED\ttest\tmeson test -C build",
+            "PREFERRED\tinstall\tmeson install -C build",
             "PREFERRED\tbuild\tmeson compile -C build",
             "PRIMARY_TARGET\tdemo-app",
             "PRIMARY_RUN_PATH\t./build/demo-app",
@@ -305,6 +334,14 @@ local function test_meson_targets_use_zig_project_parser()
     assert(
         meson_info.primary_run == "meson compile -C build demo-app && ./build/demo-app",
         "Zig Meson parser should expose the primary run command"
+    )
+    assert(
+        meson_info.preferred_commands.setup == "meson setup build",
+        "Zig Meson parser should expose preferred setup commands from backend records"
+    )
+    assert(
+        meson_info.preferred_commands.clean == "meson compile -C build --clean",
+        "Zig Meson parser should expose preferred clean commands from backend records"
     )
     assert(
         meson_info.preferred_commands.build == "meson compile -C build",
