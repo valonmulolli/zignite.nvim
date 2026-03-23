@@ -26,6 +26,7 @@ pub const Kind = enum {
     bazel_workspace,
     meson,
     cargo,
+    cargo_auto,
     pyproject,
     go,
     go_mod,
@@ -178,6 +179,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "bazel-workspace")) return .bazel_workspace;
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
+    if (std.ascii.eqlIgnoreCase(value, "cargo-auto")) return .cargo_auto;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
@@ -236,7 +238,38 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
     if (kind == .jvm_auto) {
         return allocator.dupe(u8, "");
     }
+    if (kind == .cargo_auto) {
+        return allocator.dupe(u8, "");
+    }
     return common.readFileAlloc(allocator, path);
+}
+
+fn findParentFileAlloc(
+    allocator: std.mem.Allocator,
+    start_path: []const u8,
+    name: []const u8,
+    max_up: usize,
+) !?[]u8 {
+    var current = try allocator.dupe(u8, std.fs.path.dirname(start_path) orelse start_path);
+    defer allocator.free(current);
+
+    var steps: usize = 0;
+    while (steps < max_up) : (steps += 1) {
+        const candidate = try std.fs.path.join(allocator, &.{ current, name });
+        defer allocator.free(candidate);
+        if (pathExists(candidate)) {
+            return try allocator.dupe(u8, candidate);
+        }
+
+        const parent = std.fs.path.dirname(current) orelse break;
+        if (std.mem.eql(u8, parent, current)) break;
+
+        const next = try allocator.dupe(u8, parent);
+        allocator.free(current);
+        current = next;
+    }
+
+    return null;
 }
 
 fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents: []const u8) !void {
@@ -318,6 +351,38 @@ fn writeGradleOutput(stdout: anytype, allocator: std.mem.Allocator, build_file_p
     }
 }
 
+fn writeCargoOutput(stdout: anytype, allocator: std.mem.Allocator, cargo_toml_path: []const u8, contents: []const u8, match_path: ?[]const u8) !void {
+    const items = try cargo.parseTargets(allocator, contents, cargo_toml_path, match_path);
+    defer cargo.freeOwnedTargets(allocator, items);
+    var primary_bin: ?[]const u8 = null;
+    for (items) |item| {
+        if (item.matched and primary_bin == null) {
+            primary_bin = item.name;
+        }
+        try stdout.print("BIN\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        const quoted = try common.quoteShellArgAlloc(allocator, item.name);
+        defer allocator.free(quoted);
+        try stdout.print("COMMAND\tcargo-build-{s}\tcargo build --bin {s}\n", .{ item.name, quoted });
+        try stdout.print("COMMAND\tcargo-run-{s}\tcargo run --bin {s}\n", .{ item.name, quoted });
+        try stdout.print("COMMAND\tcargo-test-{s}\tcargo test --bin {s}\n", .{ item.name, quoted });
+    }
+    if (primary_bin == null and items.len > 0) {
+        primary_bin = items[0].name;
+    }
+    if (primary_bin) |name| {
+        const quoted = try common.quoteShellArgAlloc(allocator, name);
+        defer allocator.free(quoted);
+
+        try stdout.print("PRIMARY_BIN\t{s}\n", .{name});
+        try stdout.print("PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted});
+        try stdout.print("PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted});
+        try stdout.print("COMMAND\trun\tcargo run --bin {s}\n", .{quoted});
+        try stdout.print("COMMAND\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
+        try stdout.print("PREFERRED\trun\tcargo run --bin {s}\n", .{quoted});
+        try stdout.print("PREFERRED\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
+    }
+}
+
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     if (options.kind == .system) {
         const query = options.query orelse return error.MissingSystemQuery;
@@ -371,6 +436,16 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             return;
         }
 
+        return;
+    }
+
+    if (options.kind == .cargo_auto) {
+        const cargo_toml_path = (try findParentFileAlloc(allocator, options.path, "Cargo.toml", 12)) orelse return;
+        defer allocator.free(cargo_toml_path);
+
+        const cargo_contents = try common.readFileAlloc(allocator, cargo_toml_path);
+        defer allocator.free(cargo_contents);
+        try writeCargoOutput(stdout, allocator, cargo_toml_path, cargo_contents, options.path);
         return;
     }
 
@@ -545,35 +620,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     }
 
     if (options.kind == .cargo) {
-        const items = try cargo.parseTargets(allocator, contents, options.path, options.match_path);
-        defer cargo.freeOwnedTargets(allocator, items);
-        var primary_bin: ?[]const u8 = null;
-        for (items) |item| {
-            if (item.matched and primary_bin == null) {
-                primary_bin = item.name;
-            }
-            try stdout.print("BIN\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
-            const quoted = try common.quoteShellArgAlloc(allocator, item.name);
-            defer allocator.free(quoted);
-            try stdout.print("COMMAND\tcargo-build-{s}\tcargo build --bin {s}\n", .{ item.name, quoted });
-            try stdout.print("COMMAND\tcargo-run-{s}\tcargo run --bin {s}\n", .{ item.name, quoted });
-            try stdout.print("COMMAND\tcargo-test-{s}\tcargo test --bin {s}\n", .{ item.name, quoted });
-        }
-        if (primary_bin == null and items.len > 0) {
-            primary_bin = items[0].name;
-        }
-        if (primary_bin) |name| {
-            const quoted = try common.quoteShellArgAlloc(allocator, name);
-            defer allocator.free(quoted);
-
-            try stdout.print("PRIMARY_BIN\t{s}\n", .{name});
-            try stdout.print("PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted});
-            try stdout.print("PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted});
-            try stdout.print("COMMAND\trun\tcargo run --bin {s}\n", .{quoted});
-            try stdout.print("COMMAND\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
-            try stdout.print("PREFERRED\trun\tcargo run --bin {s}\n", .{quoted});
-            try stdout.print("PREFERRED\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
-        }
+        try writeCargoOutput(stdout, allocator, options.path, contents, options.match_path);
         return;
     }
 
@@ -775,6 +822,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .bazel_workspace => return error.InvalidProjectParseKind,
         .meson => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,
+        .cargo_auto => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,
         .go => return error.InvalidProjectParseKind,
         .go_mod => return error.InvalidProjectParseKind,
@@ -816,6 +864,33 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+}
+
+test "writeOutput emits cargo-auto records from source path" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("src/bin");
+    try tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data =
+        \\[package]
+        \\name = "demo"
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "bin", "tool.rs" });
+    defer allocator.free(filepath);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .cargo_auto,
+        .path = filepath,
+    }, "");
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "BIN\ttool\t1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tcargo run --bin 'tool'\n") != null);
 }
 
 test "writeOutput emits jvm-auto records for Gradle projects" {
