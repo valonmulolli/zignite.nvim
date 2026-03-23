@@ -771,6 +771,7 @@ function M.parse_project_daemon_request(request_text)
 		or (args.kind == "cmake" and build_cmake_backend_lines(dirname(args.path or "")))
 		or (args.kind == "meson" and build_meson_backend_lines(dirname(args.path or "")))
 		or (args.kind == "cargo-auto" and (M.project_backend_lines.cargo or {}))
+		or (args.kind == "go-auto" and (M.project_backend_lines.go or {}))
 		or (args.kind == "bazel-workspace" and (M.project_backend_lines.bazel or {}))
 		or jvm_auto_lines
 		or (M.project_backend_lines[args.kind] or {})
