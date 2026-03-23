@@ -751,11 +751,27 @@ function M.parse_project_daemon_request(request_text)
 	end
 
 	local response = { "@@ZPRJ_RES_BEGIN " .. args.request_id }
+	local jvm_auto_lines = nil
+	if args.kind == "jvm-auto" then
+		local system_lines = build_system_backend_lines(args.path or "", "jvm-root", args["project-root"])
+		local detected_system = nil
+		for _, line in ipairs(system_lines) do
+			detected_system = line:match("^SYSTEM\t(.+)$") or detected_system
+		end
+		if detected_system == "maven" then
+			jvm_auto_lines = M.project_backend_lines.maven or {}
+		elseif detected_system == "gradle" then
+			jvm_auto_lines = M.project_backend_lines.gradle or {}
+		else
+			jvm_auto_lines = {}
+		end
+	end
 	local lines = args.kind == "system"
 			and build_system_backend_lines(args.path or "", args.query, args["project-root"])
 		or (args.kind == "cmake" and build_cmake_backend_lines(dirname(args.path or "")))
 		or (args.kind == "meson" and build_meson_backend_lines(dirname(args.path or "")))
 		or (args.kind == "bazel-workspace" and (M.project_backend_lines.bazel or {}))
+		or jvm_auto_lines
 		or (M.project_backend_lines[args.kind] or {})
 	for _, line in ipairs(lines) do
 		response[#response + 1] = "\t" .. line

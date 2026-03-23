@@ -398,7 +398,7 @@ local function test_run_build_command_with_detected_java_maven_command()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=maven" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=jvm-auto" then
             return {
                 "COMMAND\tmvn-build\tmvn compile",
                 "COMMAND\tmvn-test\tmvn test",
@@ -455,7 +455,7 @@ local function test_detected_java_preferred_run_alias()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=maven" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=jvm-auto" then
             return {
                 "COMMAND\tmvn-build\tmvn compile",
                 "COMMAND\tmvn-test\tmvn test",
@@ -522,7 +522,7 @@ local function test_run_build_command_with_detected_kotlin_gradle_command()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=gradle" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=jvm-auto" then
             return {
                 "COMMAND\tgradle-build\t./gradlew build",
                 "COMMAND\tgradle-test\t./gradlew test",

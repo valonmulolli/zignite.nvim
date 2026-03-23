@@ -419,16 +419,11 @@ local function test_maven_project_uses_zig_project_parser()
     })
 
     local jvm_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
-    utils_module.get_project_root = function()
-        return "/tmp/javadetect"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 1
@@ -442,7 +437,7 @@ local function test_maven_project_uses_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Maven parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Maven parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=maven", "Maven parser should use the maven parser kind")
+        assert(cmd[3] == "--kind=jvm-auto", "JVM parser should use the jvm-auto parser kind")
         return {
             "COMMAND\tmvn-build\tmvn compile",
             "COMMAND\tmvn-test\tmvn test",
@@ -485,7 +480,6 @@ local function test_maven_project_uses_zig_project_parser()
     assert(commands.test == "mvn test", "Zig Maven parser should expose preferred generic test")
     assert(commands.run == "mvn spring-boot:run", "Zig Maven parser should expose preferred generic run")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -502,16 +496,11 @@ local function test_gradle_project_uses_zig_project_parser()
     })
 
     local jvm_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
-    utils_module.get_project_root = function()
-        return "/tmp/gradledetect"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 1
@@ -525,7 +514,7 @@ local function test_gradle_project_uses_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Gradle parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Gradle parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=gradle", "Gradle parser should use the gradle parser kind")
+        assert(cmd[3] == "--kind=jvm-auto", "JVM parser should use the jvm-auto parser kind")
         return {
             "COMMAND\tgradle-build\t./gradlew build",
             "COMMAND\tgradle-test\t./gradlew test",
@@ -569,7 +558,6 @@ local function test_gradle_project_uses_zig_project_parser()
     assert(commands.test == "./gradlew test", "Zig Gradle parser should expose preferred generic test")
     assert(commands.run == "./gradlew bootRun", "Zig Gradle parser should expose preferred generic run")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -586,14 +574,9 @@ local function test_maven_project_requires_zig_parser()
     })
 
     local jvm_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
 
-    utils_module.get_project_root = function()
-        return "/tmp/javamin"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 0
@@ -616,7 +599,6 @@ local function test_maven_project_requires_zig_parser()
     local commands = jvm_parser.detect_java_like_project_commands("/tmp/javamin/src/Main.java")
     assert(vim.tbl_isempty(commands), "Maven project parsing should not infer commands without Zig")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
 
@@ -630,14 +612,9 @@ local function test_gradle_project_requires_zig_parser()
     })
 
     local jvm_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
 
-    utils_module.get_project_root = function()
-        return "/tmp/gradlemin"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 0
@@ -660,7 +637,6 @@ local function test_gradle_project_requires_zig_parser()
     local commands = jvm_parser.detect_java_like_project_commands("/tmp/gradlemin/src/Main.kt")
     assert(vim.tbl_isempty(commands), "Gradle project parsing should not infer commands without Zig")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
 
