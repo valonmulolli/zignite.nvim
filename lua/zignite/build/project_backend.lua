@@ -62,7 +62,7 @@ function M.detect_makefile_targets(filepath)
 	if not filepath or filepath == "" then
 		return {}
 	end
-	if type(vim.fn.filereadable) ~= "function" or type(vim.fn.readfile) ~= "function" then
+	if type(vim.fn.filereadable) ~= "function" then
 		return {}
 	end
 
@@ -89,21 +89,11 @@ function M.detect_makefile_targets(filepath)
 		return commands
 	end
 
-	local lines = vim.fn.readfile(makefile_path)
-	if type(lines) ~= "table" or common.is_cmake_generated_makefile_lines(lines) then
-		set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
-			mtime_key = state.get_file_mtime_key(makefile_path),
-			commands = {},
-		})
-		return {}
-	end
-
-	local commands = common.parse_makefile_targets(lines)
 	set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
 		mtime_key = state.get_file_mtime_key(makefile_path),
-		commands = state.copy_string_map(commands),
+		commands = {},
 	})
-	return commands
+	return {}
 end
 
 ---@param filepath string
@@ -112,7 +102,7 @@ function M.detect_package_scripts(filepath)
 	if not filepath or filepath == "" then
 		return {}
 	end
-	if type(vim.fn.filereadable) ~= "function" or type(vim.fn.readfile) ~= "function" then
+	if type(vim.fn.filereadable) ~= "function" then
 		return {}
 	end
 
@@ -147,34 +137,6 @@ function M.detect_package_scripts(filepath)
 		return commands
 	end
 
-	local lines = vim.fn.readfile(package_json_path)
-	if type(lines) ~= "table" or #lines == 0 then
-		set_cached_entry(
-			package_json_path,
-			state.package_script_cache,
-			state.package_script_cache_order,
-			state.PACKAGE_SCRIPT_CACHE_MAX,
-			{
-				mtime_key = state.get_file_mtime_key(package_json_path),
-				package_manager = package_manager,
-				commands = {},
-			}
-		)
-		return {}
-	end
-
-	local parsed = common.decode_json_payload(table.concat(lines, "\n"))
-	local scripts = parsed and parsed.scripts
-	---@type table<string, string>
-	local commands = {}
-	if type(scripts) == "table" then
-		for script_name, script_value in pairs(scripts) do
-			if type(script_name) == "string" and type(script_value) == "string" then
-				commands[script_name] = utils.format_package_script_command(package_manager, script_name)
-			end
-		end
-	end
-
 	set_cached_entry(
 		package_json_path,
 		state.package_script_cache,
@@ -183,10 +145,10 @@ function M.detect_package_scripts(filepath)
 		{
 			mtime_key = state.get_file_mtime_key(package_json_path),
 			package_manager = package_manager,
-			commands = state.copy_string_map(commands),
+			commands = {},
 		}
 	)
-	return commands
+	return {}
 end
 
 ---@param commands table<string, string>|nil

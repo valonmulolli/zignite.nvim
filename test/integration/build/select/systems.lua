@@ -59,8 +59,9 @@ end
 ---@return nil
 local function test_cpp_make_project_filters_irrelevant_commands()
     local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
-    local original_readfile = vim.fn.readfile
 
     init.setup({})
     vim.bo.filetype = "cpp"
@@ -69,23 +70,30 @@ local function test_cpp_make_project_filters_irrelevant_commands()
         if expr == "%:p" then return "/tmp/makeproj/main.cpp" end
         return original_expand(expr)
     end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
+            vim.v.shell_error = 0
+            return { "main" }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
+    end
     vim.fn.filereadable = function(path)
         if path == "/tmp/makeproj/Makefile" then
             return 1
         end
         return 0
-    end
-    vim.fn.readfile = function(path, ...)
-        if path == "/tmp/makeproj/Makefile" then
-            return {
-                "main: main.cpp",
-                "\t@echo build",
-            }
-        end
-        if original_readfile then
-            return original_readfile(path, ...)
-        end
-        return {}
     end
 
     local commands = init.get_build_commands_for_filetype("cpp")
@@ -96,8 +104,9 @@ local function test_cpp_make_project_filters_irrelevant_commands()
     assert(commands["meson-build"] == nil, "Make project should hide Meson-specific commands")
 
     vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
-    vim.fn.readfile = original_readfile
 
     print("✓ C++ Make project filtering test passed")
 end

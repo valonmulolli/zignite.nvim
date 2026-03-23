@@ -283,11 +283,31 @@ local function test_run_build_command_with_detected_cpp_make_target()
 
     vim.bo.filetype = "cpp"
     local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
-    local original_readfile = vim.fn.readfile
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/cppdetect/main.cpp" end
         return original_expand(expr)
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
+            vim.v.shell_error = 0
+            return { "custom-target" }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cppdetect/Makefile" then
@@ -298,18 +318,6 @@ local function test_run_build_command_with_detected_cpp_make_target()
         end
         return 0
     end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/cppdetect/Makefile" then
-            return {
-                "custom-target:",
-                "\t@echo cpp",
-            }
-        end
-        if original_readfile then
-            return original_readfile(path)
-        end
-        return {}
-    end
 
     reset_job_results()
     init.run_build_command("custom-target", "float")
@@ -318,8 +326,9 @@ local function test_run_build_command_with_detected_cpp_make_target()
     assert(command:match("make custom%-target"), "Detected cpp Makefile target should execute via make custom-target")
 
     vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
-    vim.fn.readfile = original_readfile
     reset_job_results()
 
     print("✓ RunBuild with detected cpp Makefile target test passed")
