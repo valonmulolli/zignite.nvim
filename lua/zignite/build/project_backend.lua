@@ -1,4 +1,5 @@
 local config = require("zignite.config")
+local common = require("zignite.build.common")
 local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")
@@ -40,22 +41,6 @@ local function set_cached_entry(project_file, cache, order, max_entries, entry)
 	state.set_bounded_cache_entry(cache, order, max_entries, project_file, entry)
 end
 
----@param lines string[]|nil
----@return table<string, string>
-local function decode_backend_commands(lines)
-	---@type table<string, string>
-	local commands = {}
-	for _, raw_line in ipairs(lines or {}) do
-		local kind, name, command = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)\t(.+)$")
-		local valid_name = type(name) == "string" and name ~= ""
-		local valid_command = type(command) == "string" and command ~= ""
-		if kind == "COMMAND" and valid_name and valid_command then
-			commands[name] = command
-		end
-	end
-	return commands
-end
-
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_makefile_targets(filepath)
@@ -79,7 +64,7 @@ function M.detect_makefile_targets(filepath)
 
 	local zig_lines = detect_backend.parse_project_lines_once("make", makefile_path)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands = decode_backend_commands(zig_lines)
+		local commands = common.decode_backend_commands(zig_lines)
 		set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
 			mtime_key = state.get_file_mtime_key(makefile_path),
 			commands = state.copy_string_map(commands),
@@ -120,7 +105,7 @@ function M.detect_package_scripts(filepath)
 		"--package-manager=" .. package_manager,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands = decode_backend_commands(zig_lines)
+		local commands = common.decode_backend_commands(zig_lines)
 		set_cached_entry(
 			package_json_path,
 			state.package_script_cache,
@@ -149,66 +134,6 @@ function M.detect_package_scripts(filepath)
 	return {}
 end
 
----@param commands table<string, string>|nil
----@return table<string, string>|nil
-local function copy_preferred_commands(commands)
-	if type(commands) ~= "table" then
-		return nil
-	end
-	local copied = state.copy_string_map(commands)
-	return next(copied) ~= nil and copied or nil
-end
-
----@param info table|nil
----@return table|nil
-local function copy_cargo_info(info)
-	if type(info) ~= "table" then
-		return nil
-	end
-	return {
-		primary_bin = info.primary_bin,
-		primary_run = info.primary_run,
-		primary_release_run = info.primary_release_run,
-		preferred_commands = copy_preferred_commands(info.preferred_commands),
-	}
-end
-
----@param zig_lines string[]
----@return table<string, string>, table|nil
-local function parse_zig_cargo_targets(zig_lines)
-	---@type table<string, string>
-	local commands = {}
-	---@type table
-	local info = {}
-	for _, raw_line in ipairs(zig_lines) do
-		local line = tostring(raw_line or "")
-		local kind, bin_name, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
-		if kind == "BIN" and bin_name and bin_name ~= "" then
-			if matched_flag == "1" and not info.primary_bin then
-				info.primary_bin = bin_name
-			end
-		else
-			local value_kind, value, extra = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
-			if value_kind == "PRIMARY_BIN" and value ~= "" then
-				info.primary_bin = value
-			elseif value_kind == "PRIMARY_RUN" and value ~= "" then
-				info.primary_run = value
-			elseif value_kind == "PRIMARY_RELEASE_RUN" and value ~= "" then
-				info.primary_release_run = value
-			elseif value_kind == "COMMAND" and value ~= "" and extra ~= "" then
-				commands[value] = extra
-			elseif value_kind == "PREFERRED" and value ~= "" and extra ~= "" then
-				info.preferred_commands = info.preferred_commands or {}
-				info.preferred_commands[value] = extra
-			end
-		end
-	end
-	if next(info) == nil then
-		info = nil
-	end
-	return commands, copy_cargo_info(info)
-end
-
 ---@param filepath string
 ---@return table<string, string>, table|nil
 function M.detect_cargo_project_commands(filepath)
@@ -233,14 +158,14 @@ function M.detect_cargo_project_commands(filepath)
 		cargo_toml_path
 	)
 	if cached and cached.mtime_key == mtime_key and cached.match_path == filepath then
-		return state.copy_string_map(cached.commands), copy_cargo_info(cached.info)
+		return state.copy_string_map(cached.commands), nil
 	end
 
 	local zig_lines = detect_backend.parse_project_lines_once("cargo", cargo_toml_path, {
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands, info = parse_zig_cargo_targets(zig_lines)
+		local commands = common.decode_backend_commands(zig_lines)
 		state.set_bounded_cache_entry(
 			state.cargo_target_cache,
 			state.cargo_target_cache_order,
@@ -250,10 +175,10 @@ function M.detect_cargo_project_commands(filepath)
 				mtime_key = mtime_key,
 				match_path = filepath,
 				commands = state.copy_string_map(commands),
-				info = copy_cargo_info(info),
+				info = nil,
 			}
 		)
-		return commands, copy_cargo_info(info)
+		return commands, nil
 	end
 
 	state.set_bounded_cache_entry(
@@ -269,57 +194,6 @@ function M.detect_cargo_project_commands(filepath)
 		}
 	)
 	return {}, nil
-end
-
----@param info table|nil
----@return table|nil
-local function copy_go_info(info)
-	if type(info) ~= "table" then
-		return nil
-	end
-	return {
-		module_name = info.module_name,
-		primary_selector = info.primary_selector,
-		primary_build = info.primary_build,
-		primary_run = info.primary_run,
-		primary_test = info.primary_test,
-		preferred_commands = copy_preferred_commands(info.preferred_commands),
-	}
-end
-
----@param zig_lines string[]
----@return table<string, string>, table|nil
-local function parse_zig_go_info(zig_lines)
-	---@type table
-	local info = {}
-	---@type table<string, string>
-	local commands = {}
-	for _, raw_line in ipairs(zig_lines) do
-		local line = tostring(raw_line or "")
-		local kind, value, extra = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
-		if kind == "MODULE" and value ~= "" then
-			info.module_name = value
-		elseif kind == "PRIMARY_SELECTOR" and value ~= "" then
-			info.primary_selector = value
-		elseif kind == "PRIMARY_BUILD" and value ~= "" then
-			info.primary_build = value
-		elseif kind == "PRIMARY_RUN" and value ~= "" then
-			info.primary_run = value
-		elseif kind == "PRIMARY_TEST" and value ~= "" then
-			info.primary_test = value
-		elseif kind == "COMMAND" and value ~= "" and extra ~= "" then
-			commands[value] = extra
-		elseif kind == "PREFERRED" and value ~= "" and extra ~= "" then
-			info.preferred_commands = info.preferred_commands or {}
-			info.preferred_commands[value] = extra
-		end
-	end
-
-	if next(info) == nil then
-		return {}, nil
-	end
-
-	return commands, copy_go_info(info)
 end
 
 ---@param raw_path string
@@ -355,7 +229,7 @@ function M.detect_go_project_commands(filepath)
 		cache_key
 	)
 	if cached and cached.mtime_key == mtime_key then
-		return state.copy_string_map(cached.commands), copy_go_info(cached.info)
+		return state.copy_string_map(cached.commands), nil
 	end
 
 	local project_path = vim.fn.filereadable(go_work_path) == 1 and go_work_path
@@ -375,7 +249,7 @@ function M.detect_go_project_commands(filepath)
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands, info = parse_zig_go_info(zig_lines)
+		local commands = common.decode_backend_commands(zig_lines)
 		state.set_bounded_cache_entry(
 			state.go_project_cache,
 			state.go_project_cache_order,
@@ -384,10 +258,10 @@ function M.detect_go_project_commands(filepath)
 			{
 				mtime_key = mtime_key,
 				commands = state.copy_string_map(commands),
-				info = copy_go_info(info),
+				info = nil,
 			}
 		)
-		return state.copy_string_map(commands), copy_go_info(info)
+		return state.copy_string_map(commands), nil
 	end
 
 	state.set_bounded_cache_entry(
@@ -427,7 +301,7 @@ function M.detect_java_like_project_commands(filepath)
 	if backend_system == "maven" or vim.fn.filereadable(pom_xml) == 1 then
 		local zig_lines = detect_backend.parse_project_lines_once("maven", pom_xml)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded = decode_backend_commands(zig_lines)
+			local decoded = common.decode_backend_commands(zig_lines)
 			return decoded
 		end
 		return commands
@@ -449,7 +323,7 @@ function M.detect_java_like_project_commands(filepath)
 		if gradle_file then
 			local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
 			if type(zig_lines) == "table" and #zig_lines > 0 then
-				local decoded = decode_backend_commands(zig_lines)
+				local decoded = common.decode_backend_commands(zig_lines)
 				return decoded
 			end
 		end
@@ -458,7 +332,7 @@ function M.detect_java_like_project_commands(filepath)
 		local gradle_file = vim.fn.filereadable(gradle_build_kts) == 1 and gradle_build_kts or gradle_build
 		local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded = decode_backend_commands(zig_lines)
+			local decoded = common.decode_backend_commands(zig_lines)
 			return decoded
 		end
 		return commands
@@ -482,7 +356,7 @@ function M.detect_bazel_project_commands(filepath)
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		return decode_backend_commands(zig_lines)
+		return common.decode_backend_commands(zig_lines)
 	end
 	return {}
 end

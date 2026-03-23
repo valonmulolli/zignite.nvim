@@ -81,42 +81,13 @@ local function replace_default_commands(updated, default_commands, replacements)
 	end
 end
 
----@param info table|nil
----@return table<string, string>
-local function get_info_preferred_commands(info)
-	if type(info) ~= "table" or type(info.preferred_commands) ~= "table" then
-		return {}
-	end
-	return state.copy_string_map(info.preferred_commands)
-end
-
----@param updated table<string, string>
----@param default_commands table<string, string>
----@param info table|nil
----@return nil
-local function apply_info_preferred_commands(updated, default_commands, info)
-	replace_default_commands(updated, default_commands, get_info_preferred_commands(info))
-end
-
 ---@param configured table<string, string>
----@param default_commands table<string, string>
 ---@param parser_commands table<string, string>|nil
----@param info table|nil
 ---@return table<string, string>
-local function merge_parser_backed_commands(configured, default_commands, parser_commands, info)
+local function merge_parser_backed_commands(configured, parser_commands)
 	local updated = copy_commands(configured)
 	M.extend_string_map(updated, parser_commands)
-	apply_info_preferred_commands(updated, default_commands, info)
 	return updated
-end
-
----@param info table|nil
----@param key string
----@return string|nil
-local function get_info_preferred_command(info, key)
-	local commands = get_info_preferred_commands(info)
-	local value = commands[key]
-	return type(value) == "string" and value ~= "" and value or nil
 end
 
 ---@param target table<string, string>
@@ -213,7 +184,6 @@ end
 local function build_namespaced_system_commands(
 	configured,
 	parser_commands,
-	info,
 	selected_keys,
 	fallback_commands,
 	alias_map,
@@ -230,7 +200,7 @@ local function build_namespaced_system_commands(
 		configured,
 		run_command_key,
 		run_configured_key,
-		parser_commands.run or parser_commands[run_command_key] or get_info_preferred_command(info, "run"),
+		parser_commands.run or parser_commands[run_command_key],
 		fallback_build_command
 	)
 	return filtered
@@ -238,13 +208,11 @@ end
 
 ---@param configured table<string, string>
 ---@param parser_commands table<string, string>
----@param info table|nil
 ---@param selected_keys string[]
 ---@return table<string, string>
-local function build_backend_system_commands(configured, parser_commands, info, selected_keys)
+local function build_backend_system_commands(configured, parser_commands, selected_keys)
 	local filtered = copy_selected_commands(configured, selected_keys)
 	M.extend_string_map(filtered, parser_commands)
-	fill_missing_commands(filtered, get_info_preferred_commands(info))
 	return filtered
 end
 
@@ -253,9 +221,9 @@ end
 ---@param cmake_commands table<string, string>
 ---@param root string
 ---@return table<string, string>
-local function build_cmake_commands(configured, root, cmake_commands, cmake_info)
+local function build_cmake_commands(configured, root, cmake_commands)
 	if has_commands(cmake_commands) then
-		return build_backend_system_commands(configured, cmake_commands, cmake_info, {
+		return build_backend_system_commands(configured, cmake_commands, {
 			"cmake-config",
 			"cmake-build",
 			"cmake-clean",
@@ -269,7 +237,6 @@ local function build_cmake_commands(configured, root, cmake_commands, cmake_info
 	return build_namespaced_system_commands(
 		configured,
 		cmake_commands,
-		cmake_info,
 		{
 			"cmake-config",
 			"cmake-build",
@@ -310,9 +277,9 @@ end
 ---@param meson_commands table<string, string>
 ---@param root string
 ---@return table<string, string>
-local function build_meson_commands(configured, root, meson_commands, meson_info)
+local function build_meson_commands(configured, root, meson_commands)
 	if has_commands(meson_commands) then
-		return build_backend_system_commands(configured, meson_commands, meson_info, {
+		return build_backend_system_commands(configured, meson_commands, {
 			"meson-setup",
 			"meson-build",
 			"meson-clean",
@@ -324,7 +291,6 @@ local function build_meson_commands(configured, root, meson_commands, meson_info
 	return build_namespaced_system_commands(
 		configured,
 		meson_commands,
-		meson_info,
 		{
 			"meson-setup",
 			"meson-build",
@@ -487,8 +453,7 @@ function M.get_configured_build_commands(filetype, filepath)
 		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
 			return configured
 		end
-		local default_commands = get_default_build_commands(parser_result.default_key or filetype)
-		return merge_parser_backed_commands(configured, default_commands, parser_result.commands, parser_result.info)
+		return merge_parser_backed_commands(configured, parser_result.commands)
 	end
 	if filetype ~= "c" and filetype ~= "cpp" then
 		return configured
@@ -514,22 +479,12 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 
 	if c_family_result.system == "cmake" then
-		return build_cmake_commands(
-			configured,
-			c_family_result.root,
-			c_family_result.commands,
-			c_family_result.info
-		)
-	end
+			return build_cmake_commands(configured, c_family_result.root, c_family_result.commands)
+		end
 
-	if c_family_result.system == "meson" then
-		return build_meson_commands(
-			configured,
-			c_family_result.root,
-			c_family_result.commands,
-			c_family_result.info
-		)
-	end
+		if c_family_result.system == "meson" then
+			return build_meson_commands(configured, c_family_result.root, c_family_result.commands)
+		end
 
 	return configured
 end
