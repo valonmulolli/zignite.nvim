@@ -29,6 +29,7 @@ pub const Kind = enum {
     cargo_auto,
     pyproject,
     go,
+    go_auto,
     go_mod,
     go_work,
     system,
@@ -182,6 +183,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "cargo-auto")) return .cargo_auto;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
+    if (std.ascii.eqlIgnoreCase(value, "go-auto")) return .go_auto;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
     if (std.ascii.eqlIgnoreCase(value, "go-work")) return .go_work;
     if (std.ascii.eqlIgnoreCase(value, "system")) return .system;
@@ -239,6 +241,9 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
         return allocator.dupe(u8, "");
     }
     if (kind == .cargo_auto) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .go_auto) {
         return allocator.dupe(u8, "");
     }
     return common.readFileAlloc(allocator, path);
@@ -383,6 +388,36 @@ fn writeCargoOutput(stdout: anytype, allocator: std.mem.Allocator, cargo_toml_pa
     }
 }
 
+fn writeGoOutput(stdout: anytype, allocator: std.mem.Allocator, project_path: []const u8, contents: []const u8, match_path: ?[]const u8) !void {
+    const info = try go.parseInfo(allocator, contents, project_path, match_path);
+    defer go.freeOwnedInfo(allocator, info);
+
+    if (info.module_name) |name| {
+        try stdout.print("MODULE\t{s}\n", .{name});
+    }
+    if (info.primary_selector) |selector| {
+        try stdout.print("PRIMARY_SELECTOR\t{s}\n", .{selector});
+    }
+    if (info.primary_build) |command| {
+        try stdout.print("COMMAND\tgo-build-package\t{s}\n", .{command});
+        try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
+        try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+        try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
+    }
+    if (info.primary_run) |command| {
+        try stdout.print("COMMAND\tgo-run-package\t{s}\n", .{command});
+        try stdout.print("COMMAND\trun\t{s}\n", .{command});
+        try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+        try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+    }
+    if (info.primary_test) |command| {
+        try stdout.print("COMMAND\tgo-test-package\t{s}\n", .{command});
+        try stdout.print("COMMAND\ttest\t{s}\n", .{command});
+        try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
+        try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
+    }
+}
+
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     if (options.kind == .system) {
         const query = options.query orelse return error.MissingSystemQuery;
@@ -446,6 +481,24 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         const cargo_contents = try common.readFileAlloc(allocator, cargo_toml_path);
         defer allocator.free(cargo_contents);
         try writeCargoOutput(stdout, allocator, cargo_toml_path, cargo_contents, options.path);
+        return;
+    }
+
+    if (options.kind == .go_auto) {
+        const go_work_path = try findParentFileAlloc(allocator, options.path, "go.work", 10);
+        if (go_work_path) |project_path| {
+            defer allocator.free(project_path);
+            const go_work_contents = try common.readFileAlloc(allocator, project_path);
+            defer allocator.free(go_work_contents);
+            try writeGoOutput(stdout, allocator, project_path, go_work_contents, options.path);
+            return;
+        }
+
+        const go_mod_path = (try findParentFileAlloc(allocator, options.path, "go.mod", 10)) orelse return;
+        defer allocator.free(go_mod_path);
+        const go_mod_contents = try common.readFileAlloc(allocator, go_mod_path);
+        defer allocator.free(go_mod_contents);
+        try writeGoOutput(stdout, allocator, go_mod_path, go_mod_contents, options.path);
         return;
     }
 
@@ -625,33 +678,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     }
 
     if (options.kind == .go) {
-        const info = try go.parseInfo(allocator, contents, options.path, options.match_path);
-        defer go.freeOwnedInfo(allocator, info);
-
-        if (info.module_name) |name| {
-            try stdout.print("MODULE\t{s}\n", .{name});
-        }
-        if (info.primary_selector) |selector| {
-            try stdout.print("PRIMARY_SELECTOR\t{s}\n", .{selector});
-        }
-        if (info.primary_build) |command| {
-            try stdout.print("COMMAND\tgo-build-package\t{s}\n", .{command});
-            try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
-            try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
-            try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
-        }
-        if (info.primary_run) |command| {
-            try stdout.print("COMMAND\tgo-run-package\t{s}\n", .{command});
-            try stdout.print("COMMAND\trun\t{s}\n", .{command});
-            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
-            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
-        }
-        if (info.primary_test) |command| {
-            try stdout.print("COMMAND\tgo-test-package\t{s}\n", .{command});
-            try stdout.print("COMMAND\ttest\t{s}\n", .{command});
-            try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
-            try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
-        }
+        try writeGoOutput(stdout, allocator, options.path, contents, options.match_path);
         return;
     }
 
@@ -825,6 +852,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .cargo_auto => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,
         .go => return error.InvalidProjectParseKind,
+        .go_auto => return error.InvalidProjectParseKind,
         .go_mod => return error.InvalidProjectParseKind,
         .go_work => return error.InvalidProjectParseKind,
         .system => return error.InvalidProjectParseKind,
@@ -891,6 +919,39 @@ test "writeOutput emits cargo-auto records from source path" {
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "BIN\ttool\t1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tcargo run --bin 'tool'\n") != null);
+}
+
+test "writeOutput emits go-auto records preferring go.work" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("app/cmd/web");
+    try tmp.dir.writeFile(.{ .sub_path = "go.work", .data =
+        \\go 1.24
+        \\
+        \\use ./app
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "app/go.mod", .data =
+        \\module example.com/app
+        \\
+        \\go 1.24
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "app", "cmd", "web", "main.go" });
+    defer allocator.free(filepath);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .go_auto,
+        .path = filepath,
+    }, "");
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_SELECTOR\t./app/cmd/web\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tgo run './app/cmd/web'\n") != null);
 }
 
 test "writeOutput emits jvm-auto records for Gradle projects" {

@@ -854,7 +854,7 @@ local function test_go_project_commands_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Go parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Go parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=go", "Go parser should use the unified go parser kind")
+        assert(cmd[3] == "--kind=go-auto", "Go parser should use the go-auto parser kind")
         return {
             "MODULE\texample.com/app",
             "PRIMARY_SELECTOR\t./app/cmd/web",

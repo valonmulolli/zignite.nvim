@@ -142,6 +142,9 @@ function M.detect_cargo_project_commands(filepath)
 	end
 
 	local root = utils.get_project_root(filepath, config.options.project)
+	if type(root) ~= "string" or root == "" then
+		return {}, nil
+	end
 	local cargo_toml_path = (type(root) == "string" and root ~= "") and vim.fs.joinpath(root, "Cargo.toml") or nil
 
 	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
@@ -207,14 +210,14 @@ function M.detect_go_project_commands(filepath)
 	end
 
 	local root = utils.get_project_root(filepath, config.options.project)
-	if not root or root == "" then
+	if type(root) ~= "string" or root == "" then
 		return {}, nil
 	end
+	local normalized_filepath = normalize_path(filepath)
+	local cache_key = normalize_path(root) .. "::" .. normalized_filepath
 	root = normalize_path(root)
-
 	local go_work_path = vim.fs.joinpath(root, "go.work")
 	local go_mod_path = vim.fs.joinpath(root, "go.mod")
-	local cache_key = root .. "::" .. normalize_path(filepath)
 	local mtime_key = string.format(
 		"%s|%s",
 		state.get_file_mtime_key(go_work_path) or "missing",
@@ -229,22 +232,7 @@ function M.detect_go_project_commands(filepath)
 		return state.copy_string_map(cached.commands), nil
 	end
 
-	local project_path = vim.fn.filereadable(go_work_path) == 1 and go_work_path
-		or (vim.fn.filereadable(go_mod_path) == 1 and go_mod_path or nil)
-	if not project_path then
-		state.set_bounded_cache_entry(
-			state.go_project_cache,
-			state.go_project_cache_order,
-			state.GO_PROJECT_CACHE_MAX,
-			cache_key,
-			{ mtime_key = mtime_key, commands = {}, info = nil }
-		)
-		return {}, nil
-	end
-
-	local zig_lines = detect_backend.parse_project_lines_once("go", project_path, {
-		"--match-path=" .. filepath,
-	})
+	local zig_lines = detect_backend.parse_project_lines_once("go-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		local commands = common.decode_backend_commands(zig_lines)
 		state.set_bounded_cache_entry(
