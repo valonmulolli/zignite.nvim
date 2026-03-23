@@ -750,6 +750,14 @@ local function test_cargo_targets_use_zig_project_parser()
         return {
             "BIN\tdemo\t1",
             "BIN\ttool\t0",
+            "COMMAND\tcargo-build-demo\tcargo build --bin 'demo'",
+            "COMMAND\tcargo-run-demo\tcargo run --bin 'demo'",
+            "COMMAND\tcargo-test-demo\tcargo test --bin 'demo'",
+            "COMMAND\tcargo-build-tool\tcargo build --bin 'tool'",
+            "COMMAND\tcargo-run-tool\tcargo run --bin 'tool'",
+            "COMMAND\tcargo-test-tool\tcargo test --bin 'tool'",
+            "COMMAND\trun\tcargo run --bin 'demo'",
+            "COMMAND\trelease-run\tcargo run --release --bin 'demo'",
             "PRIMARY_BIN\tdemo",
             "PRIMARY_RUN\tcargo run --bin 'demo'",
             "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'",
@@ -799,8 +807,8 @@ local function test_cargo_targets_use_zig_project_parser()
     print("✓ Zig Cargo parser test passed")
 end
 
--- Test the Lua Cargo fallback only handles obvious src/bin targets when Zig is unavailable.
-local function test_cargo_targets_use_basic_lua_fallback()
+-- Test Cargo project commands are Zig-owned and do not fall back to local inference.
+local function test_cargo_targets_require_zig_parser()
     init.setup({
         build_commands = {},
     })
@@ -839,29 +847,18 @@ local function test_cargo_targets_use_basic_lua_fallback()
     end
 
     local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/bin/tool.rs")
-    assert(
-        commands["cargo-build-tool"] == "cargo build --bin 'tool'",
-        "Lua Cargo fallback should keep src/bin builds usable"
-    )
-    assert(
-        commands["cargo-run-tool"] == "cargo run --bin 'tool'",
-        "Lua Cargo fallback should keep src/bin runs usable"
-    )
-    assert(cargo_info.primary_bin == "tool", "Lua Cargo fallback should preserve the obvious src/bin target")
-    assert(
-        cargo_info.primary_run == "cargo run --bin 'tool'",
-        "Lua Cargo fallback should expose the primary run command"
-    )
+    assert(vim.tbl_isempty(commands), "Cargo project parsing should not infer commands without Zig")
+    assert(cargo_info == nil, "Cargo project parsing should not return metadata without Zig")
 
     local main_commands, main_primary = cargo_parser.detect_cargo_project_commands("/tmp/rustfallback/src/main.rs")
-    assert(vim.tbl_isempty(main_commands), "Lua Cargo fallback should not infer package-name bins from Cargo.toml")
-    assert(main_primary == nil, "Lua Cargo fallback should not set a primary bin for src/main.rs without Zig")
+    assert(vim.tbl_isempty(main_commands), "Cargo project parsing should stay empty without Zig")
+    assert(main_primary == nil, "Cargo project parsing should not set a primary bin without Zig")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
     vim.fn.readfile = original_readfile
 
-    print("✓ Lua Cargo fallback parser test passed")
+    print("✓ Cargo project parser requires Zig test passed")
 end
 
 -- Test pyproject tool parsing can use the Zig project parser path.
@@ -948,6 +945,12 @@ local function test_go_project_commands_use_zig_project_parser()
         return {
             "MODULE\texample.com/app",
             "PRIMARY_SELECTOR\t./app/cmd/web",
+            "COMMAND\tgo-build-package\tgo build './app/cmd/web'",
+            "COMMAND\tgo-run-package\tgo run './app/cmd/web'",
+            "COMMAND\tgo-test-package\tgo test './app/cmd/web'",
+            "COMMAND\tbuild\tgo build './app/cmd/web'",
+            "COMMAND\trun\tgo run './app/cmd/web'",
+            "COMMAND\ttest\tgo test './app/cmd/web'",
             "PRIMARY_BUILD\tgo build './app/cmd/web'",
             "PRIMARY_RUN\tgo run './app/cmd/web'",
             "PRIMARY_TEST\tgo test './app/cmd/web'",
@@ -1343,7 +1346,7 @@ test_gradle_project_uses_zig_project_parser()
 test_maven_project_uses_basic_lua_fallback()
 test_gradle_project_uses_basic_lua_fallback()
 test_cargo_targets_use_zig_project_parser()
-test_cargo_targets_use_basic_lua_fallback()
+test_cargo_targets_require_zig_parser()
 test_pyproject_tools_use_zig_project_parser()
 test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
