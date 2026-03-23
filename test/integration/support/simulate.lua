@@ -751,6 +751,7 @@ function M.parse_project_daemon_request(request_text)
 			and build_system_backend_lines(args.path or "", args.query, args["project-root"])
 		or (args.kind == "cmake" and build_cmake_backend_lines(dirname(args.path or "")))
 		or (args.kind == "meson" and build_meson_backend_lines(dirname(args.path or "")))
+		or (args.kind == "bazel-workspace" and (M.project_backend_lines.bazel or {}))
 		or (M.project_backend_lines[args.kind] or {})
 	for _, line in ipairs(lines) do
 		response[#response + 1] = "\t" .. line
