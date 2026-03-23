@@ -531,16 +531,19 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         }
         if (info.primary_build) |command| {
+            try stdout.print("COMMAND\tbazel-build\t{s}\n", .{command});
             try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
+            try stdout.print("COMMAND\tbazel-run\t{s}\n", .{command});
             try stdout.print("COMMAND\trun\t{s}\n", .{command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
+            try stdout.print("COMMAND\tbazel-test\t{s}\n", .{command});
             try stdout.print("COMMAND\ttest\t{s}\n", .{command});
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
             try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
@@ -930,6 +933,8 @@ test "writeOutput emits bazel commands and primary targets" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tbazel run //app:main\n") != null);
 }
