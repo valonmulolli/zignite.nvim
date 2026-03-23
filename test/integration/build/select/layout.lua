@@ -3,6 +3,46 @@
 -- luacheck: globals count_quickfix_backend_jobs count_quickfix_daemon_jobs
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
+-- luacheck: ignore 631
+
+---@param kind string
+---@param responder fun(cmd: string[]): string[]|nil
+---@param fn fun()
+---@return nil
+local function with_project_parse_backend(kind, responder, fn)
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=" .. kind then
+            vim.v.shell_error = 0
+            return responder(cmd) or {}
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
+    end
+
+    local ok, err = xpcall(fn, debug.traceback)
+
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+
+    if not ok then
+        error(err)
+    end
+end
 
 local function test_float_focus_behavior()
     local original_expand = vim.fn.expand
@@ -264,6 +304,8 @@ end
 ---@return nil
 local function test_build_picker_hides_redundant_cmake_aliases()
     local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
     local original_buf_set_lines = vim.api.nvim_buf_set_lines
@@ -320,24 +362,46 @@ local function test_build_picker_hides_redundant_cmake_aliases()
         end
     end
 
-    init.select_build_command("float")
+    with_project_parse_backend("cmake", function(cmd)
+        assert(cmd[4] == "--path=/tmp/picker-cmake/CMakeLists.txt", "Picker should query the CMakeLists path")
+        return {
+            "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+            "COMMAND\tcmake-clean\tcmake --build build --target clean",
+            "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "COMMAND\tcmake-release\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+            "COMMAND\tcmake-test\tctest --test-dir build",
+            "COMMAND\tinstall\tcmake --build build --target install",
+            "COMMAND\tcmake-build\tcmake --build build",
+            "COMMAND\tcmake-run\tcmake --build build --target app && ./build/bin/app",
+            "COMMAND\tcmake-build-app\tcmake --build build --target app",
+            "COMMAND\tcmake-run-app\tcmake --build build --target app && ./build/bin/app",
+            "PREFERRED\tbuild\tcmake --build build",
+            "PRIMARY_TARGET\tapp",
+            "PRIMARY_RUN_PATH\t./build/bin/app",
+            "PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
+        }
+    end, function()
+        init.select_build_command("float")
 
-    local render = table.concat(rendered_lines, "\n")
-    assert(render:match("build"), "Picker should keep generic build alias")
-    assert(render:match("cmake%-build%-app"), "Picker should keep target-specific CMake commands")
-    assert(not render:match("cmake%-build%s"), "Picker should hide redundant cmake-build alias")
-    assert(not render:match("cmake%-run%s"), "Picker should hide redundant cmake-run alias")
-    assert(not render:match("cmake%-clean%s"), "Picker should hide redundant cmake-clean alias")
-    assert(render:match("\n common\n") or render:match("^ common\n"), "Picker should render a common section")
-    assert(render:match("\n targets\n"), "Picker should render a targets section")
-    assert(render:match("\n profiles\n"), "Picker should render a profiles section")
-    local common_pos = render:find("\n common\n", 1, true) or render:find("^ common\n")
-    local targets_pos = render:find("\n targets\n", 1, true)
-    local common_before_targets = common_pos and targets_pos and common_pos < targets_pos
-    assert(common_before_targets, "Common commands should render before target commands")
-    assert(wrap_disabled, "Picker should disable wrap to avoid broken command previews")
+        local render = table.concat(rendered_lines, "\n")
+        assert(render:match("build"), "Picker should keep generic build alias")
+        assert(render:match("cmake%-build%-app"), "Picker should keep target-specific CMake commands")
+        assert(not render:match("cmake%-build%s"), "Picker should hide redundant cmake-build alias")
+        assert(not render:match("cmake%-run%s"), "Picker should hide redundant cmake-run alias")
+        assert(not render:match("cmake%-clean%s"), "Picker should hide redundant cmake-clean alias")
+        assert(render:match("\n common\n") or render:match("^ common\n"), "Picker should render a common section")
+        assert(render:match("\n targets\n"), "Picker should render a targets section")
+        assert(render:match("\n profiles\n"), "Picker should render a profiles section")
+        local common_pos = render:find("\n common\n", 1, true) or render:find("^ common\n")
+        local targets_pos = render:find("\n targets\n", 1, true)
+        local common_before_targets = common_pos and targets_pos and common_pos < targets_pos
+        assert(common_before_targets, "Common commands should render before target commands")
+        assert(wrap_disabled, "Picker should disable wrap to avoid broken command previews")
+    end)
 
     vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
     vim.fn.readfile = original_readfile
     vim.api.nvim_buf_set_lines = original_buf_set_lines

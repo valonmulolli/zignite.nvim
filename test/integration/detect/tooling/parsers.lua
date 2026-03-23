@@ -84,7 +84,7 @@ local function test_make_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.parsers.make")
+    local make_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
@@ -150,7 +150,7 @@ local function test_cmake_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.parsers.cmake")
+    local cmake_parser = require("zignite.build.cmake")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -172,7 +172,10 @@ local function test_cmake_targets_use_zig_project_parser()
         assert(cmd[3] == "--kind=cmake", "CMake parser should use the cmake parser kind")
         return {
             "TARGET\tapp\t1",
+            "COMMAND\tcmake-build-app\tcmake --build build --target app",
+            "COMMAND\tcmake-run-app\tcmake --build build --target app && ./build/bin/app",
             "RUN_PATH\tapp\t./build/bin/app",
+            "PREFERRED\tbuild\tcmake --build build",
             "PRIMARY_TARGET\tapp",
             "PRIMARY_RUN_PATH\t./build/bin/app",
             "PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
@@ -214,6 +217,10 @@ local function test_cmake_targets_use_zig_project_parser()
         "Zig CMake parser should expose the primary run command"
     )
     assert(
+        cmake_info.preferred_commands.build == "cmake --build build",
+        "Zig CMake parser should expose preferred build commands from backend records"
+    )
+    assert(
         cmake_info.preferred_commands.run == "cmake --build build --target app && ./build/bin/app",
         "Zig CMake parser should expose preferred run commands from backend records"
     )
@@ -233,7 +240,7 @@ local function test_meson_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.parsers.meson")
+    local meson_parser = require("zignite.build.meson")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -255,7 +262,10 @@ local function test_meson_targets_use_zig_project_parser()
         assert(cmd[3] == "--kind=meson", "Meson parser should use the meson parser kind")
         return {
             "TARGET\tdemo-app\t1",
+            "COMMAND\tmeson-build-demo-app\tmeson compile -C build demo-app",
+            "COMMAND\tmeson-run-demo-app\tmeson compile -C build demo-app && ./build/demo-app",
             "RUN_PATH\tdemo-app\t./build/demo-app",
+            "PREFERRED\tbuild\tmeson compile -C build",
             "PRIMARY_TARGET\tdemo-app",
             "PRIMARY_RUN_PATH\t./build/demo-app",
             "PREFERRED\trun\tmeson compile -C build demo-app && ./build/demo-app",
@@ -297,6 +307,10 @@ local function test_meson_targets_use_zig_project_parser()
         "Zig Meson parser should expose the primary run command"
     )
     assert(
+        meson_info.preferred_commands.build == "meson compile -C build",
+        "Zig Meson parser should expose preferred build commands from backend records"
+    )
+    assert(
         meson_info.preferred_commands.run == "meson compile -C build demo-app && ./build/demo-app",
         "Zig Meson parser should expose preferred run commands from backend records"
     )
@@ -310,13 +324,13 @@ local function test_meson_targets_use_zig_project_parser()
     print("✓ Zig Meson parser test passed")
 end
 
--- Test the Lua CMake fallback only handles literal executable targets when Zig is unavailable.
+-- Test CMake target inference is Zig-only when the backend is unavailable.
 local function test_cmake_targets_use_basic_lua_fallback()
     init.setup({
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.parsers.cmake")
+    local cmake_parser = require("zignite.build.cmake")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -339,47 +353,25 @@ local function test_cmake_targets_use_basic_lua_fallback()
         end
         return 0
     end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/cmakefallback/CMakeLists.txt" then
-            return {
-                "project(demo)",
-                "add_executable(app src/main.cpp)",
-                "add_executable(${PROJECT_NAME} src/ignored.cpp)",
-            }
-        end
-        if original_readfile then
-            return original_readfile(path)
-        end
-        return {}
-    end
-
     local commands, cmake_info =
         cmake_parser.detect_cmake_project_commands("/tmp/cmakefallback/src/main.cpp")
-    local expected_cmake_build = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target app"
-    assert(
-        commands["cmake-build-app"] == expected_cmake_build,
-        "Lua CMake fallback should keep obvious literal targets usable"
-    )
-    assert(cmake_info.primary_target == "app", "Lua CMake fallback should preserve the matching literal target")
-    assert(
-        commands["cmake-build-demo"] == nil,
-        "Lua CMake fallback should not resolve variable-based targets without Zig"
-    )
+    assert(next(commands) == nil, "CMake target inference should be unavailable without Zig backend records")
+    assert(cmake_info == nil, "CMake target metadata should be unavailable without Zig backend records")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
     vim.fn.readfile = original_readfile
 
-    print("✓ Lua CMake fallback parser test passed")
+    print("✓ CMake no-backend parser test passed")
 end
 
--- Test the Lua Meson fallback keeps literal executable parsing when Zig is unavailable.
+-- Test Meson target inference is Zig-only when the backend is unavailable.
 local function test_meson_targets_use_basic_lua_fallback()
     init.setup({
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.parsers.meson")
+    local meson_parser = require("zignite.build.meson")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -402,32 +394,16 @@ local function test_meson_targets_use_basic_lua_fallback()
         end
         return 0
     end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/mesonfallback/meson.build" then
-            return {
-                "project('demo', 'cpp')",
-                "executable('demo-app', 'src/main.cpp')",
-            }
-        end
-        if original_readfile then
-            return original_readfile(path)
-        end
-        return {}
-    end
-
     local commands, meson_info =
         meson_parser.detect_meson_project_commands("/tmp/mesonfallback/src/main.cpp")
-    assert(
-        commands["meson-build-demo-app"] == "meson setup build && meson compile -C build demo-app",
-        "Lua Meson fallback should keep obvious literal targets usable"
-    )
-    assert(meson_info.primary_target == "demo-app", "Lua Meson fallback should preserve the matching literal target")
+    assert(next(commands) == nil, "Meson target inference should be unavailable without Zig backend records")
+    assert(meson_info == nil, "Meson target metadata should be unavailable without Zig backend records")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
     vim.fn.readfile = original_readfile
 
-    print("✓ Lua Meson fallback parser test passed")
+    print("✓ Meson no-backend parser test passed")
 end
 
 -- Test Maven project parsing can use the Zig project parser path.
@@ -436,7 +412,7 @@ local function test_maven_project_uses_zig_project_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.parsers.jvm")
+    local jvm_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
@@ -461,7 +437,16 @@ local function test_maven_project_uses_zig_project_parser()
         assert(type(cmd) == "table", "Zig Maven parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Maven parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=maven", "Maven parser should use the maven parser kind")
-        return { "compile", "test", "package", "spring-boot:run" }
+        return {
+            "COMMAND\tmvn-build\tmvn compile",
+            "COMMAND\tmvn-test\tmvn test",
+            "COMMAND\tmvn-package\tmvn package",
+            "COMMAND\tmvn-run\tmvn spring-boot:run",
+            "PRIMARY_RUN\tmvn spring-boot:run",
+            "PREFERRED\tbuild\tmvn compile",
+            "PREFERRED\ttest\tmvn test",
+            "PREFERRED\trun\tmvn spring-boot:run",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/javadetect/pom.xml" then
@@ -487,6 +472,9 @@ local function test_maven_project_uses_zig_project_parser()
     assert(commands["mvn-test"] == "mvn test", "Zig Maven parser should return mvn test")
     assert(commands["mvn-package"] == "mvn package", "Zig Maven parser should return mvn package")
     assert(commands["mvn-run"] == "mvn spring-boot:run", "Zig Maven parser should preserve the detected run goal")
+    assert(commands.build == "mvn compile", "Zig Maven parser should expose preferred generic build")
+    assert(commands.test == "mvn test", "Zig Maven parser should expose preferred generic test")
+    assert(commands.run == "mvn spring-boot:run", "Zig Maven parser should expose preferred generic run")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
@@ -504,7 +492,7 @@ local function test_gradle_project_uses_zig_project_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.parsers.jvm")
+    local jvm_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
@@ -529,7 +517,16 @@ local function test_gradle_project_uses_zig_project_parser()
         assert(type(cmd) == "table", "Zig Gradle parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Gradle parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=gradle", "Gradle parser should use the gradle parser kind")
-        return { "build", "test", "clean", "bootRun" }
+        return {
+            "COMMAND\tgradle-build\t./gradlew build",
+            "COMMAND\tgradle-test\t./gradlew test",
+            "COMMAND\tgradle-clean\t./gradlew clean",
+            "COMMAND\tgradle-run\t./gradlew bootRun",
+            "PRIMARY_RUN\t./gradlew bootRun",
+            "PREFERRED\tbuild\t./gradlew build",
+            "PREFERRED\ttest\t./gradlew test",
+            "PREFERRED\trun\t./gradlew bootRun",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/gradledetect/gradlew" or path == "/tmp/gradledetect/build.gradle.kts" then
@@ -555,6 +552,9 @@ local function test_gradle_project_uses_zig_project_parser()
     assert(commands["gradle-test"] == "./gradlew test", "Zig Gradle parser should return gradle test")
     assert(commands["gradle-clean"] == "./gradlew clean", "Zig Gradle parser should return gradle clean")
     assert(commands["gradle-run"] == "./gradlew bootRun", "Zig Gradle parser should preserve the detected run task")
+    assert(commands.build == "./gradlew build", "Zig Gradle parser should expose preferred generic build")
+    assert(commands.test == "./gradlew test", "Zig Gradle parser should expose preferred generic test")
+    assert(commands.run == "./gradlew bootRun", "Zig Gradle parser should expose preferred generic run")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
@@ -572,7 +572,7 @@ local function test_maven_project_uses_basic_lua_fallback()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.parsers.jvm")
+    local jvm_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
@@ -605,6 +605,8 @@ local function test_maven_project_uses_basic_lua_fallback()
     assert(commands["mvn-test"] == "mvn test", "Lua Maven fallback should keep mvn test")
     assert(commands["mvn-package"] == "mvn package", "Lua Maven fallback should keep mvn package")
     assert(commands["mvn-run"] == nil, "Lua Maven fallback should leave run-goal inference to Zig")
+    assert(commands.build == "mvn compile", "Lua Maven fallback should keep generic build alias")
+    assert(commands.test == "mvn test", "Lua Maven fallback should keep generic test alias")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
@@ -619,7 +621,7 @@ local function test_gradle_project_uses_basic_lua_fallback()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.parsers.jvm")
+    local jvm_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
@@ -652,6 +654,8 @@ local function test_gradle_project_uses_basic_lua_fallback()
     assert(commands["gradle-test"] == "./gradlew test", "Lua Gradle fallback should keep gradle test")
     assert(commands["gradle-clean"] == "./gradlew clean", "Lua Gradle fallback should keep gradle clean")
     assert(commands["gradle-run"] == nil, "Lua Gradle fallback should leave run-task inference to Zig")
+    assert(commands.build == "./gradlew build", "Lua Gradle fallback should keep generic build alias")
+    assert(commands.test == "./gradlew test", "Lua Gradle fallback should keep generic test alias")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
@@ -666,7 +670,7 @@ local function test_cargo_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local cargo_parser = require("zignite.build.parsers.cargo")
+    local cargo_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -744,7 +748,7 @@ local function test_cargo_targets_use_basic_lua_fallback()
         build_commands = {},
     })
 
-    local cargo_parser = require("zignite.build.parsers.cargo")
+    local cargo_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -864,7 +868,7 @@ local function test_go_project_commands_use_zig_project_parser()
         build_commands = {},
     })
 
-    local go_parser = require("zignite.build.parsers.go")
+    local go_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -946,7 +950,7 @@ local function test_make_targets_use_zig_project_daemon()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.parsers.make")
+    local make_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1023,7 +1027,7 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.parsers.make")
+    local make_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1114,7 +1118,7 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.parsers.make")
+    local make_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1188,7 +1192,7 @@ local function test_make_targets_use_multiline_project_daemon_response()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.parsers.make")
+    local make_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root

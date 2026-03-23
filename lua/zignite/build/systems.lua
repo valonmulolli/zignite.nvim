@@ -1,4 +1,5 @@
 local config = require("zignite.config")
+local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local utils = require("zignite.utils")
 
@@ -26,15 +27,6 @@ M.BAZEL_PROJECT_FILETYPES = {
 	zsh = true,
 	zig = true,
 }
-
----@param value string
----@return string
-local function shellescape_text(value)
-	if vim.fn and type(vim.fn.shellescape) == "function" then
-		return vim.fn.shellescape(value)
-	end
-	return tostring(value or "")
-end
 
 ---@param root string|nil
 ---@return string|nil
@@ -80,60 +72,36 @@ local function with_optional_setup(root, is_ready, setup_command, build_command)
 	return setup_command .. " && " .. build_command
 end
 
----@param target string
----@param run_path string|nil
----@return string
-local function build_discovered_run_suffix(target, run_path)
-	if type(run_path) == "string" and run_path ~= "" then
-		return shellescape_text(run_path)
+---@param filepath string
+---@param query string
+---@param project_root string|nil
+---@return table|nil
+local function query_system_backend(filepath, query, project_root)
+	if type(filepath) ~= "string" or filepath == "" then
+		return nil
 	end
-	local target_name = tostring(target or "")
-	local target_exe = target_name .. ".exe"
-	local candidate_paths = {
-		"./build/" .. target_name,
-		"./build/" .. target_exe,
-		"./build/bin/" .. target_name,
-		"./build/bin/" .. target_exe,
-		"./build/Debug/" .. target_name,
-		"./build/Debug/" .. target_exe,
-		"./build/Release/" .. target_name,
-		"./build/Release/" .. target_exe,
-		"./build/RelWithDebInfo/" .. target_name,
-		"./build/RelWithDebInfo/" .. target_exe,
-		"./build/MinSizeRel/" .. target_name,
-		"./build/MinSizeRel/" .. target_exe,
-		"./build/bin/Debug/" .. target_name,
-		"./build/bin/Debug/" .. target_exe,
-		"./build/bin/Release/" .. target_name,
-		"./build/bin/Release/" .. target_exe,
-		"./build/bin/RelWithDebInfo/" .. target_name,
-		"./build/bin/RelWithDebInfo/" .. target_exe,
-		"./build/bin/MinSizeRel/" .. target_name,
-		"./build/bin/MinSizeRel/" .. target_exe,
-	}
-	local escaped_candidates = {}
-	for _, candidate in ipairs(candidate_paths) do
-		escaped_candidates[#escaped_candidates + 1] = shellescape_text(candidate)
+	---@type string[]
+	local extra_args = { "--query=" .. query }
+	if type(project_root) == "string" and project_root ~= "" then
+		extra_args[#extra_args + 1] = "--project-root=" .. project_root
 	end
-	local find_clause = string.format(
-		"find build -type f \\( -name %s -o -name %s \\) "
-			.. "! -path '*/CMakeFiles/*' ! -path '*/meson-private/*' "
-			.. "! -path '*/meson-logs/*' | head -n 1",
-		shellescape_text(target_name),
-		shellescape_text(target_exe)
-	)
-	return string.format(
-		"for ZIGNITE_CANDIDATE in %s; do "
-			.. "if [ -x \"$ZIGNITE_CANDIDATE\" ]; then \"$ZIGNITE_CANDIDATE\"; exit $?; fi; "
-			.. "done; "
-			.. "ZIGNITE_BIN=$(%s) && "
-			.. "if [ -n \"$ZIGNITE_BIN\" ] && [ -x \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
-			.. "elif [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
-			.. "else %s; fi",
-		table.concat(escaped_candidates, " "),
-		find_clause,
-		shellescape_text("./build/" .. target_name)
-	)
+	local lines = detect_backend.parse_project_lines_once("system", filepath, extra_args)
+	if type(lines) ~= "table" or #lines == 0 then
+		return nil
+	end
+
+	local result = {}
+	for _, raw_line in ipairs(lines) do
+		local kind, value = tostring(raw_line or ""):match("^([^\t]+)\t(.+)$")
+		if kind == "ROOT" and value ~= "" then
+			result.root = value
+		elseif kind == "SYSTEM" and value ~= "" then
+			result.system = value
+		elseif kind == "BUILD_READY" then
+			result.build_ready = value == "1"
+		end
+	end
+	return next(result) ~= nil and result or nil
 end
 
 ---@param filepath string
@@ -207,6 +175,26 @@ function M.resolve_bazel_root(filepath)
 	return M.find_root_for_files(filepath, M.BAZEL_ROOT_MARKERS, 12)
 end
 
+---@param filepath string
+---@return string|nil, string|nil
+function M.resolve_jvm_root(filepath)
+	local root = utils.get_project_root(filepath, config.options.project)
+	local found_root = root
+	if not found_root or found_root == "" then
+		found_root = M.find_root_for_files(filepath, { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }, 12)
+	end
+	if not found_root or found_root == "" then
+		return nil, nil
+	end
+	if M.root_has_marker(found_root, "pom.xml") then
+		return found_root, "maven"
+	end
+	if M.root_has_any_marker(found_root, { "gradlew", "build.gradle", "build.gradle.kts" }) then
+		return found_root, "gradle"
+	end
+	return found_root, nil
+end
+
 ---@param filetype string
 ---@return boolean
 function M.supports_bazel_project_commands(filetype)
@@ -226,7 +214,14 @@ end
 ---@param root string|nil
 ---@return boolean
 function M.has_cmake_build_tree(root)
-	return build_dir_has_file(root, "CMakeCache.txt")
+	if build_dir_has_file(root, "CMakeCache.txt") then
+		return true
+	end
+	local backend = query_system_backend(root, "c-family", root)
+	if type(backend) == "table" and backend.system == "cmake" and type(backend.build_ready) == "boolean" then
+		return backend.build_ready
+	end
+	return false
 end
 
 ---@param root string|nil
@@ -235,7 +230,14 @@ function M.has_meson_build_tree(root)
 	if build_dir_has_file(root, "build.ninja") then
 		return true
 	end
-	return build_dir_has_file(root, vim.fs.joinpath("meson-private", "coredata.dat"))
+	if build_dir_has_file(root, vim.fs.joinpath("meson-private", "coredata.dat")) then
+		return true
+	end
+	local backend = query_system_backend(root, "c-family", root)
+	if type(backend) == "table" and backend.system == "meson" and type(backend.build_ready) == "boolean" then
+		return backend.build_ready
+	end
+	return false
 end
 
 ---@param root string|nil
@@ -251,14 +253,6 @@ end
 function M.cmake_build_command(root, target)
 	local build_cmd = append_target_argument("cmake --build build", target, " --target ")
 	return with_optional_setup(root, M.has_cmake_build_tree(root), M.cmake_config_command(root), build_cmd)
-end
-
----@param root string|nil
----@param target string
----@param run_path string|nil
----@return string
-function M.cmake_run_command(root, target, run_path)
-	return M.cmake_build_command(root, target) .. " && " .. build_discovered_run_suffix(target, run_path)
 end
 
 ---@param root string|nil
@@ -283,14 +277,6 @@ end
 function M.meson_build_command(root, target)
 	local build_cmd = append_target_argument("meson compile -C build", target, " ")
 	return with_optional_setup(root, M.has_meson_build_tree(root), M.meson_setup_command(root), build_cmd)
-end
-
----@param root string|nil
----@param target string
----@param run_path string|nil
----@return string
-function M.meson_run_command(root, target, run_path)
-	return M.meson_build_command(root, target) .. " && " .. build_discovered_run_suffix(target, run_path)
 end
 
 ---@param root string|nil
