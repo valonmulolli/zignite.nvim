@@ -668,7 +668,7 @@ local function test_cargo_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Cargo parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Cargo parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=cargo", "Cargo parser should use the cargo parser kind")
+        assert(cmd[3] == "--kind=cargo-auto", "Cargo parser should use the cargo-auto parser kind")
         return {
             "BIN\tdemo\t1",
             "BIN\ttool\t0",

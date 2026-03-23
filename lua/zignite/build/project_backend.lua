@@ -142,57 +142,54 @@ function M.detect_cargo_project_commands(filepath)
 	end
 
 	local root = utils.get_project_root(filepath, config.options.project)
-	if not root or root == "" then
-		return {}, nil
+	local cargo_toml_path = (type(root) == "string" and root ~= "") and vim.fs.joinpath(root, "Cargo.toml") or nil
+
+	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
+		local mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing"
+		local cached = state.get_bounded_cache_entry(
+			state.cargo_target_cache,
+			state.cargo_target_cache_order,
+			cargo_toml_path
+		)
+		if cached and cached.mtime_key == mtime_key and cached.match_path == filepath then
+			return state.copy_string_map(cached.commands), nil
+		end
 	end
 
-	local cargo_toml_path = vim.fs.joinpath(root, "Cargo.toml")
-	if vim.fn.filereadable(cargo_toml_path) ~= 1 then
-		return {}, nil
-	end
-
-	local mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing"
-	local cached = state.get_bounded_cache_entry(
-		state.cargo_target_cache,
-		state.cargo_target_cache_order,
-		cargo_toml_path
-	)
-	if cached and cached.mtime_key == mtime_key and cached.match_path == filepath then
-		return state.copy_string_map(cached.commands), nil
-	end
-
-	local zig_lines = detect_backend.parse_project_lines_once("cargo", cargo_toml_path, {
-		"--match-path=" .. filepath,
-	})
+	local zig_lines = detect_backend.parse_project_lines_once("cargo-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		local commands = common.decode_backend_commands(zig_lines)
+		if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
+			state.set_bounded_cache_entry(
+				state.cargo_target_cache,
+				state.cargo_target_cache_order,
+				state.CARGO_TARGET_CACHE_MAX,
+				cargo_toml_path,
+				{
+					mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing",
+					match_path = filepath,
+					commands = state.copy_string_map(commands),
+					info = nil,
+				}
+			)
+		end
+		return commands, nil
+	end
+
+	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
 		state.set_bounded_cache_entry(
 			state.cargo_target_cache,
 			state.cargo_target_cache_order,
 			state.CARGO_TARGET_CACHE_MAX,
 			cargo_toml_path,
 			{
-				mtime_key = mtime_key,
+				mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing",
 				match_path = filepath,
-				commands = state.copy_string_map(commands),
+				commands = {},
 				info = nil,
 			}
 		)
-		return commands, nil
 	end
-
-	state.set_bounded_cache_entry(
-		state.cargo_target_cache,
-		state.cargo_target_cache_order,
-		state.CARGO_TARGET_CACHE_MAX,
-		cargo_toml_path,
-		{
-			mtime_key = mtime_key,
-			match_path = filepath,
-			commands = {},
-			info = nil,
-		}
-	)
 	return {}, nil
 end
 
