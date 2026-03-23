@@ -226,8 +226,7 @@ local function test_cmake_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, cmake_info =
-        cmake_parser.detect_cmake_project_commands("/tmp/cmakeproj/src/main.cpp")
+    local commands, cmake_info = cmake_parser.detect_cmake_project_commands("/tmp/cmakeproj/src/main.cpp")
     assert(
         commands["cmake-build-app"] == "cmake --build build --target app",
         "Zig CMake parser should build the target"
@@ -236,28 +235,7 @@ local function test_cmake_targets_use_zig_project_parser()
         commands["cmake-run-app"] == "cmake --build build --target app && ./build/bin/app",
         "Zig CMake parser should use the discovered run path directly"
     )
-    assert(cmake_info.primary_target == "app", "Zig CMake parser should preserve the primary target")
-    assert(cmake_info.primary_run_path == "./build/bin/app", "Zig CMake parser should expose the primary run path")
-    assert(
-        cmake_info.primary_run == "cmake --build build --target app && ./build/bin/app",
-        "Zig CMake parser should expose the primary run command"
-    )
-    assert(
-        cmake_info.preferred_commands.config == "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-        "Zig CMake parser should expose preferred config commands from backend records"
-    )
-    assert(
-        cmake_info.preferred_commands.clean == "cmake --build build --target clean",
-        "Zig CMake parser should expose preferred clean commands from backend records"
-    )
-    assert(
-        cmake_info.preferred_commands.build == "cmake --build build",
-        "Zig CMake parser should expose preferred build commands from backend records"
-    )
-    assert(
-        cmake_info.preferred_commands.run == "cmake --build build --target app && ./build/bin/app",
-        "Zig CMake parser should expose preferred run commands from backend records"
-    )
+    assert(cmake_info == nil, "Lua should not decode redundant CMake parser metadata on the backend path")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -332,8 +310,7 @@ local function test_meson_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, meson_info =
-        meson_parser.detect_meson_project_commands("/tmp/mesonproj/src/main.cpp")
+    local commands, meson_info = meson_parser.detect_meson_project_commands("/tmp/mesonproj/src/main.cpp")
     assert(
         commands["meson-build-demo-app"] == "meson compile -C build demo-app",
         "Zig Meson parser should build the target"
@@ -342,28 +319,7 @@ local function test_meson_targets_use_zig_project_parser()
         commands["meson-run-demo-app"] == "meson compile -C build demo-app && ./build/demo-app",
         "Zig Meson parser should use the discovered run path directly"
     )
-    assert(meson_info.primary_target == "demo-app", "Zig Meson parser should preserve the primary target")
-    assert(meson_info.primary_run_path == "./build/demo-app", "Zig Meson parser should expose the primary run path")
-    assert(
-        meson_info.primary_run == "meson compile -C build demo-app && ./build/demo-app",
-        "Zig Meson parser should expose the primary run command"
-    )
-    assert(
-        meson_info.preferred_commands.setup == "meson setup build",
-        "Zig Meson parser should expose preferred setup commands from backend records"
-    )
-    assert(
-        meson_info.preferred_commands.clean == "meson compile -C build --clean",
-        "Zig Meson parser should expose preferred clean commands from backend records"
-    )
-    assert(
-        meson_info.preferred_commands.build == "meson compile -C build",
-        "Zig Meson parser should expose preferred build commands from backend records"
-    )
-    assert(
-        meson_info.preferred_commands.run == "meson compile -C build demo-app && ./build/demo-app",
-        "Zig Meson parser should expose preferred run commands from backend records"
-    )
+    assert(meson_info == nil, "Lua should not decode redundant Meson parser metadata on the backend path")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -777,16 +733,7 @@ local function test_cargo_targets_use_zig_project_parser()
     local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/rustproj/src/main.rs")
     assert(commands["cargo-build-demo"] == "cargo build --bin 'demo'", "Zig Cargo parser should build the inferred bin")
     assert(commands["cargo-run-demo"] == "cargo run --bin 'demo'", "Zig Cargo parser should run the inferred bin")
-    assert(cargo_info.primary_bin == "demo", "Zig Cargo parser should preserve the primary bin")
-    assert(cargo_info.primary_run == "cargo run --bin 'demo'", "Zig Cargo parser should expose the primary run command")
-    assert(
-        cargo_info.primary_release_run == "cargo run --release --bin 'demo'",
-        "Zig Cargo parser should expose the primary release run command"
-    )
-    assert(
-        cargo_info.preferred_commands["release-run"] == "cargo run --release --bin 'demo'",
-        "Zig Cargo parser should expose preferred commands from backend records"
-    )
+    assert(cargo_info == nil, "Lua should not decode redundant Cargo parser metadata on the backend path")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -973,16 +920,7 @@ local function test_go_project_commands_use_zig_project_parser()
         commands["go-run-package"] == "go run './app/cmd/web'",
         "Zig Go parser should build package-relative run commands from go.work"
     )
-    assert(go_info.primary_selector == "./app/cmd/web", "Zig Go parser should preserve the primary package selector")
-    assert(go_info.module_name == "example.com/app", "Zig Go parser should preserve the matched module name")
-    assert(
-        go_info.primary_run == "go run './app/cmd/web'",
-        "Zig Go parser should expose the primary run command through parser metadata"
-    )
-    assert(
-        go_info.preferred_commands.test == "go test './app/cmd/web'",
-        "Zig Go parser should expose preferred commands from backend records"
-    )
+    assert(go_info == nil, "Lua should not decode redundant Go parser metadata on the backend path")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
