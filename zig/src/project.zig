@@ -282,6 +282,11 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         );
         try stdout.print("COMMAND\tcmake-test\t{s}\n", .{cmake_test_command});
         try stdout.print("COMMAND\tinstall\t{s}\n", .{cmake_install_command});
+        try stdout.print("COMMAND\tconfig\t{s}\n", .{cmake_config_command});
+        try stdout.print("COMMAND\tclean\t{s}\n", .{cmake_clean_command});
+        try stdout.print("COMMAND\tdebug\t{s}\n", .{cmake_debug_command});
+        try stdout.print("COMMAND\trelease\t{s}\n", .{cmake_release_command});
+        try stdout.print("COMMAND\ttest\t{s}\n", .{cmake_test_command});
         try stdout.print("PREFERRED\tconfig\t{s}\n", .{cmake_config_command});
         try stdout.print("PREFERRED\tclean\t{s}\n", .{cmake_clean_command});
         try stdout.print("PREFERRED\tdebug\t{s}\n", .{cmake_debug_command});
@@ -314,6 +319,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             const preferred_build = try build_common.cmakeBuildCommandAlloc(allocator, root, null);
             defer allocator.free(preferred_build);
             try stdout.print("COMMAND\tcmake-build\t{s}\n", .{preferred_build});
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{preferred_build});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
 
             try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
@@ -323,6 +329,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             const preferred_run = try build_common.cmakeRunCommandAlloc(allocator, root, name, primary_run_path);
             defer allocator.free(preferred_run);
             try stdout.print("COMMAND\tcmake-run\t{s}\n", .{preferred_run});
+            try stdout.print("COMMAND\trun\t{s}\n", .{preferred_run});
             try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
@@ -356,6 +363,9 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         );
         try stdout.print("COMMAND\tmeson-test\t{s}\n", .{meson_test_command});
         try stdout.print("COMMAND\tinstall\t{s}\n", .{meson_install_command});
+        try stdout.print("COMMAND\tsetup\t{s}\n", .{meson_setup_command});
+        try stdout.print("COMMAND\tclean\t{s}\n", .{meson_clean_command});
+        try stdout.print("COMMAND\ttest\t{s}\n", .{meson_test_command});
         try stdout.print("PREFERRED\tsetup\t{s}\n", .{meson_setup_command});
         try stdout.print("PREFERRED\tclean\t{s}\n", .{meson_clean_command});
         try stdout.print("PREFERRED\ttest\t{s}\n", .{meson_test_command});
@@ -386,6 +396,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             const preferred_build = try build_common.mesonBuildCommandAlloc(allocator, root, null);
             defer allocator.free(preferred_build);
             try stdout.print("COMMAND\tmeson-build\t{s}\n", .{preferred_build});
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{preferred_build});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
 
             try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
@@ -395,6 +406,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             const preferred_run = try build_common.mesonRunCommandAlloc(allocator, root, name, primary_run_path);
             defer allocator.free(preferred_run);
             try stdout.print("COMMAND\tmeson-run\t{s}\n", .{preferred_run});
+            try stdout.print("COMMAND\trun\t{s}\n", .{preferred_run});
             try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
@@ -425,6 +437,8 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("PRIMARY_BIN\t{s}\n", .{name});
             try stdout.print("PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted});
             try stdout.print("PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted});
+            try stdout.print("COMMAND\trun\tcargo run --bin {s}\n", .{quoted});
+            try stdout.print("COMMAND\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
             try stdout.print("PREFERRED\trun\tcargo run --bin {s}\n", .{quoted});
             try stdout.print("PREFERRED\trelease-run\tcargo run --release --bin {s}\n", .{quoted});
         }
@@ -443,16 +457,19 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
         if (info.primary_build) |command| {
             try stdout.print("COMMAND\tgo-build-package\t{s}\n", .{command});
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
             try stdout.print("COMMAND\tgo-run-package\t{s}\n", .{command});
+            try stdout.print("COMMAND\trun\t{s}\n", .{command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
             try stdout.print("COMMAND\tgo-test-package\t{s}\n", .{command});
+            try stdout.print("COMMAND\ttest\t{s}\n", .{command});
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
             try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
         }
@@ -514,14 +531,17 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         }
         if (info.primary_build) |command| {
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
+            try stdout.print("COMMAND\trun\t{s}\n", .{command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
+            try stdout.print("COMMAND\ttest\t{s}\n", .{command});
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
             try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
         }
@@ -536,6 +556,8 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         try stdout.print("COMMAND\tmvn-build\tmvn compile\n", .{});
         try stdout.print("COMMAND\tmvn-test\tmvn test\n", .{});
         try stdout.print("COMMAND\tmvn-package\tmvn package\n", .{});
+        try stdout.print("COMMAND\tbuild\tmvn compile\n", .{});
+        try stdout.print("COMMAND\ttest\tmvn test\n", .{});
         try stdout.print("PREFERRED\tbuild\tmvn compile\n", .{});
         try stdout.print("PREFERRED\ttest\tmvn test\n", .{});
 
@@ -552,6 +574,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
 
         if (run_command) |command| {
             try stdout.print("COMMAND\tmvn-run\t{s}\n", .{command});
+            try stdout.print("COMMAND\trun\t{s}\n", .{command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
@@ -578,6 +601,9 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         try stdout.print("COMMAND\tgradle-build\t{s}\n", .{build_command});
         try stdout.print("COMMAND\tgradle-test\t{s}\n", .{test_command});
         try stdout.print("COMMAND\tgradle-clean\t{s}\n", .{clean_command});
+        try stdout.print("COMMAND\tbuild\t{s}\n", .{build_command});
+        try stdout.print("COMMAND\ttest\t{s}\n", .{test_command});
+        try stdout.print("COMMAND\tclean\t{s}\n", .{clean_command});
         try stdout.print("PREFERRED\tbuild\t{s}\n", .{build_command});
         try stdout.print("PREFERRED\ttest\t{s}\n", .{test_command});
 
@@ -596,6 +622,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             const run_command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, task });
             defer allocator.free(run_command);
             try stdout.print("COMMAND\tgradle-run\t{s}\n", .{run_command});
+            try stdout.print("COMMAND\trun\t{s}\n", .{run_command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{run_command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{run_command});
         }
@@ -662,6 +689,8 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BIN\tdemo's-tool\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
 }
@@ -686,6 +715,9 @@ test "writeOutput emits go primary command metadata" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tgo build './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tgo run './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TEST\tgo test './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tgo build './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tgo run './cmd/api'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tgo test './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tgo build './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tgo run './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tgo test './cmd/api'\n") != null);
@@ -715,6 +747,9 @@ test "writeOutput emits maven command records" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-test\tmvn test\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-package\tmvn package\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-run\tmvn spring-boot:run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tmvn compile\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tmvn test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tmvn spring-boot:run\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tmvn spring-boot:run\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tmvn compile\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tmvn test\n") != null);
@@ -753,6 +788,10 @@ test "writeOutput emits gradle command records" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-test\t./gradlew test\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-clean\t./gradlew clean\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-run\t./gradlew bootRun\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\t./gradlew build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\t./gradlew test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tclean\t./gradlew clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\t./gradlew bootRun\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\t./gradlew bootRun\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\t./gradlew build\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\t./gradlew test\n") != null);
@@ -795,6 +834,13 @@ test "writeOutput emits cmake primary target and discovered run path" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "RUN_PATH\tdemo-app\t./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TARGET\tdemo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tclean\tcmake --build build --target clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trelease\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tctest --test-dir build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tcmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tcmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tclean\tcmake --build build --target clean\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
@@ -847,6 +893,11 @@ test "writeOutput emits meson preferred command aliases" {
     );
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tsetup\tmeson setup build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tsetup\tmeson setup build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tclean\tmeson compile -C build --clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tmeson test -C build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tmeson compile -C build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tmeson compile -C build demo-app && ./build/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tclean\tmeson compile -C build --clean\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tmeson test -C build\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tinstall\tmeson install -C build\n") != null);
