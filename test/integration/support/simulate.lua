@@ -82,6 +82,10 @@ M.project_backend_lines = {
 		"PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
 	},
 	bazel = {
+		"COMMAND\tbazel-query\tbazel query $zignite_args",
+		"COMMAND\tbazel-clean\tbazel clean",
+		"COMMAND\tbazel-build-all\tbazel build //...",
+		"COMMAND\tbazel-test-all\tbazel test //...",
 		"TARGET\tcc_binary\tapp\t1\t0\tmain.cc",
 		"COMMAND\tbazel-build-app\tbazel build //:app",
 		"COMMAND\tbazel-run-app\tbazel run //:app",
