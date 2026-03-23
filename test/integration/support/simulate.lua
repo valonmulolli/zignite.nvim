@@ -26,8 +26,14 @@ M.detect_backend_tool_commands = {
 }
 
 M.project_backend_lines = {
-	make = { "bench", "test" },
-	["package-json"] = { "dev", "build" },
+	make = {
+		"COMMAND\tbench\tmake bench",
+		"COMMAND\ttest\tmake test",
+	},
+	["package-json"] = {
+		"COMMAND\tdev\tnpm run dev",
+		"COMMAND\tbuild\tnpm run build",
+	},
 	maven = {
 		"COMMAND\tmvn-build\tmvn compile",
 		"COMMAND\tmvn-test\tmvn test",

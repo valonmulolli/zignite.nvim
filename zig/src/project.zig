@@ -36,6 +36,7 @@ pub const Options = struct {
     path: []const u8,
     match_path: ?[]const u8 = null,
     package_path: []const u8 = "",
+    package_manager: ?[]const u8 = null,
     query: ?build_system.Query = null,
     project_root: ?[]const u8 = null,
 };
@@ -56,6 +57,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
     var path: ?[]const u8 = null;
     var match_path: ?[]const u8 = null;
     var package_path: []const u8 = "";
+    var package_manager: ?[]const u8 = null;
     var query: ?build_system.Query = null;
     var project_root: ?[]const u8 = null;
 
@@ -70,6 +72,8 @@ pub fn parseArgs(args: []const []const u8) !Options {
             match_path = arg["--match-path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--package-path=")) {
             package_path = arg["--package-path=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--package-manager=")) {
+            package_manager = arg["--package-manager=".len..];
         } else if (std.mem.startsWith(u8, arg, "--query=")) {
             query = try build_system.parseQuery(arg["--query=".len..]);
         } else if (std.mem.startsWith(u8, arg, "--project-root=")) {
@@ -84,6 +88,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
         .path = path orelse return error.MissingProjectParsePath,
         .match_path = match_path,
         .package_path = package_path,
+        .package_manager = package_manager,
         .query = query,
         .project_root = project_root,
     };
@@ -632,6 +637,27 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
+    if (options.kind == .make) {
+        const names = try parseNames(allocator, options.kind, contents);
+        defer common.freeOwnedNameList(allocator, names);
+        for (names) |name| {
+            try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ name, name });
+        }
+        return;
+    }
+
+    if (options.kind == .package_json) {
+        const names = try parseNames(allocator, options.kind, contents);
+        defer common.freeOwnedNameList(allocator, names);
+        const manager = options.package_manager orelse "npm";
+        for (names) |name| {
+            const command = try package_json.formatScriptCommandAlloc(allocator, manager, name);
+            defer allocator.free(command);
+            try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
+        }
+        return;
+    }
+
     const names = try parseNames(allocator, options.kind, contents);
     defer common.freeOwnedNameList(allocator, names);
     for (names) |name| {
@@ -696,6 +722,38 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+}
+
+test "writeOutput emits make command records" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .make,
+        .path = "/tmp/makeproj/Makefile",
+    }, "build: test\n\t@echo ok\nbench:\n");
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tmake build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tmake test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbench\tmake bench\n") != null);
+}
+
+test "writeOutput emits package script command records with package manager" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .package_json,
+        .path = "/tmp/jsapp/package.json",
+        .package_manager = "pnpm",
+    },
+        \\{"scripts":{"dev":"vite","test":"vitest"}}
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tdev\tpnpm run dev\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tpnpm test\n") != null);
 }
 
 test "writeOutput emits go primary command metadata" {

@@ -82,7 +82,7 @@ local function test_cpp_make_project_filters_irrelevant_commands()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
             vim.v.shell_error = 0
-            return { "main" }
+            return { "COMMAND\tmain\tmake main" }
         end
         if original_systemlist then
             return original_systemlist(cmd)

@@ -39,7 +39,10 @@ local function test_c_detected_make_targets_in_picker()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
             vim.v.shell_error = 0
-            return { "bench", "test" }
+            return {
+                "COMMAND\tbench\tmake bench",
+                "COMMAND\ttest\tmake test",
+            }
         end
         if original_systemlist then
             return original_systemlist(cmd)
@@ -117,7 +120,10 @@ local function test_make_targets_use_zig_project_parser()
         assert(type(cmd) == "table", "Zig project parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Make parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=make", "Make parser should use the make parser kind")
-        return { "bench", "test" }
+        return {
+            "COMMAND\tbench\tmake bench",
+            "COMMAND\ttest\tmake test",
+        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cdetect/Makefile" then
@@ -1107,7 +1113,10 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
-            return { "bench", "test" }
+            return {
+                "COMMAND\tbench\tmake bench",
+                "COMMAND\ttest\tmake test",
+            }
         end
         error("Expected one-shot project parse fallback to use systemlist")
     end
@@ -1294,8 +1303,8 @@ local function test_make_targets_use_multiline_project_daemon_response()
     state.next_project_backend_stdout_chunks = {
         {
             "@@ZPRJ_RES_BEGIN 1",
-            "\tbench",
-            "\ttest",
+            "\tCOMMAND\tbench\tmake bench",
+            "\tCOMMAND\ttest\tmake test",
             "@@ZPRJ_RES_END 1",
             "",
         },

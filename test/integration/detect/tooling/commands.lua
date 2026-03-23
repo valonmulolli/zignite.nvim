@@ -302,7 +302,7 @@ local function test_run_build_command_with_detected_cpp_make_target()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
             vim.v.shell_error = 0
-            return { "custom-target" }
+            return { "COMMAND\tcustom-target\tmake custom-target" }
         end
         if original_systemlist then
             return original_systemlist(cmd)
