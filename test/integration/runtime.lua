@@ -248,6 +248,9 @@ local function test_go_project_commands_quote_package_selectors()
             return {
                 "MODULE\texample.com/goselector",
                 "PRIMARY_SELECTOR\t./cmd/web;touch",
+                "COMMAND\tgo-build-package\tgo build './cmd/web;touch'",
+                "COMMAND\tgo-run-package\tgo run './cmd/web;touch'",
+                "COMMAND\tgo-test-package\tgo test './cmd/web;touch'",
                 "PRIMARY_BUILD\tgo build './cmd/web;touch'",
                 "PRIMARY_RUN\tgo run './cmd/web;touch'",
                 "PRIMARY_TEST\tgo test './cmd/web;touch'",
@@ -311,6 +314,11 @@ local function test_cargo_project_commands_quote_bin_names()
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
             return {
                 "BIN\tdemo;touch /tmp/pwn\t1",
+                "COMMAND\tcargo-build-demo;touch /tmp/pwn\tcargo build --bin 'demo;touch /tmp/pwn'",
+                "COMMAND\tcargo-run-demo;touch /tmp/pwn\tcargo run --bin 'demo;touch /tmp/pwn'",
+                "COMMAND\tcargo-test-demo;touch /tmp/pwn\tcargo test --bin 'demo;touch /tmp/pwn'",
+                "COMMAND\trun\tcargo run --bin 'demo;touch /tmp/pwn'",
+                "COMMAND\trelease-run\tcargo run --release --bin 'demo;touch /tmp/pwn'",
                 "PRIMARY_BIN\tdemo;touch /tmp/pwn",
                 "PRIMARY_RUN\tcargo run --bin 'demo;touch /tmp/pwn'",
                 "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo;touch /tmp/pwn'",
@@ -625,11 +633,23 @@ local function test_go_runbuild_prefers_workspace_package_selector()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-work" then
-            return { "USE\t/tmp/gowork/app\t1" }
-        end
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-mod" then
-            return { "MODULE\texample.com/app" }
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go" then
+            return {
+                "MODULE\texample.com/app",
+                "PRIMARY_SELECTOR\t./app/cmd/web",
+                "COMMAND\tgo-build-package\tgo build './app/cmd/web'",
+                "COMMAND\tgo-run-package\tgo run './app/cmd/web'",
+                "COMMAND\tgo-test-package\tgo test './app/cmd/web'",
+                "COMMAND\tbuild\tgo build './app/cmd/web'",
+                "COMMAND\trun\tgo run './app/cmd/web'",
+                "COMMAND\ttest\tgo test './app/cmd/web'",
+                "PRIMARY_BUILD\tgo build './app/cmd/web'",
+                "PRIMARY_RUN\tgo run './app/cmd/web'",
+                "PRIMARY_TEST\tgo test './app/cmd/web'",
+                "PREFERRED\tbuild\tgo build './app/cmd/web'",
+                "PREFERRED\trun\tgo run './app/cmd/web'",
+                "PREFERRED\ttest\tgo test './app/cmd/web'",
+            }
         end
         return {}
     end
@@ -688,7 +708,19 @@ local function test_rust_runbuild_prefers_inferred_cargo_bin()
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
-            return { "BIN\tdemo\t1" }
+            return {
+                "BIN\tdemo\t1",
+                "COMMAND\tcargo-build-demo\tcargo build --bin 'demo'",
+                "COMMAND\tcargo-run-demo\tcargo run --bin 'demo'",
+                "COMMAND\tcargo-test-demo\tcargo test --bin 'demo'",
+                "COMMAND\trun\tcargo run --bin 'demo'",
+                "COMMAND\trelease-run\tcargo run --release --bin 'demo'",
+                "PRIMARY_BIN\tdemo",
+                "PRIMARY_RUN\tcargo run --bin 'demo'",
+                "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'",
+                "PREFERRED\trun\tcargo run --bin 'demo'",
+                "PREFERRED\trelease-run\tcargo run --release --bin 'demo'",
+            }
         end
         return {}
     end

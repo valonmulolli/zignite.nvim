@@ -174,105 +174,40 @@ local function copy_cargo_info(info)
 	}
 end
 
----@param commands table<string, string>
----@param bin_name string
----@return nil
-local function add_cargo_bin_commands(commands, bin_name)
-	local quoted_bin = utils.quote_cli_argument(bin_name)
-	if quoted_bin == nil then
-		return
-	end
-	commands["cargo-build-" .. bin_name] = "cargo build --bin " .. quoted_bin
-	commands["cargo-run-" .. bin_name] = "cargo run --bin " .. quoted_bin
-	commands["cargo-test-" .. bin_name] = "cargo test --bin " .. quoted_bin
-end
-
----@param primary_bin string|nil
----@return table|nil
-local function build_cargo_info(primary_bin)
-	if type(primary_bin) ~= "string" or primary_bin == "" then
-		return nil
-	end
-	local quoted_bin = utils.quote_cli_argument(primary_bin)
-	if quoted_bin == nil then
-		return nil
-	end
-	return {
-		primary_bin = primary_bin,
-		primary_run = "cargo run --bin " .. quoted_bin,
-		primary_release_run = "cargo run --release --bin " .. quoted_bin,
-		preferred_commands = {
-			run = "cargo run --bin " .. quoted_bin,
-			["release-run"] = "cargo run --release --bin " .. quoted_bin,
-		},
-	}
-end
-
 ---@param zig_lines string[]
 ---@return table<string, string>, table|nil
 local function parse_zig_cargo_targets(zig_lines)
 	---@type table<string, string>
 	local commands = {}
-	local primary_bin = nil
-	local primary_run = nil
-	local primary_release_run = nil
-	---@type string[]
-	local bins = {}
+	---@type table
+	local info = {}
 	for _, raw_line in ipairs(zig_lines) do
 		local line = tostring(raw_line or "")
 		local kind, bin_name, matched_flag = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
 		if kind == "BIN" and bin_name and bin_name ~= "" then
-			bins[#bins + 1] = bin_name
-			if matched_flag == "1" and not primary_bin then
-				primary_bin = bin_name
+			if matched_flag == "1" and not info.primary_bin then
+				info.primary_bin = bin_name
 			end
 		else
 			local value_kind, value, extra = line:match("^([^\t]+)\t([^\t]*)\t?(.*)$")
 			if value_kind == "PRIMARY_BIN" and value ~= "" then
-				primary_bin = value
+				info.primary_bin = value
 			elseif value_kind == "PRIMARY_RUN" and value ~= "" then
-				primary_run = value
+				info.primary_run = value
 			elseif value_kind == "PRIMARY_RELEASE_RUN" and value ~= "" then
-				primary_release_run = value
+				info.primary_release_run = value
 			elseif value_kind == "COMMAND" and value ~= "" and extra ~= "" then
 				commands[value] = extra
+			elseif value_kind == "PREFERRED" and value ~= "" and extra ~= "" then
+				info.preferred_commands = info.preferred_commands or {}
+				info.preferred_commands[value] = extra
 			end
 		end
 	end
-	if next(commands) == nil then
-		for _, bin_name in ipairs(bins) do
-			add_cargo_bin_commands(commands, bin_name)
-		end
+	if next(info) == nil then
+		info = nil
 	end
-	local info = build_cargo_info(primary_bin)
-	if info then
-		info.primary_run = primary_run or info.primary_run
-		info.primary_release_run = primary_release_run or info.primary_release_run
-	end
-	for _, raw_line in ipairs(zig_lines) do
-		local value_kind, value, extra = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]*)\t?(.*)$")
-		if value_kind == "PREFERRED" and value ~= "" and extra ~= "" and info then
-			info.preferred_commands = info.preferred_commands or {}
-			info.preferred_commands[value] = extra
-		end
-	end
-	return commands, info
-end
-
----@param filepath string
----@param root string
----@return table<string, string>, table|nil
-local function fallback_cargo_commands(filepath, root)
-	local relative_filepath = common.normalize_path_text(common.make_relative_to_root(root, filepath))
-	local primary_bin = relative_filepath:match("^src/bin/([^/]+)%.rs$")
-	if not primary_bin or primary_bin == "" then
-		return {}, nil
-	end
-
-	---@type table<string, string>
-	local commands = {}
-	add_cargo_bin_commands(commands, primary_bin)
-	return commands, build_cargo_info(primary_bin)
+	return commands, copy_cargo_info(info)
 end
 
 ---@param filepath string
@@ -322,7 +257,6 @@ function M.detect_cargo_project_commands(filepath)
 		return commands, copy_cargo_info(info)
 	end
 
-	local commands, info = fallback_cargo_commands(filepath, root)
 	state.set_bounded_cache_entry(
 		state.cargo_target_cache,
 		state.cargo_target_cache_order,
@@ -331,11 +265,11 @@ function M.detect_cargo_project_commands(filepath)
 		{
 			mtime_key = mtime_key,
 			match_path = filepath,
-			commands = state.copy_string_map(commands),
-			info = copy_cargo_info(info),
+			commands = {},
+			info = nil,
 		}
 	)
-	return commands, copy_cargo_info(info)
+	return {}, nil
 end
 
 ---@param info table|nil
@@ -352,51 +286,6 @@ local function copy_go_info(info)
 		primary_test = info.primary_test,
 		preferred_commands = copy_preferred_commands(info.preferred_commands),
 	}
-end
-
----@param selector string|nil
----@param module_name string|nil
----@return table|nil
-local function build_go_info(selector, module_name)
-	if type(selector) ~= "string" or selector == "" then
-		return nil
-	end
-
-	local quoted_selector = utils.quote_cli_argument(selector)
-	if quoted_selector == nil then
-		return nil
-	end
-
-	local info = {
-		module_name = module_name,
-		primary_selector = selector,
-	}
-	if selector ~= "." then
-		info.primary_build = "go build " .. quoted_selector
-		info.primary_run = "go run " .. quoted_selector
-		info.primary_test = "go test " .. quoted_selector
-		info.preferred_commands = {
-			build = info.primary_build,
-			run = info.primary_run,
-			test = info.primary_test,
-		}
-	end
-	return info
-end
-
----@param commands table<string, string>
----@param info table
----@return nil
-local function add_go_commands_from_info(commands, info)
-	if type(info.primary_build) == "string" and info.primary_build ~= "" then
-		commands["go-build-package"] = info.primary_build
-	end
-	if type(info.primary_run) == "string" and info.primary_run ~= "" then
-		commands["go-run-package"] = info.primary_run
-	end
-	if type(info.primary_test) == "string" and info.primary_test ~= "" then
-		commands["go-test-package"] = info.primary_test
-	end
 end
 
 ---@param zig_lines string[]
@@ -431,9 +320,6 @@ local function parse_zig_go_info(zig_lines)
 		return {}, nil
 	end
 
-	if next(commands) == nil then
-		add_go_commands_from_info(commands, info)
-	end
 	return commands, copy_go_info(info)
 end
 
@@ -441,61 +327,6 @@ end
 ---@return string
 local function normalize_path(raw_path)
 	return vim.fs.normalize(tostring(raw_path or "")):gsub("\\", "/")
-end
-
----@param root string
----@param filepath string
----@return string
-local function package_selector(root, filepath)
-	local package_dir = normalize_path(vim.fn.fnamemodify(filepath, ":h"))
-	local normalized_root = normalize_path(root)
-	if package_dir == normalized_root then
-		return "."
-	end
-	if package_dir:sub(1, #normalized_root + 1) == (normalized_root .. "/") then
-		return "./" .. package_dir:sub(#normalized_root + 2)
-	end
-	return "."
-end
-
----@param go_mod_path string
----@return string|nil
-local function parse_go_module_name(go_mod_path)
-	local zig_lines = detect_backend.parse_project_lines_once("go-mod", go_mod_path)
-	if type(zig_lines) == "table" then
-		for _, raw_line in ipairs(zig_lines) do
-			local kind, name = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)$")
-			if kind == "MODULE" and type(name) == "string" and name ~= "" then
-				return name
-			end
-		end
-	end
-	return nil
-end
-
----@param go_work_path string
----@param filepath string
----@return string|nil
-local function detect_workspace_use_root(go_work_path, filepath)
-	local zig_lines = detect_backend.parse_project_lines_once("go-work", go_work_path, {
-		"--match-path=" .. filepath,
-	})
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local first_root = nil
-		for _, raw_line in ipairs(zig_lines) do
-			local kind, use_path, matched_flag = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)\t([01])$")
-			if kind == "USE" and type(use_path) == "string" and use_path ~= "" then
-				first_root = first_root or use_path
-				if matched_flag == "1" then
-					return normalize_path(use_path)
-				end
-			end
-		end
-		if first_root then
-			return normalize_path(first_root)
-		end
-	end
-	return nil
 end
 
 ---@param filepath string
@@ -528,56 +359,9 @@ function M.detect_go_project_commands(filepath)
 		return state.copy_string_map(cached.commands), copy_go_info(cached.info)
 	end
 
-	local selector
-	local module_name
-	if vim.fn.filereadable(go_work_path) == 1 then
-		local zig_lines = detect_backend.parse_project_lines_once("go", go_work_path, {
-			"--match-path=" .. filepath,
-		})
-		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local commands, info = parse_zig_go_info(zig_lines)
-			state.set_bounded_cache_entry(
-				state.go_project_cache,
-				state.go_project_cache_order,
-				state.GO_PROJECT_CACHE_MAX,
-				cache_key,
-				{
-					mtime_key = mtime_key,
-					commands = state.copy_string_map(commands),
-					info = copy_go_info(info),
-				}
-			)
-			return state.copy_string_map(commands), copy_go_info(info)
-		end
-
-		local matched_root = detect_workspace_use_root(go_work_path, filepath)
-		if matched_root and matched_root ~= "" then
-			module_name = parse_go_module_name(vim.fs.joinpath(matched_root, "go.mod"))
-		end
-		selector = package_selector(root, filepath)
-	elseif vim.fn.filereadable(go_mod_path) == 1 then
-		local zig_lines = detect_backend.parse_project_lines_once("go", go_mod_path, {
-			"--match-path=" .. filepath,
-		})
-		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local commands, info = parse_zig_go_info(zig_lines)
-			state.set_bounded_cache_entry(
-				state.go_project_cache,
-				state.go_project_cache_order,
-				state.GO_PROJECT_CACHE_MAX,
-				cache_key,
-				{
-					mtime_key = mtime_key,
-					commands = state.copy_string_map(commands),
-					info = copy_go_info(info),
-				}
-			)
-			return state.copy_string_map(commands), copy_go_info(info)
-		end
-
-		module_name = parse_go_module_name(go_mod_path)
-		selector = package_selector(root, filepath)
-	else
+	local project_path = vim.fn.filereadable(go_work_path) == 1 and go_work_path
+		or (vim.fn.filereadable(go_mod_path) == 1 and go_mod_path or nil)
+	if not project_path then
 		state.set_bounded_cache_entry(
 			state.go_project_cache,
 			state.go_project_cache_order,
@@ -588,28 +372,24 @@ function M.detect_go_project_commands(filepath)
 		return {}, nil
 	end
 
-	if type(selector) ~= "string" or selector == "" then
-		selector = "."
-	end
-
-	local quoted_selector = utils.quote_cli_argument(selector)
-	if quoted_selector == nil then
+	local zig_lines = detect_backend.parse_project_lines_once("go", project_path, {
+		"--match-path=" .. filepath,
+	})
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		local commands, info = parse_zig_go_info(zig_lines)
 		state.set_bounded_cache_entry(
 			state.go_project_cache,
 			state.go_project_cache_order,
 			state.GO_PROJECT_CACHE_MAX,
 			cache_key,
-			{ mtime_key = mtime_key, commands = {}, info = nil }
+			{
+				mtime_key = mtime_key,
+				commands = state.copy_string_map(commands),
+				info = copy_go_info(info),
+			}
 		)
-		return {}, nil
+		return state.copy_string_map(commands), copy_go_info(info)
 	end
-
-	local commands = {
-		["go-build-package"] = "go build " .. quoted_selector,
-		["go-run-package"] = "go run " .. quoted_selector,
-		["go-test-package"] = "go test " .. quoted_selector,
-	}
-	local info = build_go_info(selector, module_name)
 
 	state.set_bounded_cache_entry(
 		state.go_project_cache,
@@ -618,12 +398,12 @@ function M.detect_go_project_commands(filepath)
 		cache_key,
 		{
 			mtime_key = mtime_key,
-			commands = state.copy_string_map(commands),
-			info = copy_go_info(info),
+			commands = {},
+			info = nil,
 		}
 	)
 
-	return commands, copy_go_info(info)
+	return {}, nil
 end
 
 ---@param run_command string|nil
