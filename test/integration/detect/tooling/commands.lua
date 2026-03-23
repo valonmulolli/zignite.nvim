@@ -380,10 +380,37 @@ local function test_run_build_command_with_detected_java_maven_command()
 
     vim.bo.filetype = "java"
     local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/javadetect/src/Main.java" end
         return original_expand(expr)
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=maven" then
+            return {
+                "COMMAND\tmvn-build\tmvn compile",
+                "COMMAND\tmvn-test\tmvn test",
+                "COMMAND\tmvn-package\tmvn package",
+                "COMMAND\tbuild\tmvn compile",
+                "COMMAND\ttest\tmvn test",
+            }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/javadetect/pom.xml" then
@@ -402,7 +429,10 @@ local function test_run_build_command_with_detected_java_maven_command()
     assert(command:match("mvn test"), "Detected Java Maven command should execute via mvn test")
 
     vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
+    vim.v.shell_error = 0
     reset_job_results()
 
     print("✓ RunBuild with detected Java Maven command test passed")
@@ -474,13 +504,41 @@ local function test_run_build_command_with_detected_kotlin_gradle_command()
 
     vim.bo.filetype = "kotlin"
     local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/ktdetect/src/Main.kt" end
         return original_expand(expr)
     end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=gradle" then
+            return {
+                "COMMAND\tgradle-build\t./gradlew build",
+                "COMMAND\tgradle-test\t./gradlew test",
+                "COMMAND\tgradle-clean\t./gradlew clean",
+                "COMMAND\tbuild\t./gradlew build",
+                "COMMAND\ttest\t./gradlew test",
+                "COMMAND\tclean\t./gradlew clean",
+            }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
+    end
     vim.fn.filereadable = function(path)
-        if path == "/tmp/ktdetect/gradlew" then
+        if path == "/tmp/ktdetect/gradlew" or path == "/tmp/ktdetect/build.gradle.kts" then
             return 1
         end
         if original_filereadable then
@@ -501,7 +559,10 @@ local function test_run_build_command_with_detected_kotlin_gradle_command()
     )
 
     vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
+    vim.v.shell_error = 0
     reset_job_results()
 
     print("✓ RunBuild with detected Kotlin Gradle command test passed")

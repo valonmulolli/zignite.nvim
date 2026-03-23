@@ -406,37 +406,6 @@ function M.detect_go_project_commands(filepath)
 	return {}, nil
 end
 
----@param run_command string|nil
----@return table<string, string>
-local function build_maven_commands(run_command)
-	---@type table<string, string>
-	local commands = {
-		["mvn-build"] = "mvn compile",
-		["mvn-test"] = "mvn test",
-		["mvn-package"] = "mvn package",
-	}
-	if type(run_command) == "string" and run_command ~= "" then
-		commands["mvn-run"] = run_command
-	end
-	return commands
-end
-
----@param prefix string
----@param run_task string|nil
----@return table<string, string>
-local function build_gradle_commands(prefix, run_task)
-	---@type table<string, string>
-	local commands = {
-		["gradle-build"] = prefix .. " build",
-		["gradle-test"] = prefix .. " test",
-		["gradle-clean"] = prefix .. " clean",
-	}
-	if type(run_task) == "string" and run_task ~= "" then
-		commands["gradle-run"] = prefix .. " " .. run_task
-	end
-	return commands
-end
-
 ---@param lines string[]|nil
 ---@return table<string, string>
 ---@param filepath string
@@ -462,10 +431,7 @@ function M.detect_java_like_project_commands(filepath)
 			local decoded = decode_backend_commands(zig_lines)
 			return decoded
 		end
-		local fallback = build_maven_commands(nil)
-		fallback.build = fallback.build or "mvn compile"
-		fallback.test = fallback.test or "mvn test"
-		return fallback
+		return commands
 	end
 	if backend_system == "gradle"
 		and vim.fn.filereadable(gradle_wrapper) ~= 1
@@ -488,10 +454,7 @@ function M.detect_java_like_project_commands(filepath)
 				return decoded
 			end
 		end
-		local fallback = build_gradle_commands("./gradlew", nil)
-		fallback.build = fallback.build or "./gradlew build"
-		fallback.test = fallback.test or "./gradlew test"
-		return fallback
+		return commands
 	elseif vim.fn.filereadable(gradle_build) == 1 or vim.fn.filereadable(gradle_build_kts) == 1 then
 		local gradle_file = vim.fn.filereadable(gradle_build_kts) == 1 and gradle_build_kts or gradle_build
 		local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
@@ -499,10 +462,7 @@ function M.detect_java_like_project_commands(filepath)
 			local decoded = decode_backend_commands(zig_lines)
 			return decoded
 		end
-		local fallback = build_gradle_commands("gradle", nil)
-		fallback.build = fallback.build or "gradle build"
-		fallback.test = fallback.test or "gradle test"
-		return fallback
+		return commands
 	end
 	return commands
 end
