@@ -244,7 +244,7 @@ local function test_go_project_commands_quote_package_selectors()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-auto" then
             return {
                 "MODULE\texample.com/goselector",
                 "PRIMARY_SELECTOR\t./cmd/web;touch",
@@ -633,7 +633,7 @@ local function test_go_runbuild_prefers_workspace_package_selector()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-auto" then
             return {
                 "MODULE\texample.com/app",
                 "PRIMARY_SELECTOR\t./app/cmd/web",
