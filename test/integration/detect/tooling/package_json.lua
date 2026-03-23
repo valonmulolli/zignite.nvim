@@ -12,10 +12,38 @@ local function test_javascript_package_scripts_detection()
         build_commands = {},
     })
 
-    local original_vim_json = vim.json
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
 	with_overrides({
 		{ tbl = vim.bo, key = "filetype", value = "javascript" },
 		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/jsapp/src/main.js") },
+		{
+			tbl = vim.fn,
+			key = "executable",
+			value = function(path)
+				if tostring(path):match("zignite$") then
+					return 1
+				end
+				if original_executable then
+					return original_executable(path)
+				end
+				return 0
+			end,
+		},
+		{
+			tbl = vim.fn,
+			key = "systemlist",
+			value = function(cmd)
+				if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json" then
+					vim.v.shell_error = 0
+					return { "dev", "lint" }
+				end
+				if original_systemlist then
+					return original_systemlist(cmd)
+				end
+				return {}
+			end,
+		},
 		{
 			tbl = vim.fn,
 			key = "filereadable",
@@ -26,30 +54,6 @@ local function test_javascript_package_scripts_detection()
 				return 0
 			end,
 		},
-		{
-			tbl = vim.fn,
-			key = "readfile",
-			value = function(path, _, _)
-				if path == "/tmp/jsapp/package.json" then
-					return { '{"scripts":{"dev":"vite","lint":"eslint ."}}' }
-				end
-				return {}
-			end,
-		},
-		{
-			tbl = vim,
-			key = "json",
-			value = {
-				decode = function(_)
-					return {
-						scripts = {
-							dev = "vite",
-							lint = "eslint .",
-						},
-					}
-				end,
-			},
-		},
 	}, function()
 		reset_job_results()
 		init.run_build_command("lint", "float")
@@ -58,7 +62,8 @@ local function test_javascript_package_scripts_detection()
 		assert(command:match("npm run lint"), "Detected script should execute via npm run lint")
 		reset_job_results()
 	end)
-	vim.json = original_vim_json
+	vim.fn.executable = original_executable
+	vim.fn.systemlist = original_systemlist
 
 	print("✓ JavaScript package script detection test passed")
 end
@@ -138,12 +143,31 @@ local function test_javascript_package_scripts_detect_package_manager()
     vim.bo.filetype = "javascript"
     local original_expand = vim.fn.expand
     local original_filereadable = vim.fn.filereadable
-    local original_readfile = vim.fn.readfile
-    local original_vim_json = vim.json
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
 
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/pnpmapp/src/main.js" end
         return original_expand(expr)
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json" then
+            vim.v.shell_error = 0
+            return { "dev", "lint" }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/pnpmapp/package.json" or path == "/tmp/pnpmapp/pnpm-lock.yaml" then
@@ -154,26 +178,6 @@ local function test_javascript_package_scripts_detect_package_manager()
         end
         return 0
     end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/pnpmapp/package.json" then
-            return { '{"scripts":{"dev":"vite","lint":"eslint ."}}' }
-        end
-        if original_readfile then
-            return original_readfile(path)
-        end
-        return {}
-    end
-    vim.json = {
-        decode = function(_)
-            return {
-                scripts = {
-                    dev = "vite",
-                    lint = "eslint .",
-                },
-            }
-        end,
-    }
-
     reset_job_results()
     init.run_build_command("lint", "float")
     assert(#job_results > 0, "Detected package script should start a job")
@@ -182,8 +186,8 @@ local function test_javascript_package_scripts_detect_package_manager()
 
     vim.fn.expand = original_expand
     vim.fn.filereadable = original_filereadable
-    vim.fn.readfile = original_readfile
-    vim.json = original_vim_json
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
     reset_job_results()
 
 	print("✓ JavaScript package manager detection test passed")
