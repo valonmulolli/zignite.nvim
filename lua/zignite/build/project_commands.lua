@@ -149,6 +149,12 @@ local function fill_missing_commands(target, candidates)
 	end
 end
 
+---@param commands table<string, string>|nil
+---@return boolean
+local function has_commands(commands)
+	return type(commands) == "table" and next(commands) ~= nil
+end
+
 ---@return fun(flag: string): boolean
 local function config_detection_enabled()
 	local detect_options = config.options.detect or {}
@@ -231,11 +237,35 @@ local function build_namespaced_system_commands(
 end
 
 ---@param configured table<string, string>
+---@param parser_commands table<string, string>
+---@param info table|nil
+---@param selected_keys string[]
+---@return table<string, string>
+local function build_backend_system_commands(configured, parser_commands, info, selected_keys)
+	local filtered = copy_selected_commands(configured, selected_keys)
+	M.extend_string_map(filtered, parser_commands)
+	fill_missing_commands(filtered, get_info_preferred_commands(info))
+	return filtered
+end
+
+---@param configured table<string, string>
 ---@param root string
 ---@param cmake_commands table<string, string>
 ---@param root string
 ---@return table<string, string>
 local function build_cmake_commands(configured, root, cmake_commands, cmake_info)
+	if has_commands(cmake_commands) then
+		return build_backend_system_commands(configured, cmake_commands, cmake_info, {
+			"cmake-config",
+			"cmake-build",
+			"cmake-clean",
+			"cmake-debug",
+			"cmake-release",
+			"cmake-test",
+			"cmake-run",
+		})
+	end
+
 	return build_namespaced_system_commands(
 		configured,
 		cmake_commands,
@@ -281,6 +311,16 @@ end
 ---@param root string
 ---@return table<string, string>
 local function build_meson_commands(configured, root, meson_commands, meson_info)
+	if has_commands(meson_commands) then
+		return build_backend_system_commands(configured, meson_commands, meson_info, {
+			"meson-setup",
+			"meson-build",
+			"meson-clean",
+			"meson-test",
+			"meson-run",
+		})
+	end
+
 	return build_namespaced_system_commands(
 		configured,
 		meson_commands,
