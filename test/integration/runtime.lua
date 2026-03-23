@@ -311,7 +311,7 @@ local function test_cargo_project_commands_quote_bin_names()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo-auto" then
             return {
                 "BIN\tdemo;touch /tmp/pwn\t1",
                 "COMMAND\tcargo-build-demo;touch /tmp/pwn\tcargo build --bin 'demo;touch /tmp/pwn'",
@@ -707,7 +707,7 @@ local function test_rust_runbuild_prefers_inferred_cargo_bin()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=cargo-auto" then
             return {
                 "BIN\tdemo\t1",
                 "COMMAND\tcargo-build-demo\tcargo build --bin 'demo'",
