@@ -612,6 +612,7 @@ local function test_go_runbuild_prefers_workspace_package_selector()
     local original_expand = vim.fn.expand
     local original_filereadable = vim.fn.filereadable
     local original_systemlist = vim.fn.systemlist
+    local original_readfile = vim.fn.readfile
     vim.fn.expand = function(expr)
         if expr == "%:p" then return "/tmp/gowork/app/cmd/web/main.go" end
         return original_expand(expr)
@@ -629,6 +630,15 @@ local function test_go_runbuild_prefers_workspace_package_selector()
         end
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=go-mod" then
             return { "MODULE\texample.com/app" }
+        end
+        return {}
+    end
+    vim.fn.readfile = function(path, _, _)
+        if path == "/tmp/gowork/go.work" or path == "/tmp/gowork/app/go.mod" then
+            error("Lua Go workspace parsing should not run when Zig helpers succeed")
+        end
+        if original_readfile then
+            return original_readfile(path)
         end
         return {}
     end
@@ -650,6 +660,7 @@ local function test_go_runbuild_prefers_workspace_package_selector()
     vim.fn.expand = original_expand
     vim.fn.filereadable = original_filereadable
     vim.fn.systemlist = original_systemlist
+    vim.fn.readfile = original_readfile
     vim.v.shell_error = 0
     reset_job_results()
 
