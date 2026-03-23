@@ -478,26 +478,13 @@ function M.detect_bazel_project_commands(filepath)
 		return {}
 	end
 
-	---@type table<string, string>
-	local commands = {
-		["bazel-build"] = "bazel build $zignite_args",
-		["bazel-run"] = "bazel run $zignite_args",
-		["bazel-test"] = "bazel test $zignite_args",
-		["bazel-query"] = "bazel query $zignite_args",
-		["bazel-clean"] = "bazel clean",
-		["bazel-build-all"] = "bazel build //...",
-		["bazel-test-all"] = "bazel test //...",
-	}
-
 	local zig_lines = detect_backend.parse_project_lines_once("bazel-workspace", root, {
 		"--match-path=" .. filepath,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
-		for name, command in pairs(decode_backend_commands(zig_lines)) do
-			commands[name] = command
-		end
+		return decode_backend_commands(zig_lines)
 	end
-	return commands
+	return {}
 end
 
 return M
