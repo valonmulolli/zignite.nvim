@@ -623,8 +623,8 @@ local function test_gradle_project_uses_zig_project_parser()
     print("✓ Zig Gradle parser test passed")
 end
 
--- Test the Lua Maven fallback keeps baseline tasks but leaves run inference to Zig.
-local function test_maven_project_uses_basic_lua_fallback()
+-- Test Maven project commands are Zig-owned and do not fall back to local inference.
+local function test_maven_project_requires_zig_parser()
     init.setup({
         build_commands = {},
     })
@@ -658,22 +658,17 @@ local function test_maven_project_uses_basic_lua_fallback()
     end
 
     local commands = jvm_parser.detect_java_like_project_commands("/tmp/javamin/src/Main.java")
-    assert(commands["mvn-build"] == "mvn compile", "Lua Maven fallback should keep mvn compile")
-    assert(commands["mvn-test"] == "mvn test", "Lua Maven fallback should keep mvn test")
-    assert(commands["mvn-package"] == "mvn package", "Lua Maven fallback should keep mvn package")
-    assert(commands["mvn-run"] == nil, "Lua Maven fallback should leave run-goal inference to Zig")
-    assert(commands.build == "mvn compile", "Lua Maven fallback should keep generic build alias")
-    assert(commands.test == "mvn test", "Lua Maven fallback should keep generic test alias")
+    assert(vim.tbl_isempty(commands), "Maven project parsing should not infer commands without Zig")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
 
-    print("✓ Lua Maven fallback parser test passed")
+    print("✓ Maven project parser requires Zig test passed")
 end
 
--- Test the Lua Gradle fallback keeps baseline tasks but leaves run-task inference to Zig.
-local function test_gradle_project_uses_basic_lua_fallback()
+-- Test Gradle project commands are Zig-owned and do not fall back to local inference.
+local function test_gradle_project_requires_zig_parser()
     init.setup({
         build_commands = {},
     })
@@ -707,18 +702,13 @@ local function test_gradle_project_uses_basic_lua_fallback()
     end
 
     local commands = jvm_parser.detect_java_like_project_commands("/tmp/gradlemin/src/Main.kt")
-    assert(commands["gradle-build"] == "./gradlew build", "Lua Gradle fallback should keep gradle build")
-    assert(commands["gradle-test"] == "./gradlew test", "Lua Gradle fallback should keep gradle test")
-    assert(commands["gradle-clean"] == "./gradlew clean", "Lua Gradle fallback should keep gradle clean")
-    assert(commands["gradle-run"] == nil, "Lua Gradle fallback should leave run-task inference to Zig")
-    assert(commands.build == "./gradlew build", "Lua Gradle fallback should keep generic build alias")
-    assert(commands.test == "./gradlew test", "Lua Gradle fallback should keep generic test alias")
+    assert(vim.tbl_isempty(commands), "Gradle project parsing should not infer commands without Zig")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
 
-    print("✓ Lua Gradle fallback parser test passed")
+    print("✓ Gradle project parser requires Zig test passed")
 end
 
 -- Test Cargo target parsing can use the Zig project parser path.
@@ -1343,8 +1333,8 @@ test_cmake_targets_use_basic_lua_fallback()
 test_meson_targets_use_basic_lua_fallback()
 test_maven_project_uses_zig_project_parser()
 test_gradle_project_uses_zig_project_parser()
-test_maven_project_uses_basic_lua_fallback()
-test_gradle_project_uses_basic_lua_fallback()
+test_maven_project_requires_zig_parser()
+test_gradle_project_requires_zig_parser()
 test_cargo_targets_use_zig_project_parser()
 test_cargo_targets_require_zig_parser()
 test_pyproject_tools_use_zig_project_parser()
