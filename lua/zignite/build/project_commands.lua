@@ -98,22 +98,6 @@ local function apply_info_preferred_commands(updated, default_commands, info)
 	replace_default_commands(updated, default_commands, get_info_preferred_commands(info))
 end
 
----@param updated table<string, string>
----@param default_commands table<string, string>
----@param info table|nil
----@param mapping table<string, string>
----@return nil
-local function apply_mapped_preferred_commands(updated, default_commands, info, mapping)
-	local preferred = get_info_preferred_commands(info)
-	for preferred_key, command_key in pairs(mapping or {}) do
-		local value = preferred[preferred_key]
-		replace_default_command(updated, default_commands, command_key, value)
-		if updated[command_key] == nil and type(value) == "string" and value ~= "" then
-			updated[command_key] = value
-		end
-	end
-end
-
 ---@param configured table<string, string>
 ---@param default_commands table<string, string>
 ---@param parser_commands table<string, string>|nil
@@ -212,11 +196,8 @@ local function set_system_run_command(
 end
 
 ---@param configured table<string, string>
----@param default_commands table<string, string>
 ---@param parser_commands table<string, string>
----@param info table|nil
 ---@param selected_keys string[]
----@param preferred_mapping table<string, string>
 ---@param fallback_commands table<string, string|nil>
 ---@param alias_map table<string, string>
 ---@param run_command_key string
@@ -225,11 +206,9 @@ end
 ---@return table<string, string>
 local function build_namespaced_system_commands(
 	configured,
-	default_commands,
 	parser_commands,
 	info,
 	selected_keys,
-	preferred_mapping,
 	fallback_commands,
 	alias_map,
 	run_command_key,
@@ -237,7 +216,7 @@ local function build_namespaced_system_commands(
 	fallback_build_command
 )
 	local filtered = copy_selected_commands(configured, selected_keys)
-	apply_mapped_preferred_commands(filtered, default_commands, info, preferred_mapping)
+	M.extend_string_map(filtered, parser_commands)
 	fill_missing_commands(filtered, fallback_commands)
 	mirror_commands(filtered, alias_map)
 	set_system_run_command(
@@ -245,23 +224,20 @@ local function build_namespaced_system_commands(
 		configured,
 		run_command_key,
 		run_configured_key,
-		parser_commands[run_command_key] or get_info_preferred_command(info, "run"),
+		parser_commands.run or parser_commands[run_command_key] or get_info_preferred_command(info, "run"),
 		fallback_build_command
 	)
 	return filtered
 end
 
 ---@param configured table<string, string>
----@param default_commands table<string, string>
 ---@param root string
 ---@param cmake_commands table<string, string>
----@param cmake_info table|nil
 ---@param root string
 ---@return table<string, string>
-local function build_cmake_commands(configured, default_commands, root, cmake_commands, cmake_info)
+local function build_cmake_commands(configured, root, cmake_commands, cmake_info)
 	return build_namespaced_system_commands(
 		configured,
-		default_commands,
 		cmake_commands,
 		cmake_info,
 		{
@@ -273,15 +249,6 @@ local function build_cmake_commands(configured, default_commands, root, cmake_co
 			"cmake-test",
 			"cmake-run",
 			"install",
-		},
-		{
-			config = "cmake-config",
-			build = "cmake-build",
-			clean = "cmake-clean",
-			debug = "cmake-debug",
-			release = "cmake-release",
-			test = "cmake-test",
-			install = "install",
 		},
 		{
 			["cmake-config"] = cmake_commands["cmake-config"] or systems.cmake_config_command(root),
@@ -309,16 +276,13 @@ local function build_cmake_commands(configured, default_commands, root, cmake_co
 end
 
 ---@param configured table<string, string>
----@param default_commands table<string, string>
 ---@param root string
 ---@param meson_commands table<string, string>
----@param meson_info table|nil
 ---@param root string
 ---@return table<string, string>
-local function build_meson_commands(configured, default_commands, root, meson_commands, meson_info)
+local function build_meson_commands(configured, root, meson_commands, meson_info)
 	return build_namespaced_system_commands(
 		configured,
-		default_commands,
 		meson_commands,
 		meson_info,
 		{
@@ -328,13 +292,6 @@ local function build_meson_commands(configured, default_commands, root, meson_co
 			"meson-test",
 			"meson-run",
 			"install",
-		},
-		{
-			setup = "meson-setup",
-			build = "meson-build",
-			clean = "meson-clean",
-			test = "meson-test",
-			install = "install",
 		},
 		{
 			["meson-setup"] = meson_commands["meson-setup"] or systems.meson_setup_command(root),
@@ -517,10 +474,8 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 
 	if c_family_result.system == "cmake" then
-		local default_commands = get_default_build_commands(filetype)
 		return build_cmake_commands(
 			configured,
-			default_commands,
 			c_family_result.root,
 			c_family_result.commands,
 			c_family_result.info
@@ -528,10 +483,8 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 
 	if c_family_result.system == "meson" then
-		local default_commands = get_default_build_commands(filetype)
 		return build_meson_commands(
 			configured,
-			default_commands,
 			c_family_result.root,
 			c_family_result.commands,
 			c_family_result.info
