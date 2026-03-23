@@ -471,17 +471,6 @@ local function parse_go_module_name(go_mod_path)
 			end
 		end
 	end
-
-	if type(vim.fn.readfile) ~= "function" or vim.fn.filereadable(go_mod_path) ~= 1 then
-		return nil
-	end
-	for _, raw_line in ipairs(vim.fn.readfile(go_mod_path)) do
-		local line = tostring(raw_line or ""):gsub("//.*$", ""):gsub("\r$", "")
-		local name = line:match("^%s*module%s+([^%s]+)")
-		if name and name ~= "" then
-			return name:gsub('^["\'`]', ""):gsub('["\'`]$', "")
-		end
-	end
 	return nil
 end
 
@@ -507,50 +496,7 @@ local function detect_workspace_use_root(go_work_path, filepath)
 			return normalize_path(first_root)
 		end
 	end
-
-	if type(vim.fn.readfile) ~= "function" or vim.fn.filereadable(go_work_path) ~= 1 then
-		return nil
-	end
-
-	local workspace_root = normalize_path(vim.fn.fnamemodify(go_work_path, ":h"))
-	local candidate = normalize_path(filepath)
-	local in_use_block = false
-	local first_root = nil
-
-	for _, raw_line in ipairs(vim.fn.readfile(go_work_path)) do
-		local line = tostring(raw_line or ""):gsub("//.*$", ""):gsub("\r$", "")
-		line = line:match("^%s*(.-)%s*$") or ""
-		if line == "" then
-			goto continue
-		end
-		if not in_use_block then
-			if line == "use(" or line == "use (" then
-				in_use_block = true
-				goto continue
-			end
-			if line:match("^use%s+") then
-				local value = (line:gsub("^use%s+", ""))
-				local path = normalize_path(vim.fs.joinpath(workspace_root, value:gsub('^["\'`]', ""):gsub('["\'`]$', "")))
-				first_root = first_root or path
-				if candidate == path or candidate:sub(1, #path + 1) == (path .. "/") then
-					return path
-				end
-			end
-			goto continue
-		end
-		if line == ")" then
-			in_use_block = false
-			goto continue
-		end
-		local path = normalize_path(vim.fs.joinpath(workspace_root, line:gsub('^["\'`]', ""):gsub('["\'`]$', "")))
-		first_root = first_root or path
-		if candidate == path or candidate:sub(1, #path + 1) == (path .. "/") then
-			return path
-		end
-		::continue::
-	end
-
-	return first_root
+	return nil
 end
 
 ---@param filepath string
