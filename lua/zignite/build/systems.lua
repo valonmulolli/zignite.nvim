@@ -414,6 +414,12 @@ end
 ---@param filepath string
 ---@return string|nil
 function M.resolve_bazel_root(filepath)
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_bazel_result(filepath, project_root)
+	if type(backend) == "table" and type(backend.root) == "string" then
+		return backend.root
+	end
+
 	local root = resolve_bazel_root_local(filepath)
 	if root and root ~= "" then
 		local cached = get_cached_root_query_result("bazel-root", root, "bazel")
@@ -426,17 +432,18 @@ function M.resolve_bazel_root(filepath)
 		end
 		return root
 	end
-	local project_root = utils.get_project_root(filepath, config.options.project)
-	local backend = get_cached_bazel_result(filepath, project_root)
-	if type(backend) == "table" and type(backend.root) == "string" then
-		return backend.root
-	end
 	return nil
 end
 
 ---@param filepath string
 ---@return string|nil, string|nil
 function M.resolve_jvm_root(filepath)
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_system_result("jvm-root", filepath, project_root)
+	if type(backend) == "table" and type(backend.root) == "string" then
+		return backend.root, backend.system
+	end
+
 	local found_root, found_system = resolve_jvm_root_local(filepath)
 	if found_root and found_system then
 		local cached = get_cached_root_query_result("jvm-root", found_root, found_system)
@@ -444,11 +451,6 @@ function M.resolve_jvm_root(filepath)
 			return cached.root, cached.system
 		end
 		return found_root, found_system
-	end
-	local project_root = utils.get_project_root(filepath, config.options.project)
-	local backend = get_cached_system_result("jvm-root", filepath, project_root)
-	if type(backend) == "table" and type(backend.root) == "string" then
-		return backend.root, backend.system
 	end
 	return found_root, found_system
 end
@@ -549,6 +551,12 @@ end
 ---@param filepath string
 ---@return string|nil, string|nil
 function M.detect_c_family_build_system(filepath)
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_system_result("c-family", filepath, project_root)
+	if type(backend) == "table" and type(backend.system) == "string" and backend.system ~= "" then
+		return backend.system, backend.root or M.resolve_project_root_for_detection(filepath)
+	end
+
 	local system, root = detect_c_family_build_system_local(filepath)
 	if root and root ~= "" then
 		local cached = get_cached_root_query_result("c-family", root)
@@ -558,11 +566,6 @@ function M.detect_c_family_build_system(filepath)
 	end
 	if system then
 		return system, root
-	end
-	local project_root = utils.get_project_root(filepath, config.options.project)
-	local backend = get_cached_system_result("c-family", filepath, project_root or root)
-	if type(backend) == "table" and type(backend.system) == "string" and backend.system ~= "" then
-		return backend.system, backend.root or root
 	end
 	return nil, root
 end
