@@ -194,6 +194,54 @@ local function get_cached_c_family_result_for_root(root)
 end
 
 ---@param filepath string
+---@param project_root string|nil
+---@return table|nil
+local function get_cached_bazel_result(filepath, project_root)
+	local backend = get_cached_system_result("bazel-root", filepath, project_root)
+	if
+		type(backend) == "table"
+		and backend.system == "bazel"
+		and type(backend.root) == "string"
+		and backend.root ~= ""
+	then
+		return backend
+	end
+	local c_family = get_cached_system_result("c-family", filepath, project_root)
+	if
+		type(c_family) == "table"
+		and c_family.system == "bazel"
+		and type(c_family.root) == "string"
+		and c_family.root ~= ""
+	then
+		return c_family
+	end
+	return nil
+end
+
+---@param query string
+---@param root string|nil
+---@param expected_system string|nil
+---@return table|nil
+local function get_cached_root_query_result(query, root, expected_system)
+	if type(root) ~= "string" or root == "" then
+		return nil
+	end
+	local backend = get_cached_system_result(query, root, root)
+	if type(backend) ~= "table" then
+		return nil
+	end
+	if type(expected_system) == "string" and expected_system ~= "" then
+		if type(backend.system) ~= "string" or backend.system ~= expected_system then
+			return nil
+		end
+	end
+	if type(backend.root) ~= "string" or backend.root == "" then
+		return nil
+	end
+	return backend
+end
+
+---@param filepath string
 ---@param query string
 ---@param project_root string|nil
 ---@param on_done fun(result: table|nil):nil
@@ -368,11 +416,19 @@ end
 function M.resolve_bazel_root(filepath)
 	local root = resolve_bazel_root_local(filepath)
 	if root and root ~= "" then
+		local cached = get_cached_root_query_result("bazel-root", root, "bazel")
+		if cached and cached.root then
+			return cached.root
+		end
+		local c_family_cached = get_cached_root_query_result("c-family", root, "bazel")
+		if c_family_cached and c_family_cached.root then
+			return c_family_cached.root
+		end
 		return root
 	end
 	local project_root = utils.get_project_root(filepath, config.options.project)
-	local backend = get_cached_system_result("bazel-root", filepath, project_root)
-	if type(backend) == "table" and backend.system == "bazel" and type(backend.root) == "string" then
+	local backend = get_cached_bazel_result(filepath, project_root)
+	if type(backend) == "table" and type(backend.root) == "string" then
 		return backend.root
 	end
 	return nil
@@ -383,6 +439,10 @@ end
 function M.resolve_jvm_root(filepath)
 	local found_root, found_system = resolve_jvm_root_local(filepath)
 	if found_root and found_system then
+		local cached = get_cached_root_query_result("jvm-root", found_root, found_system)
+		if cached then
+			return cached.root, cached.system
+		end
 		return found_root, found_system
 	end
 	local project_root = utils.get_project_root(filepath, config.options.project)
@@ -490,6 +550,12 @@ end
 ---@return string|nil, string|nil
 function M.detect_c_family_build_system(filepath)
 	local system, root = detect_c_family_build_system_local(filepath)
+	if root and root ~= "" then
+		local cached = get_cached_root_query_result("c-family", root)
+		if cached and type(cached.system) == "string" and cached.system ~= "" then
+			return cached.system, cached.root
+		end
+	end
 	if system then
 		return system, root
 	end
@@ -549,7 +615,11 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 	end
 	if
 		(filetype == "c" or filetype == "cpp")
-		and (not c_family_system or c_family_system == "cmake" or c_family_system == "meson")
+		and (
+			not c_family_system
+			or c_family_system == "cmake"
+			or c_family_system == "meson"
+		)
 	then
 		start_query("c-family", project_root)
 	end
@@ -564,16 +634,20 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 	end
 	if
 		is_detection_enabled("bazel_project")
-		and (filetype == "bazel" or filetype == "bzl")
 		and M.supports_bazel_project_commands(filetype)
 	then
-		local should_check_bazel = true
+		local bazel_root = resolve_bazel_root_local(filepath)
+		local should_check_bazel
 		if filetype == "c" or filetype == "cpp" then
-			should_check_bazel = c_family_system == nil
+			should_check_bazel = false
 		elseif filetype == "java" or filetype == "kotlin" then
-			should_check_bazel = not (jvm_root and jvm_system)
+			should_check_bazel = bazel_root ~= nil or not (jvm_root and jvm_system)
+		elseif filetype == "bazel" or filetype == "bzl" then
+			should_check_bazel = true
+		else
+			should_check_bazel = bazel_root ~= nil
 		end
-		if should_check_bazel and not resolve_bazel_root_local(filepath) then
+		if should_check_bazel then
 			start_query("bazel-root", project_root)
 		end
 	end
