@@ -69,7 +69,7 @@ local function test_javascript_package_scripts_use_zig_project_parser()
         build_commands = {},
     })
 
-    local package_parser = require("zignite.build.parsers.package_json")
+    local package_parser = require("zignite.build.project_backend")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable

@@ -157,8 +157,8 @@ local function test_picker_async_live_merge_refresh()
 		},
 	})
 
-	local targets_module = require("zignite.build.targets")
-	local original_detect_async = targets_module.detect_tool_commands_for_filetype_async
+		local commands_module = require("zignite.build.project_commands")
+		local original_detect_async = commands_module.detect_tool_commands_for_filetype_async
 	vim.bo.filetype = "go"
 	local original_expand = vim.fn.expand
 	local original_buf_set_lines = vim.api.nvim_buf_set_lines
@@ -179,7 +179,7 @@ local function test_picker_async_live_merge_refresh()
 			return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
 		end
 	end
-	targets_module.detect_tool_commands_for_filetype_async = function(filetype, filepath, on_done)
+		commands_module.detect_tool_commands_for_filetype_async = function(filetype, filepath, on_done)
 		assert(filetype == "go", "Picker live refresh test should request Go tool detection")
 		assert(filepath == "/tmp/asyncrefresh/main.go", "Picker live refresh test should pass the current file path")
 		deferred_detect = {
@@ -207,7 +207,7 @@ local function test_picker_async_live_merge_refresh()
 
 	vim.fn.expand = original_expand
 	vim.api.nvim_buf_set_lines = original_buf_set_lines
-	targets_module.detect_tool_commands_for_filetype_async = original_detect_async
+		commands_module.detect_tool_commands_for_filetype_async = original_detect_async
 
 	print("✓ Picker async live-merge refresh test passed")
 end

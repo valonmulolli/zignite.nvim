@@ -399,6 +399,61 @@ local function test_run_build_command_with_detected_java_maven_command()
     print("✓ RunBuild with detected Java Maven command test passed")
 end
 
+-- Test generic run alias can use Zig-preferred Maven command selection.
+local function test_detected_java_preferred_run_alias()
+    init.setup({
+        build_commands = {},
+    })
+
+    local build = require("zignite.build")
+    vim.bo.filetype = "java"
+    local original_expand = vim.fn.expand
+    local original_systemlist = vim.fn.systemlist
+    local original_filereadable = vim.fn.filereadable
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/javadetect/src/Main.java" end
+        return original_expand(expr)
+    end
+    vim.fn.systemlist = function(cmd)
+        vim.v.shell_error = 0
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=maven" then
+            return {
+                "COMMAND\tmvn-build\tmvn compile",
+                "COMMAND\tmvn-test\tmvn test",
+                "COMMAND\tmvn-package\tmvn package",
+                "COMMAND\tmvn-run\tmvn spring-boot:run",
+                "PRIMARY_RUN\tmvn spring-boot:run",
+                "PREFERRED\tbuild\tmvn compile",
+                "PREFERRED\ttest\tmvn test",
+                "PREFERRED\trun\tmvn spring-boot:run",
+            }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
+    end
+    vim.fn.filereadable = function(path)
+        if path == "/tmp/javadetect/pom.xml" then
+            return 1
+        end
+        if original_filereadable then
+            return original_filereadable(path)
+        end
+        return 0
+    end
+
+    local commands = build.get_build_commands_for_filetype("java", "/tmp/javadetect/src/Main.java")
+    assert(commands.run == "mvn spring-boot:run", "Generic Java run should follow Zig-preferred Maven run command")
+
+    vim.fn.expand = original_expand
+    vim.fn.systemlist = original_systemlist
+    vim.fn.filereadable = original_filereadable
+    reset_job_results()
+
+    print("✓ Generic Java run alias test passed")
+end
+
 -- Test Kotlin build commands can be inferred from Gradle wrapper projects.
 local function test_run_build_command_with_detected_kotlin_gradle_command()
     init.setup({
@@ -450,4 +505,5 @@ test_run_build_command_with_detected_cpp_make_target()
 test_detect_worker_sync_multiline_response()
 test_run_build_command_with_detected_odin_command()
 test_run_build_command_with_detected_java_maven_command()
+test_detected_java_preferred_run_alias()
 test_run_build_command_with_detected_kotlin_gradle_command()

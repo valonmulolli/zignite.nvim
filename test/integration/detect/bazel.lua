@@ -173,12 +173,17 @@ local function test_bazel_targets_use_zig_project_parser()
 				"COMMAND\tbazel-test-main_test\tbazel test //app:main_test",
 				"PRIMARY_BUILD\tbazel build //app:main",
 				"PRIMARY_RUN\tbazel run //app:main",
+				"PREFERRED\tbuild\tbazel build //app:main",
+				"PREFERRED\trun\tbazel run //app:main",
 			},
 		}),
 		readfile = function()
 			error("Lua Bazel parser should not be used when Zig parser succeeds")
 		end,
 	}, function()
+		local commands = require("zignite.build.project_backend").detect_bazel_project_commands("/tmp/bazelzig/app/main.cc")
+		assert(commands.build == "bazel build //app:main", "Zig Bazel parser should expose preferred generic build")
+		assert(commands.run == "bazel run //app:main", "Zig Bazel parser should expose preferred generic run")
 		local picker_opened
 		picker_opened, rendered_lines = capture_picker_lines(function()
 			init.select_build_command("float")
@@ -212,6 +217,8 @@ local function test_run_build_command_with_inferred_bazel_target()
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"PRIMARY_BUILD\tbazel build //app:main",
 				"PRIMARY_RUN\tbazel run //app:main",
+				"PREFERRED\tbuild\tbazel build //app:main",
+				"PREFERRED\trun\tbazel run //app:main",
 			},
 		}),
 		input = function(prompt, default_value)
@@ -232,6 +239,34 @@ local function test_run_build_command_with_inferred_bazel_target()
 	print("✓ Inferred Bazel run command test passed")
 end
 
+local function test_detected_bazel_preferred_run_alias()
+	init.setup({ build_commands = {} })
+
+	with_bazel_context({
+		filepath = "/tmp/bazelzig/app/main.cc",
+		readable_paths = {
+			"/tmp/bazelzig/MODULE.bazel",
+			"/tmp/bazelzig/app/BUILD.bazel",
+		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelzig/app/BUILD.bazel"] = {
+				"COMMAND\tbazel-build-main\tbazel build //app:main",
+				"COMMAND\tbazel-run-main\tbazel run //app:main",
+				"PREFERRED\tbuild\tbazel build //app:main",
+				"PREFERRED\trun\tbazel run //app:main",
+			},
+		}),
+	}, function()
+		local build = require("zignite.build")
+		local commands = build.get_build_commands_for_filetype("cpp", "/tmp/bazelzig/app/main.cc")
+		assert(commands.run == "bazel run //app:main", "Generic Bazel run should follow Zig-preferred run command")
+	end)
+
+	reset_job_results()
+
+	print("✓ Generic Bazel run alias test passed")
+end
+
 local function test_bazel_related_test_inference()
 	init.setup({ build_commands = {} })
 
@@ -248,6 +283,7 @@ local function test_bazel_related_test_inference()
 				"COMMAND\tbazel-build-foo_test\tbazel build //app:foo_test",
 				"COMMAND\tbazel-test-foo_test\tbazel test //app:foo_test",
 				"PRIMARY_TEST\tbazel test //app:foo_test",
+				"PREFERRED\ttest\tbazel test //app:foo_test",
 			},
 		}),
 		input = function(prompt, default_value)
@@ -286,6 +322,8 @@ local function test_bazel_parent_package_inference()
 				"COMMAND\tbazel-run-root_app\tbazel run //:root_app",
 				"PRIMARY_BUILD\tbazel build //:root_app",
 				"PRIMARY_RUN\tbazel run //:root_app",
+				"PREFERRED\tbuild\tbazel build //:root_app",
+				"PREFERRED\trun\tbazel run //:root_app",
 			},
 		}),
 		input = function(prompt, default_value)
@@ -310,5 +348,6 @@ test_bazel_project_commands_in_picker()
 test_run_build_command_with_detected_bazel_command()
 test_bazel_targets_use_zig_project_parser()
 test_run_build_command_with_inferred_bazel_target()
+test_detected_bazel_preferred_run_alias()
 test_bazel_related_test_inference()
 test_bazel_parent_package_inference()
