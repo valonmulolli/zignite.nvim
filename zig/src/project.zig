@@ -19,6 +19,7 @@ pub const Kind = enum {
     make,
     package_json,
     maven,
+    jvm_auto,
     gradle,
     cmake,
     bazel,
@@ -170,6 +171,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "make")) return .make;
     if (std.ascii.eqlIgnoreCase(value, "package-json")) return .package_json;
     if (std.ascii.eqlIgnoreCase(value, "maven")) return .maven;
+    if (std.ascii.eqlIgnoreCase(value, "jvm-auto")) return .jvm_auto;
     if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
@@ -231,7 +233,89 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
     if (kind == .bazel_workspace) {
         return allocator.dupe(u8, "");
     }
+    if (kind == .jvm_auto) {
+        return allocator.dupe(u8, "");
+    }
     return common.readFileAlloc(allocator, path);
+}
+
+fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents: []const u8) !void {
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.freeOwnedNameList(allocator, names.items);
+    try maven.parseGoals(allocator, contents, &names);
+
+    try stdout.print("COMMAND\tmvn-build\tmvn compile\n", .{});
+    try stdout.print("COMMAND\tmvn-test\tmvn test\n", .{});
+    try stdout.print("COMMAND\tmvn-package\tmvn package\n", .{});
+    try stdout.print("COMMAND\tbuild\tmvn compile\n", .{});
+    try stdout.print("COMMAND\ttest\tmvn test\n", .{});
+    try stdout.print("PREFERRED\tbuild\tmvn compile\n", .{});
+    try stdout.print("PREFERRED\ttest\tmvn test\n", .{});
+
+    var run_command: ?[]const u8 = null;
+    for (names.items) |name| {
+        if (std.mem.eql(u8, name, "spring-boot:run")) {
+            run_command = "mvn spring-boot:run";
+            break;
+        }
+        if (run_command == null and std.mem.eql(u8, name, "exec:java")) {
+            run_command = "mvn exec:java";
+        }
+    }
+
+    if (run_command) |command| {
+        try stdout.print("COMMAND\tmvn-run\t{s}\n", .{command});
+        try stdout.print("COMMAND\trun\t{s}\n", .{command});
+        try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+        try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+    }
+}
+
+fn writeGradleOutput(stdout: anytype, allocator: std.mem.Allocator, build_file_path: []const u8, contents: []const u8) !void {
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.freeOwnedNameList(allocator, names.items);
+    try gradle.parseTasks(allocator, contents, &names);
+
+    const root = std.fs.path.dirname(build_file_path) orelse "";
+    const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
+    defer allocator.free(wrapper_path);
+    const prefix: []const u8 = if (pathExists(wrapper_path)) "./gradlew" else "gradle";
+
+    const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
+    defer allocator.free(build_command);
+    const test_command = try std.fmt.allocPrint(allocator, "{s} test", .{prefix});
+    defer allocator.free(test_command);
+    const clean_command = try std.fmt.allocPrint(allocator, "{s} clean", .{prefix});
+    defer allocator.free(clean_command);
+
+    try stdout.print("COMMAND\tgradle-build\t{s}\n", .{build_command});
+    try stdout.print("COMMAND\tgradle-test\t{s}\n", .{test_command});
+    try stdout.print("COMMAND\tgradle-clean\t{s}\n", .{clean_command});
+    try stdout.print("COMMAND\tbuild\t{s}\n", .{build_command});
+    try stdout.print("COMMAND\ttest\t{s}\n", .{test_command});
+    try stdout.print("COMMAND\tclean\t{s}\n", .{clean_command});
+    try stdout.print("PREFERRED\tbuild\t{s}\n", .{build_command});
+    try stdout.print("PREFERRED\ttest\t{s}\n", .{test_command});
+
+    var run_task: ?[]const u8 = null;
+    for (names.items) |name| {
+        if (std.mem.eql(u8, name, "bootRun")) {
+            run_task = "bootRun";
+            break;
+        }
+        if (run_task == null and std.mem.eql(u8, name, "run")) {
+            run_task = "run";
+        }
+    }
+
+    if (run_task) |task| {
+        const run_command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, task });
+        defer allocator.free(run_command);
+        try stdout.print("COMMAND\tgradle-run\t{s}\n", .{run_command});
+        try stdout.print("COMMAND\trun\t{s}\n", .{run_command});
+        try stdout.print("PRIMARY_RUN\t{s}\n", .{run_command});
+        try stdout.print("PREFERRED\trun\t{s}\n", .{run_command});
+    }
 }
 
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
@@ -249,6 +333,44 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         if (result.build_ready) |ready| {
             try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
         }
+        return;
+    }
+
+    if (options.kind == .jvm_auto) {
+        const result = try build_system.detect(allocator, .jvm_root, options.path, options.project_root);
+        defer build_system.freeOwnedResult(allocator, result);
+
+        const root = result.root orelse return;
+        const system = result.system orelse return;
+
+        if (std.mem.eql(u8, system, "maven")) {
+            const pom_path = try std.fs.path.join(allocator, &.{ root, "pom.xml" });
+            defer allocator.free(pom_path);
+            const pom_contents = try common.readFileAlloc(allocator, pom_path);
+            defer allocator.free(pom_contents);
+            try writeMavenOutput(stdout, allocator, pom_contents);
+            return;
+        }
+
+        if (std.mem.eql(u8, system, "gradle")) {
+            const gradle_kts = try std.fs.path.join(allocator, &.{ root, "build.gradle.kts" });
+            defer allocator.free(gradle_kts);
+            const gradle_groovy = try std.fs.path.join(allocator, &.{ root, "build.gradle" });
+            defer allocator.free(gradle_groovy);
+
+            const build_file = if (pathExists(gradle_kts))
+                gradle_kts
+            else if (pathExists(gradle_groovy))
+                gradle_groovy
+            else
+                return;
+
+            const build_contents = try common.readFileAlloc(allocator, build_file);
+            defer allocator.free(build_contents);
+            try writeGradleOutput(stdout, allocator, build_file, build_contents);
+            return;
+        }
+
         return;
     }
 
@@ -598,83 +720,12 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
     }
 
     if (options.kind == .maven) {
-        var names: std.ArrayList([]u8) = .empty;
-        defer common.freeOwnedNameList(allocator, names.items);
-        try maven.parseGoals(allocator, contents, &names);
-
-        try stdout.print("COMMAND\tmvn-build\tmvn compile\n", .{});
-        try stdout.print("COMMAND\tmvn-test\tmvn test\n", .{});
-        try stdout.print("COMMAND\tmvn-package\tmvn package\n", .{});
-        try stdout.print("COMMAND\tbuild\tmvn compile\n", .{});
-        try stdout.print("COMMAND\ttest\tmvn test\n", .{});
-        try stdout.print("PREFERRED\tbuild\tmvn compile\n", .{});
-        try stdout.print("PREFERRED\ttest\tmvn test\n", .{});
-
-        var run_command: ?[]const u8 = null;
-        for (names.items) |name| {
-            if (std.mem.eql(u8, name, "spring-boot:run")) {
-                run_command = "mvn spring-boot:run";
-                break;
-            }
-            if (run_command == null and std.mem.eql(u8, name, "exec:java")) {
-                run_command = "mvn exec:java";
-            }
-        }
-
-        if (run_command) |command| {
-            try stdout.print("COMMAND\tmvn-run\t{s}\n", .{command});
-            try stdout.print("COMMAND\trun\t{s}\n", .{command});
-            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
-            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
-        }
+        try writeMavenOutput(stdout, allocator, contents);
         return;
     }
 
     if (options.kind == .gradle) {
-        var names: std.ArrayList([]u8) = .empty;
-        defer common.freeOwnedNameList(allocator, names.items);
-        try gradle.parseTasks(allocator, contents, &names);
-
-        const root = std.fs.path.dirname(options.path) orelse "";
-        const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
-        defer allocator.free(wrapper_path);
-        const prefix: []const u8 = if (pathExists(wrapper_path)) "./gradlew" else "gradle";
-
-        const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
-        defer allocator.free(build_command);
-        const test_command = try std.fmt.allocPrint(allocator, "{s} test", .{prefix});
-        defer allocator.free(test_command);
-        const clean_command = try std.fmt.allocPrint(allocator, "{s} clean", .{prefix});
-        defer allocator.free(clean_command);
-
-        try stdout.print("COMMAND\tgradle-build\t{s}\n", .{build_command});
-        try stdout.print("COMMAND\tgradle-test\t{s}\n", .{test_command});
-        try stdout.print("COMMAND\tgradle-clean\t{s}\n", .{clean_command});
-        try stdout.print("COMMAND\tbuild\t{s}\n", .{build_command});
-        try stdout.print("COMMAND\ttest\t{s}\n", .{test_command});
-        try stdout.print("COMMAND\tclean\t{s}\n", .{clean_command});
-        try stdout.print("PREFERRED\tbuild\t{s}\n", .{build_command});
-        try stdout.print("PREFERRED\ttest\t{s}\n", .{test_command});
-
-        var run_task: ?[]const u8 = null;
-        for (names.items) |name| {
-            if (std.mem.eql(u8, name, "bootRun")) {
-                run_task = "bootRun";
-                break;
-            }
-            if (run_task == null and std.mem.eql(u8, name, "run")) {
-                run_task = "run";
-            }
-        }
-
-        if (run_task) |task| {
-            const run_command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, task });
-            defer allocator.free(run_command);
-            try stdout.print("COMMAND\tgradle-run\t{s}\n", .{run_command});
-            try stdout.print("COMMAND\trun\t{s}\n", .{run_command});
-            try stdout.print("PRIMARY_RUN\t{s}\n", .{run_command});
-            try stdout.print("PREFERRED\trun\t{s}\n", .{run_command});
-        }
+        try writeGradleOutput(stdout, allocator, options.path, contents);
         return;
     }
 
@@ -717,6 +768,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .make => try make.parseTargets(allocator, contents, &names),
         .package_json => try package_json.parseScripts(allocator, contents, &names),
         .maven => try maven.parseGoals(allocator, contents, &names),
+        .jvm_auto => return error.InvalidProjectParseKind,
         .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
         .bazel => return error.InvalidProjectParseKind,
@@ -764,6 +816,36 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+}
+
+test "writeOutput emits jvm-auto records for Gradle projects" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "gradlew", .data = "" });
+    try tmp.dir.writeFile(.{ .sub_path = "build.gradle.kts", .data =
+        \\plugins {
+        \\    id("application")
+        \\}
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "Main.kt" });
+    defer allocator.free(filepath);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .jvm_auto,
+        .path = filepath,
+    }, "");
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-build\t./gradlew build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\t./gradlew run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\t./gradlew run\n") != null);
 }
 
 test "writeOutput emits make command records" {

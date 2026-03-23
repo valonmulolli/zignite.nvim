@@ -288,56 +288,11 @@ function M.detect_java_like_project_commands(filepath)
 		return {}
 	end
 
-	local root, backend_system = systems.resolve_jvm_root(filepath)
-	root = root or vim.fn.fnamemodify(filepath, ":h")
-
-	---@type table<string, string>
-	local commands = {}
-	local pom_xml = vim.fs.joinpath(root, "pom.xml")
-	local gradle_wrapper = vim.fs.joinpath(root, "gradlew")
-	local gradle_build = vim.fs.joinpath(root, "build.gradle")
-	local gradle_build_kts = vim.fs.joinpath(root, "build.gradle.kts")
-
-	if backend_system == "maven" or vim.fn.filereadable(pom_xml) == 1 then
-		local zig_lines = detect_backend.parse_project_lines_once("maven", pom_xml)
-		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded = common.decode_backend_commands(zig_lines)
-			return decoded
-		end
-		return commands
+	local zig_lines = detect_backend.parse_project_lines_once("jvm-auto", filepath)
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		return common.decode_backend_commands(zig_lines)
 	end
-	if backend_system == "gradle"
-		and vim.fn.filereadable(gradle_wrapper) ~= 1
-		and vim.fn.filereadable(gradle_build) ~= 1
-		and vim.fn.filereadable(gradle_build_kts) ~= 1
-	then
-		return commands
-	end
-	if vim.fn.filereadable(gradle_wrapper) == 1 or backend_system == "gradle" then
-		local gradle_file = nil
-		if vim.fn.filereadable(gradle_build_kts) == 1 then
-			gradle_file = gradle_build_kts
-		elseif vim.fn.filereadable(gradle_build) == 1 then
-			gradle_file = gradle_build
-		end
-		if gradle_file then
-			local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
-			if type(zig_lines) == "table" and #zig_lines > 0 then
-				local decoded = common.decode_backend_commands(zig_lines)
-				return decoded
-			end
-		end
-		return commands
-	elseif vim.fn.filereadable(gradle_build) == 1 or vim.fn.filereadable(gradle_build_kts) == 1 then
-		local gradle_file = vim.fn.filereadable(gradle_build_kts) == 1 and gradle_build_kts or gradle_build
-		local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
-		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded = common.decode_backend_commands(zig_lines)
-			return decoded
-		end
-		return commands
-	end
-	return commands
+	return {}
 end
 
 ---@param filepath string
