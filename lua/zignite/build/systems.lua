@@ -75,23 +75,14 @@ end
 ---@param filepath string
 ---@param query string
 ---@param project_root string|nil
+---@param lines string[]|nil
 ---@return table|nil
-local function query_system_backend(filepath, query, project_root)
-	if type(filepath) ~= "string" or filepath == "" then
-		return nil
-	end
-	---@type string[]
-	local extra_args = { "--query=" .. query }
-	if type(project_root) == "string" and project_root ~= "" then
-		extra_args[#extra_args + 1] = "--project-root=" .. project_root
-	end
-	local lines = detect_backend.parse_project_lines_once("system", filepath, extra_args)
+local function decode_system_backend_lines(lines)
 	if type(lines) ~= "table" or #lines == 0 then
 		return nil
 	end
-
 	local result = {}
-	for _, raw_line in ipairs(lines) do
+	for _, raw_line in ipairs(lines or {}) do
 		local kind, value = tostring(raw_line or ""):match("^([^\t]+)\t(.+)$")
 		if kind == "ROOT" and value ~= "" then
 			result.root = value
@@ -102,6 +93,133 @@ local function query_system_backend(filepath, query, project_root)
 		end
 	end
 	return next(result) ~= nil and result or nil
+end
+
+---@param filepath string
+---@param query string
+---@param project_root string|nil
+---@return table|nil
+local function query_system_backend(filepath, query, project_root)
+	if type(filepath) ~= "string" or filepath == "" then
+		return nil
+	end
+	---@type string[]
+	local extra_args = { "--query=" .. query }
+	if type(project_root) == "string" and project_root ~= "" then
+		extra_args[#extra_args + 1] = "--project-root=" .. project_root
+	end
+	return decode_system_backend_lines(detect_backend.parse_project_lines_once("system", filepath, extra_args))
+end
+
+---@param query string
+---@param filepath string
+---@param project_root string|nil
+---@return string
+local function system_cache_key(query, filepath, project_root)
+	return table.concat({
+		tostring(query or ""),
+		tostring(project_root or ""),
+		vim.fs.normalize(tostring(filepath or "")),
+	}, "::")
+end
+
+---@param entry table|nil
+---@return boolean
+local function is_system_cache_stale(entry)
+	if type(entry) ~= "table" then
+		return true
+	end
+	local updated_at_ms = tonumber(entry.updated_at_ms)
+	if not updated_at_ms then
+		return true
+	end
+	return (state.now_ms() - updated_at_ms) >= state.SYSTEM_RUNTIME_DEFAULT_TTL_MS
+end
+
+---@param query string
+---@param filepath string
+---@param project_root string|nil
+---@return table|nil
+local function get_cached_system_result(query, filepath, project_root)
+	local entry = state.get_bounded_cache_entry(
+		state.system_runtime_cache,
+		state.system_runtime_cache_order,
+		system_cache_key(query, filepath, project_root)
+	)
+	if is_system_cache_stale(entry) then
+		return nil
+	end
+	return type(entry.result) == "table" and vim.deepcopy(entry.result) or nil
+end
+
+---@param query string
+---@param filepath string
+---@param project_root string|nil
+---@param result table|nil
+---@return nil
+local function set_cached_system_result(query, filepath, project_root, result)
+	state.set_bounded_cache_entry(
+		state.system_runtime_cache,
+		state.system_runtime_cache_order,
+		state.SYSTEM_RUNTIME_CACHE_MAX,
+		system_cache_key(query, filepath, project_root),
+		{
+			result = type(result) == "table" and vim.deepcopy(result) or nil,
+			updated_at_ms = state.now_ms(),
+		}
+	)
+end
+
+---@param filepath string
+---@param query string
+---@param project_root string|nil
+---@param on_done fun(result: table|nil):nil
+---@return boolean
+local function prime_system_query_async(filepath, query, project_root, on_done)
+	if type(filepath) ~= "string" or filepath == "" then
+		return false
+	end
+
+	local cached = get_cached_system_result(query, filepath, project_root)
+	if cached then
+		vim.schedule(function()
+			on_done(vim.deepcopy(cached))
+		end)
+		return true
+	end
+
+	local cache_key = system_cache_key(query, filepath, project_root)
+	local inflight = state.system_runtime_inflight[cache_key]
+	if inflight then
+		inflight.callbacks[#inflight.callbacks + 1] = on_done
+		return true
+	end
+
+	state.system_runtime_inflight[cache_key] = { callbacks = { on_done } }
+	---@type string[]
+	local extra_args = { "--query=" .. query }
+	if type(project_root) == "string" and project_root ~= "" then
+		extra_args[#extra_args + 1] = "--project-root=" .. project_root
+	end
+
+	local started = detect_backend.parse_project_lines_async("system", filepath, extra_args, function(lines)
+		local result = decode_system_backend_lines(lines)
+		set_cached_system_result(query, filepath, project_root, result)
+		local pending = state.system_runtime_inflight[cache_key]
+		state.system_runtime_inflight[cache_key] = nil
+		for _, callback in ipairs((pending and pending.callbacks) or {}) do
+			if type(callback) == "function" then
+				pcall(callback, type(result) == "table" and vim.deepcopy(result) or nil)
+			end
+		end
+	end)
+
+	if not started then
+		state.system_runtime_inflight[cache_key] = nil
+		return false
+	end
+
+	return true
 end
 
 ---@param filepath string
@@ -167,7 +285,7 @@ end
 
 ---@param filepath string
 ---@return string|nil
-function M.resolve_bazel_root(filepath)
+local function resolve_bazel_root_local(filepath)
 	local root = utils.get_project_root(filepath, config.options.project)
 	if root and M.root_has_any_marker(root, M.BAZEL_ROOT_MARKERS) then
 		return root
@@ -177,7 +295,7 @@ end
 
 ---@param filepath string
 ---@return string|nil, string|nil
-function M.resolve_jvm_root(filepath)
+local function resolve_jvm_root_local(filepath)
 	local root = utils.get_project_root(filepath, config.options.project)
 	local found_root = root
 	if not found_root or found_root == "" then
@@ -193,6 +311,63 @@ function M.resolve_jvm_root(filepath)
 		return found_root, "gradle"
 	end
 	return found_root, nil
+end
+
+---@param filepath string
+---@return string|nil, string|nil
+local function detect_c_family_build_system_local(filepath)
+	if not filepath or filepath == "" then
+		return nil, nil
+	end
+
+	local root = M.resolve_project_root_for_detection(filepath)
+	if root == "" then
+		return nil, nil
+	end
+
+	if M.root_has_any_marker(root, M.BAZEL_ROOT_MARKERS) then
+		return "bazel", root
+	end
+	if M.root_has_any_marker(root, M.MESON_ROOT_MARKERS) then
+		return "meson", root
+	end
+	if M.root_has_any_marker(root, M.CMAKE_ROOT_MARKERS) then
+		return "cmake", root
+	end
+	if M.root_has_marker(root, "Makefile") then
+		return "make", root
+	end
+	return nil, root
+end
+
+---@param filepath string
+---@return string|nil
+function M.resolve_bazel_root(filepath)
+	local root = resolve_bazel_root_local(filepath)
+	if root and root ~= "" then
+		return root
+	end
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_system_result("bazel-root", filepath, project_root)
+	if type(backend) == "table" and backend.system == "bazel" and type(backend.root) == "string" then
+		return backend.root
+	end
+	return nil
+end
+
+---@param filepath string
+---@return string|nil, string|nil
+function M.resolve_jvm_root(filepath)
+	local found_root, found_system = resolve_jvm_root_local(filepath)
+	if found_root and found_system then
+		return found_root, found_system
+	end
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_system_result("jvm-root", filepath, project_root)
+	if type(backend) == "table" and type(backend.root) == "string" then
+		return backend.root, backend.system
+	end
+	return found_root, found_system
 end
 
 ---@param filetype string
@@ -291,26 +466,14 @@ end
 ---@param filepath string
 ---@return string|nil, string|nil
 function M.detect_c_family_build_system(filepath)
-	if not filepath or filepath == "" then
-		return nil, nil
+	local system, root = detect_c_family_build_system_local(filepath)
+	if system then
+		return system, root
 	end
-
-	local root = M.resolve_project_root_for_detection(filepath)
-	if root == "" then
-		return nil, nil
-	end
-
-	if M.root_has_any_marker(root, M.BAZEL_ROOT_MARKERS) then
-		return "bazel", root
-	end
-	if M.root_has_any_marker(root, M.MESON_ROOT_MARKERS) then
-		return "meson", root
-	end
-	if M.root_has_any_marker(root, M.CMAKE_ROOT_MARKERS) then
-		return "cmake", root
-	end
-	if M.root_has_marker(root, "Makefile") then
-		return "make", root
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local backend = get_cached_system_result("c-family", filepath, project_root or root)
+	if type(backend) == "table" and type(backend.system) == "string" and backend.system ~= "" then
+		return backend.system, backend.root or root
 	end
 	return nil, root
 end
@@ -322,6 +485,77 @@ function M.detect_file_signature(path)
 		return "missing"
 	end
 	return state.get_file_mtime_key(path) or "unknown"
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@param on_done fun():nil
+---@return boolean
+function M.prime_system_detection_async(filetype, filepath, is_detection_enabled, on_done)
+	local pending = 0
+	local completed = false
+	local c_family_system = nil
+	local jvm_root = nil
+	local jvm_system = nil
+
+	local function finish_one()
+		if completed then
+			return
+		end
+		pending = pending - 1
+		if pending <= 0 then
+			completed = true
+			on_done()
+		end
+	end
+
+	local function start_query(query, project_root)
+		pending = pending + 1
+		local started = prime_system_query_async(filepath, query, project_root, function()
+			finish_one()
+		end)
+		if not started then
+			pending = pending - 1
+		end
+	end
+
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	if filetype == "c" or filetype == "cpp" then
+		c_family_system = detect_c_family_build_system_local(filepath)
+	end
+	if (filetype == "c" or filetype == "cpp") and not c_family_system then
+		start_query("c-family", project_root)
+	end
+	if
+		(filetype == "java" or filetype == "kotlin")
+		and is_detection_enabled("java_kotlin_project")
+	then
+		jvm_root, jvm_system = resolve_jvm_root_local(filepath)
+		if not jvm_root or not jvm_system then
+			start_query("jvm-root", project_root)
+		end
+	end
+	if
+		is_detection_enabled("bazel_project")
+		and (filetype == "bazel" or filetype == "bzl")
+		and M.supports_bazel_project_commands(filetype)
+	then
+		local should_check_bazel = true
+		if filetype == "c" or filetype == "cpp" then
+			should_check_bazel = c_family_system == nil
+		elseif filetype == "java" or filetype == "kotlin" then
+			should_check_bazel = not (jvm_root and jvm_system)
+		end
+		if should_check_bazel and not resolve_bazel_root_local(filepath) then
+			start_query("bazel-root", project_root)
+		end
+	end
+
+	if pending == 0 then
+		return false
+	end
+	return true
 end
 
 ---@param filetype string
