@@ -540,6 +540,10 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         for (info.commands) |entry| {
             try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         }
+        try stdout.print("COMMAND\tbazel-query\tbazel query $zignite_args\n", .{});
+        try stdout.print("COMMAND\tbazel-clean\tbazel clean\n", .{});
+        try stdout.print("COMMAND\tbazel-build-all\tbazel build //...\n", .{});
+        try stdout.print("COMMAND\tbazel-test-all\tbazel test //...\n", .{});
         if (info.primary_build) |command| {
             try stdout.print("COMMAND\tbazel-build\t{s}\n", .{command});
             try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
@@ -568,6 +572,10 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         for (info.commands) |entry| {
             try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         }
+        try stdout.print("COMMAND\tbazel-query\tbazel query $zignite_args\n", .{});
+        try stdout.print("COMMAND\tbazel-clean\tbazel clean\n", .{});
+        try stdout.print("COMMAND\tbazel-build-all\tbazel build //...\n", .{});
+        try stdout.print("COMMAND\tbazel-test-all\tbazel test //...\n", .{});
         if (info.primary_build) |command| {
             try stdout.print("COMMAND\tbazel-build\t{s}\n", .{command});
             try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
@@ -1025,6 +1033,10 @@ test "writeOutput emits bazel commands and primary targets" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-query\tbazel query $zignite_args\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-clean\tbazel clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-all\tbazel build //...\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-all\tbazel test //...\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
@@ -1070,6 +1082,10 @@ test "writeOutput emits bazel workspace commands" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-query\tbazel query $zignite_args\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-clean\tbazel clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-all\tbazel build //...\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-all\tbazel test //...\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);

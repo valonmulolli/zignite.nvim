@@ -99,26 +99,53 @@ local function test_bazel_project_commands_in_picker()
 
 	local picker_opened = false
 	local rendered_lines = {}
+	local commands = {}
 	with_bazel_context({
 		filepath = "/tmp/bazelapp/app/main.cc",
 		readable_paths = {
 			"/tmp/bazelapp/MODULE.bazel",
 			"/tmp/bazelapp/app/BUILD.bazel",
 		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelapp"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
+				"COMMAND\tbazel-build-main\tbazel build //app:main",
+				"COMMAND\tbazel-run-main\tbazel run //app:main",
+				"COMMAND\tbazel-build\tbazel build //app:main",
+				"COMMAND\tbazel-run\tbazel run //app:main",
+				"COMMAND\tbuild\tbazel build //app:main",
+				"COMMAND\trun\tbazel run //app:main",
+				"PRIMARY_BUILD\tbazel build //app:main",
+				"PRIMARY_RUN\tbazel run //app:main",
+				"PREFERRED\tbuild\tbazel build //app:main",
+				"PREFERRED\trun\tbazel run //app:main",
+			},
+		}),
 		readfile = function()
 			error("Lua Bazel fallback parser should not read BUILD files")
 		end,
 	}, function()
+		commands = require("zignite.build.project_backend").detect_bazel_project_commands(
+			"/tmp/bazelapp/app/main.cc"
+		)
 		picker_opened, rendered_lines = capture_picker_lines(function()
 			init.select_build_command("float")
 		end)
 	end)
 
 	assert(picker_opened, "Picker should open for Bazel workspace commands")
+	assert(commands["bazel-query"] == "bazel query $zignite_args", "Backend Bazel query command should be exposed")
+	assert(commands["bazel-clean"] == "bazel clean", "Backend Bazel clean command should be exposed")
 	local rendered = table.concat(rendered_lines, "\n")
 	assert(rendered:match("bazel%-build"), "Picker should include bazel-build command")
 	assert(rendered:match("bazel%-run"), "Picker should include bazel-run command")
-	assert(rendered:match("bazel build <%a+>"), "Generic Bazel fallback should render placeholder args")
+	assert(
+		not rendered:match("bazel build <%a+>"),
+		"Backend Bazel build should use inferred labels instead of placeholder args"
+	)
 
 	print("✓ Bazel project commands in picker test passed")
 end
@@ -133,6 +160,24 @@ local function test_run_build_command_with_detected_bazel_command()
 			"/tmp/bazelapp/MODULE.bazel",
 			"/tmp/bazelapp/app/BUILD.bazel",
 		},
+		systemlist = make_bazel_systemlist_override({
+			["--path=/tmp/bazelapp"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
+				"COMMAND\tbazel-build-main\tbazel build //app:main",
+				"COMMAND\tbazel-run-main\tbazel run //app:main",
+				"COMMAND\tbazel-build\tbazel build //app:main",
+				"COMMAND\tbazel-run\tbazel run //app:main",
+				"COMMAND\tbuild\tbazel build //app:main",
+				"COMMAND\trun\tbazel run //app:main",
+				"PRIMARY_BUILD\tbazel build //app:main",
+				"PRIMARY_RUN\tbazel run //app:main",
+				"PREFERRED\tbuild\tbazel build //app:main",
+				"PREFERRED\trun\tbazel run //app:main",
+			},
+		}),
 		readfile = function()
 			error("Lua Bazel fallback parser should not read BUILD files")
 		end,
@@ -145,11 +190,11 @@ local function test_run_build_command_with_detected_bazel_command()
 		init.run_build_command("bazel-build", "float")
 	end)
 
-	assert(#job_results > 0, "Generic Bazel command should start a job after prompting")
+	assert(#job_results > 0, "Backend Bazel build should start a job")
 	local command = command_to_string(job_results[#job_results].cmd)
 	assert(command:match("bazel build"), "Generic Bazel command should execute via bazel build")
-	assert(command:match("//app:main"), "Generic Bazel command should include provided target argument")
-	assert(#prompts == 1 and prompts[1]:match("cpp bazel%-build args"), "Bazel command should prompt for target args")
+	assert(command:match("//app:main"), "Backend Bazel command should include inferred target label")
+	assert(#prompts == 0, "Backend Bazel command should not prompt when Zig inferred the label")
 	reset_job_results()
 
 	print("✓ RunBuild with detected Bazel command test passed")
@@ -167,6 +212,10 @@ local function test_bazel_targets_use_zig_project_parser()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelzig"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -217,6 +266,10 @@ local function test_run_build_command_with_inferred_bazel_target()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelzig"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -258,6 +311,10 @@ local function test_detected_bazel_preferred_run_alias()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelzig"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
 				"COMMAND\tbazel-build-main\tbazel build //app:main",
 				"COMMAND\tbazel-run-main\tbazel run //app:main",
 				"COMMAND\tbazel-build\tbazel build //app:main",
@@ -291,6 +348,10 @@ local function test_bazel_related_test_inference()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazeltests"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
 				"COMMAND\tbazel-build-foo_lib\tbazel build //app:foo_lib",
 				"COMMAND\tbazel-build-foo_test\tbazel build //app:foo_test",
 				"COMMAND\tbazel-test-foo_test\tbazel test //app:foo_test",
@@ -331,6 +392,10 @@ local function test_bazel_parent_package_inference()
 		},
 		systemlist = make_bazel_systemlist_override({
 			["--path=/tmp/bazelparent"] = {
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
 				"COMMAND\tbazel-build-root_app\tbazel build //:root_app",
 				"COMMAND\tbazel-run-root_app\tbazel run //:root_app",
 				"COMMAND\tbazel-build\tbazel build //:root_app",
