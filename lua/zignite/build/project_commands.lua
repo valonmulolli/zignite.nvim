@@ -98,6 +98,22 @@ local function apply_info_preferred_commands(updated, default_commands, info)
 	replace_default_commands(updated, default_commands, get_info_preferred_commands(info))
 end
 
+---@param updated table<string, string>
+---@param default_commands table<string, string>
+---@param info table|nil
+---@param mapping table<string, string>
+---@return nil
+local function apply_mapped_preferred_commands(updated, default_commands, info, mapping)
+	local preferred = get_info_preferred_commands(info)
+	for preferred_key, command_key in pairs(mapping or {}) do
+		local value = preferred[preferred_key]
+		replace_default_command(updated, default_commands, command_key, value)
+		if updated[command_key] == nil and type(value) == "string" and value ~= "" then
+			updated[command_key] = value
+		end
+	end
+end
+
 ---@param configured table<string, string>
 ---@param default_commands table<string, string>
 ---@param parser_commands table<string, string>|nil
@@ -135,6 +151,17 @@ end
 local function mirror_commands(target, alias_map)
 	for alias, source_key in pairs(alias_map or {}) do
 		mirror_command(target, alias, source_key)
+	end
+end
+
+---@param target table<string, string>
+---@param candidates table<string, string|nil>
+---@return nil
+local function fill_missing_commands(target, candidates)
+	for key, value in pairs(candidates or {}) do
+		if target[key] == nil and type(value) == "string" and value ~= "" then
+			target[key] = value
+		end
 	end
 end
 
@@ -186,65 +213,99 @@ end
 
 ---@param configured table<string, string>
 ---@param default_commands table<string, string>
+---@param parser_commands table<string, string>
+---@param info table|nil
+---@param selected_keys string[]
+---@param preferred_mapping table<string, string>
+---@param fallback_commands table<string, string|nil>
+---@param alias_map table<string, string>
+---@param run_command_key string
+---@param run_configured_key string
+---@param fallback_build_command string|nil
+---@return table<string, string>
+local function build_namespaced_system_commands(
+	configured,
+	default_commands,
+	parser_commands,
+	info,
+	selected_keys,
+	preferred_mapping,
+	fallback_commands,
+	alias_map,
+	run_command_key,
+	run_configured_key,
+	fallback_build_command
+)
+	local filtered = copy_selected_commands(configured, selected_keys)
+	apply_mapped_preferred_commands(filtered, default_commands, info, preferred_mapping)
+	fill_missing_commands(filtered, fallback_commands)
+	mirror_commands(filtered, alias_map)
+	set_system_run_command(
+		filtered,
+		configured,
+		run_command_key,
+		run_configured_key,
+		parser_commands[run_command_key] or get_info_preferred_command(info, "run"),
+		fallback_build_command
+	)
+	return filtered
+end
+
+---@param configured table<string, string>
+---@param default_commands table<string, string>
 ---@param root string
 ---@param cmake_commands table<string, string>
 ---@param cmake_info table|nil
 ---@param root string
 ---@return table<string, string>
 local function build_cmake_commands(configured, default_commands, root, cmake_commands, cmake_info)
-	local filtered = copy_selected_commands(configured, {
-		"cmake-config",
-		"cmake-build",
-		"cmake-clean",
-		"cmake-debug",
-		"cmake-release",
-		"cmake-test",
-		"cmake-run",
-		"install",
-	})
-	replace_default_commands(filtered, default_commands, {
-		["cmake-config"] = cmake_commands["cmake-config"] or systems.cmake_config_command(root),
-		["cmake-clean"] = cmake_commands["cmake-clean"] or systems.cmake_clean_command(root),
-		["cmake-debug"] = cmake_commands["cmake-debug"]
-			or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-		["cmake-release"] = cmake_commands["cmake-release"]
-			or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-		["cmake-test"] = cmake_commands["cmake-test"] or "ctest --test-dir build",
-		install = cmake_commands.install or "cmake --build build --target install",
-		["cmake-build"] = cmake_commands["cmake-build"]
-			or get_info_preferred_command(cmake_info, "build")
-			or systems.cmake_build_command(root, nil),
-	})
-	filtered["cmake-config"] = filtered["cmake-config"] or systems.cmake_config_command(root)
-	filtered["cmake-clean"] = filtered["cmake-clean"] or systems.cmake_clean_command(root)
-	filtered["cmake-debug"] = filtered["cmake-debug"]
-		or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-	filtered["cmake-release"] = filtered["cmake-release"]
-		or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-	filtered["cmake-test"] = filtered["cmake-test"] or "ctest --test-dir build"
-	filtered.install = filtered.install or "cmake --build build --target install"
-	filtered["cmake-build"] = filtered["cmake-build"]
-		or cmake_commands["cmake-build"]
-		or get_info_preferred_command(cmake_info, "build")
-		or systems.cmake_build_command(root, nil)
-	mirror_commands(filtered, {
-		build = "cmake-build",
-		clean = "cmake-clean",
-		debug = "cmake-debug",
-		release = "cmake-release",
-		test = "cmake-test",
-		config = "cmake-config",
-	})
-	set_system_run_command(
-		filtered,
+	return build_namespaced_system_commands(
 		configured,
+		default_commands,
+		cmake_commands,
+		cmake_info,
+		{
+			"cmake-config",
+			"cmake-build",
+			"cmake-clean",
+			"cmake-debug",
+			"cmake-release",
+			"cmake-test",
+			"cmake-run",
+			"install",
+		},
+		{
+			config = "cmake-config",
+			build = "cmake-build",
+			clean = "cmake-clean",
+			debug = "cmake-debug",
+			release = "cmake-release",
+			test = "cmake-test",
+			install = "install",
+		},
+		{
+			["cmake-config"] = cmake_commands["cmake-config"] or systems.cmake_config_command(root),
+			["cmake-clean"] = cmake_commands["cmake-clean"] or systems.cmake_clean_command(root),
+			["cmake-debug"] = cmake_commands["cmake-debug"]
+				or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+			["cmake-release"] = cmake_commands["cmake-release"]
+				or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+			["cmake-test"] = cmake_commands["cmake-test"] or "ctest --test-dir build",
+			install = cmake_commands.install or "cmake --build build --target install",
+			["cmake-build"] = cmake_commands["cmake-build"] or systems.cmake_build_command(root, nil),
+		},
+		{
+			build = "cmake-build",
+			clean = "cmake-clean",
+			debug = "cmake-debug",
+			release = "cmake-release",
+			test = "cmake-test",
+			config = "cmake-config",
+		},
 		"cmake-run",
 		"cmake-run",
-		cmake_commands["cmake-run"] or get_info_preferred_command(cmake_info, "run"),
-		filtered["cmake-build"]
+		cmake_commands["cmake-build"] or systems.cmake_build_command(root, nil)
 	)
-
-	return filtered
 end
 
 ---@param configured table<string, string>
@@ -255,47 +316,43 @@ end
 ---@param root string
 ---@return table<string, string>
 local function build_meson_commands(configured, default_commands, root, meson_commands, meson_info)
-	local filtered = copy_selected_commands(configured, {
-		"meson-setup",
-		"meson-build",
-		"meson-clean",
-		"meson-test",
-		"meson-run",
-		"install",
-	})
-	replace_default_commands(filtered, default_commands, {
-		["meson-setup"] = meson_commands["meson-setup"] or systems.meson_setup_command(root),
-		["meson-clean"] = meson_commands["meson-clean"] or systems.meson_clean_command(root),
-		["meson-test"] = meson_commands["meson-test"] or "meson test -C build",
-		install = meson_commands.install or "meson install -C build",
-		["meson-build"] = meson_commands["meson-build"]
-			or get_info_preferred_command(meson_info, "build")
-			or systems.meson_build_command(root, nil),
-	})
-	filtered["meson-setup"] = filtered["meson-setup"] or systems.meson_setup_command(root)
-	filtered["meson-clean"] = filtered["meson-clean"] or systems.meson_clean_command(root)
-	filtered["meson-test"] = filtered["meson-test"] or "meson test -C build"
-	filtered.install = filtered.install or "meson install -C build"
-	filtered["meson-build"] = filtered["meson-build"]
-		or meson_commands["meson-build"]
-		or get_info_preferred_command(meson_info, "build")
-		or systems.meson_build_command(root, nil)
-	mirror_commands(filtered, {
-		build = "meson-build",
-		clean = "meson-clean",
-		test = "meson-test",
-		setup = "meson-setup",
-	})
-	set_system_run_command(
-		filtered,
+	return build_namespaced_system_commands(
 		configured,
+		default_commands,
+		meson_commands,
+		meson_info,
+		{
+			"meson-setup",
+			"meson-build",
+			"meson-clean",
+			"meson-test",
+			"meson-run",
+			"install",
+		},
+		{
+			setup = "meson-setup",
+			build = "meson-build",
+			clean = "meson-clean",
+			test = "meson-test",
+			install = "install",
+		},
+		{
+			["meson-setup"] = meson_commands["meson-setup"] or systems.meson_setup_command(root),
+			["meson-clean"] = meson_commands["meson-clean"] or systems.meson_clean_command(root),
+			["meson-test"] = meson_commands["meson-test"] or "meson test -C build",
+			install = meson_commands.install or "meson install -C build",
+			["meson-build"] = meson_commands["meson-build"] or systems.meson_build_command(root, nil),
+		},
+		{
+			build = "meson-build",
+			clean = "meson-clean",
+			test = "meson-test",
+			setup = "meson-setup",
+		},
 		"meson-run",
 		"meson-run",
-		meson_commands["meson-run"] or get_info_preferred_command(meson_info, "run"),
-		filtered["meson-build"]
+		meson_commands["meson-build"] or systems.meson_build_command(root, nil)
 	)
-
-	return filtered
 end
 
 ---@param filetype string
