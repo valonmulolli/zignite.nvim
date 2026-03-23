@@ -95,20 +95,20 @@ local function decode_system_backend_lines(lines)
 	return next(result) ~= nil and result or nil
 end
 
----@param filepath string
----@param query string
----@param project_root string|nil
+---@param result table|nil
 ---@return table|nil
-local function query_system_backend(filepath, query, project_root)
-	if type(filepath) ~= "string" or filepath == "" then
+local function copy_system_result(result)
+	if type(result) ~= "table" then
 		return nil
 	end
-	---@type string[]
-	local extra_args = { "--query=" .. query }
-	if type(project_root) == "string" and project_root ~= "" then
-		extra_args[#extra_args + 1] = "--project-root=" .. project_root
+	if type(vim.deepcopy) == "function" then
+		return vim.deepcopy(result)
 	end
-	return decode_system_backend_lines(detect_backend.parse_project_lines_once("system", filepath, extra_args))
+	local copied = {}
+	for key, value in pairs(result) do
+		copied[key] = value
+	end
+	return copied
 end
 
 ---@param query string
@@ -149,7 +149,7 @@ local function get_cached_system_result(query, filepath, project_root)
 	if is_system_cache_stale(entry) then
 		return nil
 	end
-	return type(entry.result) == "table" and vim.deepcopy(entry.result) or nil
+	return copy_system_result(entry.result)
 end
 
 ---@param query string
@@ -158,16 +158,39 @@ end
 ---@param result table|nil
 ---@return nil
 local function set_cached_system_result(query, filepath, project_root, result)
-	state.set_bounded_cache_entry(
-		state.system_runtime_cache,
-		state.system_runtime_cache_order,
-		state.SYSTEM_RUNTIME_CACHE_MAX,
-		system_cache_key(query, filepath, project_root),
-		{
-			result = type(result) == "table" and vim.deepcopy(result) or nil,
-			updated_at_ms = state.now_ms(),
-		}
-	)
+	local updated_at_ms = state.now_ms()
+	local copied_result = copy_system_result(result)
+
+	local function store(cache_path, cache_root)
+		state.set_bounded_cache_entry(
+			state.system_runtime_cache,
+			state.system_runtime_cache_order,
+			state.SYSTEM_RUNTIME_CACHE_MAX,
+			system_cache_key(query, cache_path, cache_root),
+			{
+				result = copy_system_result(copied_result),
+				updated_at_ms = updated_at_ms,
+			}
+		)
+	end
+
+	store(filepath, project_root)
+	if type(copied_result) == "table" and type(copied_result.root) == "string" and copied_result.root ~= "" then
+		store(copied_result.root, copied_result.root)
+	end
+end
+
+---@param root string|nil
+---@return table|nil
+local function get_cached_c_family_result_for_root(root)
+	if type(root) ~= "string" or root == "" then
+		return nil
+	end
+	local backend = get_cached_system_result("c-family", root, root)
+	if type(backend) ~= "table" or type(backend.system) ~= "string" or backend.system == "" then
+		return nil
+	end
+	return backend
 end
 
 ---@param filepath string
@@ -209,7 +232,7 @@ local function prime_system_query_async(filepath, query, project_root, on_done)
 		state.system_runtime_inflight[cache_key] = nil
 		for _, callback in ipairs((pending and pending.callbacks) or {}) do
 			if type(callback) == "function" then
-				pcall(callback, type(result) == "table" and vim.deepcopy(result) or nil)
+				pcall(callback, copy_system_result(result))
 			end
 		end
 	end)
@@ -392,7 +415,7 @@ function M.has_cmake_build_tree(root)
 	if build_dir_has_file(root, "CMakeCache.txt") then
 		return true
 	end
-	local backend = query_system_backend(root, "c-family", root)
+	local backend = get_cached_c_family_result_for_root(root)
 	if type(backend) == "table" and backend.system == "cmake" and type(backend.build_ready) == "boolean" then
 		return backend.build_ready
 	end
@@ -408,7 +431,7 @@ function M.has_meson_build_tree(root)
 	if build_dir_has_file(root, vim.fs.joinpath("meson-private", "coredata.dat")) then
 		return true
 	end
-	local backend = query_system_backend(root, "c-family", root)
+	local backend = get_cached_c_family_result_for_root(root)
 	if type(backend) == "table" and backend.system == "meson" and type(backend.build_ready) == "boolean" then
 		return backend.build_ready
 	end
@@ -524,7 +547,10 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 	if filetype == "c" or filetype == "cpp" then
 		c_family_system = detect_c_family_build_system_local(filepath)
 	end
-	if (filetype == "c" or filetype == "cpp") and not c_family_system then
+	if
+		(filetype == "c" or filetype == "cpp")
+		and (not c_family_system or c_family_system == "cmake" or c_family_system == "meson")
+	then
 		start_query("c-family", project_root)
 	end
 	if
