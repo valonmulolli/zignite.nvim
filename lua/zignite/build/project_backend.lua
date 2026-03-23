@@ -658,40 +658,20 @@ local function build_gradle_commands(prefix, run_task)
 	return commands
 end
 
----@param commands table<string, string>
----@param preferred table<string, string>|nil
----@return table<string, string>
-local function apply_preferred_aliases(commands, preferred)
-	if type(preferred) ~= "table" then
-		return commands
-	end
-	for _, key in ipairs({ "build", "run", "test" }) do
-		local value = preferred[key]
-		if type(value) == "string" and value ~= "" and commands[key] == nil then
-			commands[key] = value
-		end
-	end
-	return commands
-end
-
 ---@param lines string[]|nil
----@return table<string, string>, table<string, string>
+---@return table<string, string>
 local function decode_backend_commands(lines)
 	---@type table<string, string>
 	local commands = {}
-	---@type table<string, string>
-	local preferred = {}
 	for _, raw_line in ipairs(lines or {}) do
 		local kind, name, command = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)\t(.+)$")
 		local valid_name = type(name) == "string" and name ~= ""
 		local valid_command = type(command) == "string" and command ~= ""
 		if kind == "COMMAND" and valid_name and valid_command then
 			commands[name] = command
-		elseif kind == "PREFERRED" and valid_name and valid_command then
-			preferred[name] = command
 		end
 	end
-	return commands, preferred
+	return commands
 end
 
 ---@param filepath string
@@ -714,13 +694,13 @@ function M.detect_java_like_project_commands(filepath)
 	if backend_system == "maven" or vim.fn.filereadable(pom_xml) == 1 then
 		local zig_lines = detect_backend.parse_project_lines_once("maven", pom_xml)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded, preferred = decode_backend_commands(zig_lines)
-			return apply_preferred_aliases(decoded, preferred)
+			local decoded = decode_backend_commands(zig_lines)
+			return decoded
 		end
-		return apply_preferred_aliases(build_maven_commands(nil), {
-			build = "mvn compile",
-			test = "mvn test",
-		})
+		local fallback = build_maven_commands(nil)
+		fallback.build = fallback.build or "mvn compile"
+		fallback.test = fallback.test or "mvn test"
+		return fallback
 	end
 	if backend_system == "gradle"
 		and vim.fn.filereadable(gradle_wrapper) ~= 1
@@ -739,25 +719,25 @@ function M.detect_java_like_project_commands(filepath)
 		if gradle_file then
 			local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
 			if type(zig_lines) == "table" and #zig_lines > 0 then
-				local decoded, preferred = decode_backend_commands(zig_lines)
-				return apply_preferred_aliases(decoded, preferred)
+				local decoded = decode_backend_commands(zig_lines)
+				return decoded
 			end
 		end
-		return apply_preferred_aliases(build_gradle_commands("./gradlew", nil), {
-			build = "./gradlew build",
-			test = "./gradlew test",
-		})
+		local fallback = build_gradle_commands("./gradlew", nil)
+		fallback.build = fallback.build or "./gradlew build"
+		fallback.test = fallback.test or "./gradlew test"
+		return fallback
 	elseif vim.fn.filereadable(gradle_build) == 1 or vim.fn.filereadable(gradle_build_kts) == 1 then
 		local gradle_file = vim.fn.filereadable(gradle_build_kts) == 1 and gradle_build_kts or gradle_build
 		local zig_lines = detect_backend.parse_project_lines_once("gradle", gradle_file)
 		if type(zig_lines) == "table" and #zig_lines > 0 then
-			local decoded, preferred = decode_backend_commands(zig_lines)
-			return apply_preferred_aliases(decoded, preferred)
+			local decoded = decode_backend_commands(zig_lines)
+			return decoded
 		end
-		return apply_preferred_aliases(build_gradle_commands("gradle", nil), {
-			build = "gradle build",
-			test = "gradle test",
-		})
+		local fallback = build_gradle_commands("gradle", nil)
+		fallback.build = fallback.build or "gradle build"
+		fallback.test = fallback.test or "gradle test"
+		return fallback
 	end
 	return commands
 end
@@ -837,20 +817,16 @@ end
 local function parse_bazel_backend_command_lines(lines)
 	---@type table<string, string>
 	local commands = {}
-	---@type table<string, string>
-	local preferred = {}
 	for _, raw_line in ipairs(lines or {}) do
 		local line = tostring(raw_line or "")
 		if line ~= "" then
 			local fields = split_tab_fields(line)
 			if fields[1] == "COMMAND" and type(fields[2]) == "string" and type(fields[3]) == "string" then
 				commands[fields[2]] = fields[3]
-			elseif fields[1] == "PREFERRED" and type(fields[2]) == "string" and type(fields[3]) == "string" then
-				preferred[fields[2]] = fields[3]
 			end
 		end
 	end
-	return commands, preferred
+	return commands
 end
 
 ---@param filepath string
@@ -880,9 +856,6 @@ function M.detect_bazel_project_commands(filepath)
 	if #build_files == 0 then
 		return commands
 	end
-	---@type table<string, string>
-	local preferred = {}
-
 	for _, build_info in ipairs(build_files) do
 		local zig_lines = detect_backend.parse_project_lines_once("bazel", build_info.build_file, {
 			"--package-path=" .. build_info.package_path,
@@ -892,32 +865,14 @@ function M.detect_bazel_project_commands(filepath)
 			goto continue
 		end
 
-		local parsed_commands, parsed_preferred = parse_bazel_backend_command_lines(zig_lines)
+		local parsed_commands = parse_bazel_backend_command_lines(zig_lines)
 		for name, command in pairs(parsed_commands) do
-			if commands[name] == nil then
-				commands[name] = command
-			end
-		end
-		for key, value in pairs(parsed_preferred) do
-			if preferred[key] == nil then
-				preferred[key] = value
-			end
+			commands[name] = command
 		end
 
 		::continue::
 	end
-
-	if preferred.build then
-		commands["bazel-build"] = preferred.build
-	end
-	if preferred.run then
-		commands["bazel-run"] = preferred.run
-	end
-	if preferred.test then
-		commands["bazel-test"] = preferred.test
-	end
-
-	return apply_preferred_aliases(commands, preferred)
+	return commands
 end
 
 return M
