@@ -5,6 +5,7 @@ local M = {}
 
 M.DETECT_RUNTIME_DEFAULT_TTL_MS = 15000
 M.DETECT_RUNTIME_FAILED_TTL_MS = 1000
+M.SYSTEM_RUNTIME_DEFAULT_TTL_MS = 15000
 M.PACKAGE_SCRIPT_CACHE_MAX = 128
 M.MAKE_TARGET_CACHE_MAX = 128
 M.CMAKE_TARGET_CACHE_MAX = 128
@@ -12,6 +13,7 @@ M.MESON_TARGET_CACHE_MAX = 128
 M.CARGO_TARGET_CACHE_MAX = 128
 M.GO_PROJECT_CACHE_MAX = 128
 M.DETECT_RUNTIME_CACHE_MAX = 256
+M.SYSTEM_RUNTIME_CACHE_MAX = 256
 
 ---@type table<string, string>
 M.last_build_command_by_filetype = {}
@@ -45,6 +47,12 @@ M.detect_runtime_cache = {}
 M.detect_runtime_cache_order = {}
 ---@type table<string, table>
 M.detect_runtime_inflight = {}
+---@type table<string, table>
+M.system_runtime_cache = {}
+---@type string[]
+M.system_runtime_cache_order = {}
+---@type table<string, table>
+M.system_runtime_inflight = {}
 
 ---@param order string[]
 ---@param key string
@@ -147,6 +155,9 @@ function M.reset()
 	clear_table(M.detect_runtime_cache)
 	clear_table(M.detect_runtime_cache_order)
 	clear_table(M.detect_runtime_inflight)
+	clear_table(M.system_runtime_cache)
+	clear_table(M.system_runtime_cache_order)
+	clear_table(M.system_runtime_inflight)
 end
 
 ---@return table
@@ -158,6 +169,8 @@ function M.debug_state()
 		go_project_cache_order = M.go_project_cache_order,
 		detect_runtime_cache = M.detect_runtime_cache,
 		detect_runtime_cache_order = M.detect_runtime_cache_order,
+		system_runtime_cache = M.system_runtime_cache,
+		system_runtime_cache_order = M.system_runtime_cache_order,
 	}
 end
 

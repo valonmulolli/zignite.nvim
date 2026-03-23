@@ -235,6 +235,26 @@ end
 
 ---@param kind string
 ---@param path string
+---@param extra_args string[]|nil
+---@param on_done fun(lines: string[]|nil):nil
+---@return boolean
+function M.parse_project_lines_async(kind, path, extra_args, on_done)
+	if type(kind) ~= "string" or kind == "" or type(path) ~= "string" or path == "" then
+		return false
+	end
+	if not project_client.has_backend() then
+		return false
+	end
+	local params = {
+		kind = kind,
+		path = path,
+		extra_args = extra_args,
+	}
+	return project_client.async_request(params, on_done) or project_client.once_request_async(params, on_done)
+end
+
+---@param kind string
+---@param path string
 ---@return string[]|nil
 function M.parse_project_names_once(kind, path)
 	return M.parse_project_lines_once(kind, path, nil)

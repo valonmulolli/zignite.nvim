@@ -96,43 +96,68 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		callbacks = type(on_refresh) == "function" and { on_refresh } or {},
 	}
 
+	local latest_detected = cached_detected
+	local latest_status = "ready"
+	local latest_mtime_signature = mtime_signature
+	local pending = 1
+
+	local function complete_refresh()
+		pending = pending - 1
+		if pending > 0 then
+			return
+		end
+
+		local updated_at_ms = state.now_ms()
+		if latest_status == "failed" then
+			updated_at_ms = updated_at_ms - (state.DETECT_RUNTIME_FAILED_TTL_MS + 1)
+		end
+
+		local detected_copy = state.copy_string_map(latest_detected)
+		state.set_bounded_cache_entry(
+			state.detect_runtime_cache,
+			state.detect_runtime_cache_order,
+			state.DETECT_RUNTIME_CACHE_MAX,
+			cache_key,
+			{
+				commands = detected_copy,
+				updated_at_ms = updated_at_ms,
+				mtime_signature = latest_mtime_signature,
+				status = latest_status,
+			}
+		)
+
+		local merged_commands = commands.merge_build_commands(filetype, filepath, detected_copy)
+		local pending_callbacks = state.detect_runtime_inflight[cache_key]
+		state.detect_runtime_inflight[cache_key] = nil
+		if not pending_callbacks or type(pending_callbacks.callbacks) ~= "table" then
+			return
+		end
+		for _, callback in ipairs(pending_callbacks.callbacks) do
+			if type(callback) == "function" then
+				pcall(callback, state.copy_string_map(merged_commands))
+			end
+		end
+	end
+
+	if systems.prime_system_detection_async(filetype, filepath, is_detection_enabled, function()
+		latest_mtime_signature = systems.get_mtime_signature_for_filetype(filetype, filepath, is_detection_enabled)
+		complete_refresh()
+	end) then
+		pending = pending + 1
+	end
+
 	commands.detect_tool_commands_for_filetype_async(
 		filetype,
 		filepath,
 		function(detected_commands)
-			local status = "ready"
-			local updated_at_ms = state.now_ms()
 			if detected_commands == nil then
-				status = "failed"
-				detected_commands = cached_detected
-				updated_at_ms = updated_at_ms - (state.DETECT_RUNTIME_FAILED_TTL_MS + 1)
+				latest_status = "failed"
+				latest_detected = cached_detected
+			else
+				latest_status = "ready"
+				latest_detected = detected_commands
 			end
-
-			local detected_copy = state.copy_string_map(detected_commands)
-			state.set_bounded_cache_entry(
-				state.detect_runtime_cache,
-				state.detect_runtime_cache_order,
-				state.DETECT_RUNTIME_CACHE_MAX,
-				cache_key,
-				{
-					commands = detected_copy,
-					updated_at_ms = updated_at_ms,
-					mtime_signature = mtime_signature,
-					status = status,
-				}
-			)
-
-				local merged_commands = commands.merge_build_commands(filetype, filepath, detected_copy)
-			local pending = state.detect_runtime_inflight[cache_key]
-			state.detect_runtime_inflight[cache_key] = nil
-			if not pending or type(pending.callbacks) ~= "table" then
-				return
-			end
-			for _, callback in ipairs(pending.callbacks) do
-				if type(callback) == "function" then
-					pcall(callback, state.copy_string_map(merged_commands))
-				end
-			end
+			complete_refresh()
 		end,
 		true,
 		is_detection_enabled
