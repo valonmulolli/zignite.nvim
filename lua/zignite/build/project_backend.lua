@@ -41,16 +41,17 @@ local function set_cached_entry(project_file, cache, order, max_entries, entry)
 	state.set_bounded_cache_entry(cache, order, max_entries, project_file, entry)
 end
 
----@param names string[]|nil
----@param make_command fun(name: string): string
+---@param lines string[]|nil
 ---@return table<string, string>
-local function build_named_commands(names, make_command)
+local function decode_backend_commands(lines)
 	---@type table<string, string>
 	local commands = {}
-	for _, raw_name in ipairs(names or {}) do
-		local name = tostring(raw_name or "")
-		if name ~= "" then
-			commands[name] = make_command(name)
+	for _, raw_line in ipairs(lines or {}) do
+		local kind, name, command = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)\t(.+)$")
+		local valid_name = type(name) == "string" and name ~= ""
+		local valid_command = type(command) == "string" and command ~= ""
+		if kind == "COMMAND" and valid_name and valid_command then
+			commands[name] = command
 		end
 	end
 	return commands
@@ -77,11 +78,9 @@ function M.detect_makefile_targets(filepath)
 		return state.copy_string_map(cached.commands)
 	end
 
-	local zig_names = detect_backend.parse_project_names_once("make", makefile_path)
-	if type(zig_names) == "table" and #zig_names > 0 then
-		local commands = build_named_commands(zig_names, function(name)
-			return "make " .. name
-		end)
+	local zig_lines = detect_backend.parse_project_lines_once("make", makefile_path)
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		local commands = decode_backend_commands(zig_lines)
 		set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
 			mtime_key = state.get_file_mtime_key(makefile_path),
 			commands = state.copy_string_map(commands),
@@ -118,11 +117,11 @@ function M.detect_package_scripts(filepath)
 		return state.copy_string_map(cached.commands)
 	end
 
-	local zig_names = detect_backend.parse_project_names_once("package-json", package_json_path)
-	if type(zig_names) == "table" and #zig_names > 0 then
-		local commands = build_named_commands(zig_names, function(name)
-			return utils.format_package_script_command(package_manager, name)
-		end)
+	local zig_lines = detect_backend.parse_project_lines_once("package-json", package_json_path, {
+		"--package-manager=" .. package_manager,
+	})
+	if type(zig_lines) == "table" and #zig_lines > 0 then
+		local commands = decode_backend_commands(zig_lines)
 		set_cached_entry(
 			package_json_path,
 			state.package_script_cache,
@@ -660,20 +659,6 @@ end
 
 ---@param lines string[]|nil
 ---@return table<string, string>
-local function decode_backend_commands(lines)
-	---@type table<string, string>
-	local commands = {}
-	for _, raw_line in ipairs(lines or {}) do
-		local kind, name, command = tostring(raw_line or ""):match("^([^\t]+)\t([^\t]+)\t(.+)$")
-		local valid_name = type(name) == "string" and name ~= ""
-		local valid_command = type(command) == "string" and command ~= ""
-		if kind == "COMMAND" and valid_name and valid_command then
-			commands[name] = command
-		end
-	end
-	return commands
-end
-
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_java_like_project_commands(filepath)
