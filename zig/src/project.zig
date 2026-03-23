@@ -1,4 +1,6 @@
 const std = @import("std");
+const build_common = @import("build/common.zig");
+const build_system = @import("build/system.zig");
 const bazel = @import("project/bazel.zig");
 const cargo = @import("project/cargo.zig");
 const cmake = @import("project/cmake.zig");
@@ -26,6 +28,7 @@ pub const Kind = enum {
     go,
     go_mod,
     go_work,
+    system,
 };
 
 pub const Options = struct {
@@ -33,6 +36,8 @@ pub const Options = struct {
     path: []const u8,
     match_path: ?[]const u8 = null,
     package_path: []const u8 = "",
+    query: ?build_system.Query = null,
+    project_root: ?[]const u8 = null,
 };
 
 const ProjectDaemonRequestHeader = struct {
@@ -51,6 +56,8 @@ pub fn parseArgs(args: []const []const u8) !Options {
     var path: ?[]const u8 = null;
     var match_path: ?[]const u8 = null;
     var package_path: []const u8 = "";
+    var query: ?build_system.Query = null;
+    var project_root: ?[]const u8 = null;
 
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--project-parse")) {
@@ -63,6 +70,10 @@ pub fn parseArgs(args: []const []const u8) !Options {
             match_path = arg["--match-path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--package-path=")) {
             package_path = arg["--package-path=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--query=")) {
+            query = try build_system.parseQuery(arg["--query=".len..]);
+        } else if (std.mem.startsWith(u8, arg, "--project-root=")) {
+            project_root = arg["--project-root=".len..];
         } else {
             return error.InvalidProjectParseFlag;
         }
@@ -73,11 +84,13 @@ pub fn parseArgs(args: []const []const u8) !Options {
         .path = path orelse return error.MissingProjectParsePath,
         .match_path = match_path,
         .package_path = package_path,
+        .query = query,
+        .project_root = project_root,
     };
 }
 
 pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    const contents = try readProjectFile(allocator, options.path);
+    const contents = try readProjectFile(allocator, options.kind, options.path);
     defer allocator.free(contents);
 
     const stdout = std.fs.File.stdout().deprecatedWriter();
@@ -131,7 +144,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
         const options = parseArgs(request_args.items);
         if (options) |parsed| {
-            const contents = readProjectFile(allocator, parsed.path);
+            const contents = readProjectFile(allocator, parsed.kind, parsed.path);
             if (contents) |payload| {
                 defer allocator.free(payload);
                 writeOutput(stdout, allocator, parsed, payload) catch |err| {
@@ -160,6 +173,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
     if (std.ascii.eqlIgnoreCase(value, "go-work")) return .go_work;
+    if (std.ascii.eqlIgnoreCase(value, "system")) return .system;
     return error.InvalidProjectParseKind;
 }
 
@@ -200,11 +214,34 @@ fn stripTrailingCR(line: []const u8) []const u8 {
     return line;
 }
 
-pub fn readProjectFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u8) ![]u8 {
+    if (path.len == 0) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .system) {
+        return allocator.dupe(u8, "");
+    }
     return common.readFileAlloc(allocator, path);
 }
 
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
+    if (options.kind == .system) {
+        const query = options.query orelse return error.MissingSystemQuery;
+        const result = try build_system.detect(allocator, query, options.path, options.project_root);
+        defer build_system.freeOwnedResult(allocator, result);
+
+        if (result.root) |root| {
+            try stdout.print("ROOT\t{s}\n", .{root});
+        }
+        if (result.system) |name| {
+            try stdout.print("SYSTEM\t{s}\n", .{name});
+        }
+        if (result.build_ready) |ready| {
+            try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
+        }
+        return;
+    }
+
     if (options.kind == .cmake) {
         const items = try cmake.parseTargets(allocator, contents, options.path, options.match_path);
         defer cmake.freeOwnedTargets(allocator, items);
@@ -219,13 +256,36 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
 
         const root = std.fs.path.dirname(options.path) orelse "";
+        try stdout.print("COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n", .{});
+        try stdout.print(
+            "COMMAND\tcmake-clean\t{s}\n",
+            .{if (build_common.hasCmakeBuildTree(root)) "cmake --build build --target clean" else "cmake -E rm -rf build"},
+        );
+        try stdout.print(
+            "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n",
+            .{},
+        );
+        try stdout.print(
+            "COMMAND\tcmake-release\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n",
+            .{},
+        );
+        try stdout.print("COMMAND\tcmake-test\tctest --test-dir build\n", .{});
+        try stdout.print("COMMAND\tinstall\tcmake --build build --target install\n", .{});
         var primary_run_path: ?[]u8 = null;
         defer if (primary_run_path) |value| allocator.free(value);
 
         for (items) |item| {
             try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
-            const run_path = try common.discoverBuildRunPathAlloc(allocator, root, item.name);
+            const run_path = try build_common.discoverBuildRunPathAlloc(allocator, root, item.name);
             defer if (run_path) |value| allocator.free(value);
+            const build_command = try build_common.cmakeBuildCommandAlloc(allocator, root, item.name);
+            defer allocator.free(build_command);
+            try stdout.print("COMMAND\tcmake-build-{s}\t{s}\n", .{ item.name, build_command });
+
+            const run_command = try build_common.cmakeRunCommandAlloc(allocator, root, item.name, run_path);
+            defer allocator.free(run_command);
+            try stdout.print("COMMAND\tcmake-run-{s}\t{s}\n", .{ item.name, run_command });
+
             if (run_path) |value| {
                 try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
                 if (primary_target != null and std.mem.eql(u8, item.name, primary_target.?) and primary_run_path == null) {
@@ -234,12 +294,18 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             }
         }
         if (primary_target) |name| {
+            const preferred_build = try build_common.cmakeBuildCommandAlloc(allocator, root, null);
+            defer allocator.free(preferred_build);
+            try stdout.print("COMMAND\tcmake-build\t{s}\n", .{preferred_build});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
+
             try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
             if (primary_run_path) |value| {
                 try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
             }
-            const preferred_run = try common.cmakeRunCommandAlloc(allocator, root, name, primary_run_path);
+            const preferred_run = try build_common.cmakeRunCommandAlloc(allocator, root, name, primary_run_path);
             defer allocator.free(preferred_run);
+            try stdout.print("COMMAND\tcmake-run\t{s}\n", .{preferred_run});
             try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
@@ -259,13 +325,28 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
 
         const root = std.fs.path.dirname(options.path) orelse "";
+        try stdout.print("COMMAND\tmeson-setup\tmeson setup build\n", .{});
+        try stdout.print(
+            "COMMAND\tmeson-clean\t{s}\n",
+            .{if (build_common.hasMesonBuildTree(root)) "meson compile -C build --clean" else "cmake -E rm -rf build"},
+        );
+        try stdout.print("COMMAND\tmeson-test\tmeson test -C build\n", .{});
+        try stdout.print("COMMAND\tinstall\tmeson install -C build\n", .{});
         var primary_run_path: ?[]u8 = null;
         defer if (primary_run_path) |value| allocator.free(value);
 
         for (items) |item| {
             try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
-            const run_path = try common.discoverBuildRunPathAlloc(allocator, root, item.name);
+            const run_path = try build_common.discoverBuildRunPathAlloc(allocator, root, item.name);
             defer if (run_path) |value| allocator.free(value);
+            const build_command = try build_common.mesonBuildCommandAlloc(allocator, root, item.name);
+            defer allocator.free(build_command);
+            try stdout.print("COMMAND\tmeson-build-{s}\t{s}\n", .{ item.name, build_command });
+
+            const run_command = try build_common.mesonRunCommandAlloc(allocator, root, item.name, run_path);
+            defer allocator.free(run_command);
+            try stdout.print("COMMAND\tmeson-run-{s}\t{s}\n", .{ item.name, run_command });
+
             if (run_path) |value| {
                 try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
                 if (primary_target != null and std.mem.eql(u8, item.name, primary_target.?) and primary_run_path == null) {
@@ -274,12 +355,18 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             }
         }
         if (primary_target) |name| {
+            const preferred_build = try build_common.mesonBuildCommandAlloc(allocator, root, null);
+            defer allocator.free(preferred_build);
+            try stdout.print("COMMAND\tmeson-build\t{s}\n", .{preferred_build});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
+
             try stdout.print("PRIMARY_TARGET\t{s}\n", .{name});
             if (primary_run_path) |value| {
                 try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
             }
-            const preferred_run = try common.mesonRunCommandAlloc(allocator, root, name, primary_run_path);
+            const preferred_run = try build_common.mesonRunCommandAlloc(allocator, root, name, primary_run_path);
             defer allocator.free(preferred_run);
+            try stdout.print("COMMAND\tmeson-run\t{s}\n", .{preferred_run});
             try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
         return;
@@ -294,6 +381,11 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
                 primary_bin = item.name;
             }
             try stdout.print("BIN\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+            const quoted = try common.quoteShellArgAlloc(allocator, item.name);
+            defer allocator.free(quoted);
+            try stdout.print("COMMAND\tcargo-build-{s}\tcargo build --bin {s}\n", .{ item.name, quoted });
+            try stdout.print("COMMAND\tcargo-run-{s}\tcargo run --bin {s}\n", .{ item.name, quoted });
+            try stdout.print("COMMAND\tcargo-test-{s}\tcargo test --bin {s}\n", .{ item.name, quoted });
         }
         if (primary_bin == null and items.len > 0) {
             primary_bin = items[0].name;
@@ -322,14 +414,17 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("PRIMARY_SELECTOR\t{s}\n", .{selector});
         }
         if (info.primary_build) |command| {
+            try stdout.print("COMMAND\tgo-build-package\t{s}\n", .{command});
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
             try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
+            try stdout.print("COMMAND\tgo-run-package\t{s}\n", .{command});
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
             try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
+            try stdout.print("COMMAND\tgo-test-package\t{s}\n", .{command});
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
             try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
         }
@@ -392,12 +487,89 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         }
         if (info.primary_build) |command| {
             try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
         }
         if (info.primary_run) |command| {
             try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
         }
         if (info.primary_test) |command| {
             try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
+            try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
+        }
+        return;
+    }
+
+    if (options.kind == .maven) {
+        var names: std.ArrayList([]u8) = .empty;
+        defer common.freeOwnedNameList(allocator, names.items);
+        try maven.parseGoals(allocator, contents, &names);
+
+        try stdout.print("COMMAND\tmvn-build\tmvn compile\n", .{});
+        try stdout.print("COMMAND\tmvn-test\tmvn test\n", .{});
+        try stdout.print("COMMAND\tmvn-package\tmvn package\n", .{});
+        try stdout.print("PREFERRED\tbuild\tmvn compile\n", .{});
+        try stdout.print("PREFERRED\ttest\tmvn test\n", .{});
+
+        var run_command: ?[]const u8 = null;
+        for (names.items) |name| {
+            if (std.mem.eql(u8, name, "spring-boot:run")) {
+                run_command = "mvn spring-boot:run";
+                break;
+            }
+            if (run_command == null and std.mem.eql(u8, name, "exec:java")) {
+                run_command = "mvn exec:java";
+            }
+        }
+
+        if (run_command) |command| {
+            try stdout.print("COMMAND\tmvn-run\t{s}\n", .{command});
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+        }
+        return;
+    }
+
+    if (options.kind == .gradle) {
+        var names: std.ArrayList([]u8) = .empty;
+        defer common.freeOwnedNameList(allocator, names.items);
+        try gradle.parseTasks(allocator, contents, &names);
+
+        const root = std.fs.path.dirname(options.path) orelse "";
+        const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
+        defer allocator.free(wrapper_path);
+        const prefix: []const u8 = if (pathExists(wrapper_path)) "./gradlew" else "gradle";
+
+        const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
+        defer allocator.free(build_command);
+        const test_command = try std.fmt.allocPrint(allocator, "{s} test", .{prefix});
+        defer allocator.free(test_command);
+        const clean_command = try std.fmt.allocPrint(allocator, "{s} clean", .{prefix});
+        defer allocator.free(clean_command);
+
+        try stdout.print("COMMAND\tgradle-build\t{s}\n", .{build_command});
+        try stdout.print("COMMAND\tgradle-test\t{s}\n", .{test_command});
+        try stdout.print("COMMAND\tgradle-clean\t{s}\n", .{clean_command});
+        try stdout.print("PREFERRED\tbuild\t{s}\n", .{build_command});
+        try stdout.print("PREFERRED\ttest\t{s}\n", .{test_command});
+
+        var run_task: ?[]const u8 = null;
+        for (names.items) |name| {
+            if (std.mem.eql(u8, name, "bootRun")) {
+                run_task = "bootRun";
+                break;
+            }
+            if (run_task == null and std.mem.eql(u8, name, "run")) {
+                run_task = "run";
+            }
+        }
+
+        if (run_task) |task| {
+            const run_command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, task });
+            defer allocator.free(run_command);
+            try stdout.print("COMMAND\tgradle-run\t{s}\n", .{run_command});
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{run_command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{run_command});
         }
         return;
     }
@@ -429,9 +601,19 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .go => return error.InvalidProjectParseKind,
         .go_mod => return error.InvalidProjectParseKind,
         .go_work => return error.InvalidProjectParseKind,
+        .system => return error.InvalidProjectParseKind,
     }
 
     return try names.toOwnedSlice(allocator);
+}
+
+fn pathExists(path: []const u8) bool {
+    if (std.fs.path.isAbsolute(path)) {
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
+    }
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
 }
 
 test "writeOutput emits cargo primary run metadata with quoted bin names" {
@@ -439,40 +621,21 @@ test "writeOutput emits cargo primary run metadata with quoted bin names" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
-    try writeOutput(
-        out.writer(allocator),
-        allocator,
-        .{
-            .kind = .cargo,
-            .path = "/tmp/rustproj/Cargo.toml",
-            .match_path = "/tmp/rustproj/src/bin/demo's-tool.rs",
-        },
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .cargo,
+        .path = "/tmp/rustproj/Cargo.toml",
+        .match_path = "/tmp/rustproj/src/bin/demo's-tool.rs",
+    },
         \\[package]
         \\name = "demo"
     );
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "BIN\tdemo's-tool\t1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BIN\tdemo's-tool\n") != null);
-    try std.testing.expect(
-        std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null
-    );
-    try std.testing.expect(
-        std.mem.indexOf(
-            u8,
-            out.items,
-            "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n"
-        ) != null
-    );
-    try std.testing.expect(
-        std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null
-    );
-    try std.testing.expect(
-        std.mem.indexOf(
-            u8,
-            out.items,
-            "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n"
-        ) != null
-    );
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
 }
 
 test "writeOutput emits go primary command metadata" {
@@ -480,14 +643,11 @@ test "writeOutput emits go primary command metadata" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
-    try writeOutput(
-        out.writer(allocator),
-        allocator,
-        .{
-            .kind = .go,
-            .path = "/tmp/goproj/go.mod",
-            .match_path = "/tmp/goproj/cmd/api/main.go",
-        },
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .go,
+        .path = "/tmp/goproj/go.mod",
+        .match_path = "/tmp/goproj/cmd/api/main.go",
+    },
         \\module example.com/demo
         \\
         \\go 1.24.0
@@ -501,6 +661,74 @@ test "writeOutput emits go primary command metadata" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tgo build './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tgo run './cmd/api'\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tgo test './cmd/api'\n") != null);
+}
+
+test "writeOutput emits maven command records" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .maven,
+        .path = "/tmp/mavenproj/pom.xml",
+    },
+        \\<project>
+        \\  <build>
+        \\    <plugins>
+        \\      <plugin>
+        \\        <artifactId>spring-boot-maven-plugin</artifactId>
+        \\      </plugin>
+        \\    </plugins>
+        \\  </build>
+        \\</project>
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-build\tmvn compile\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-test\tmvn test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-package\tmvn package\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tmvn-run\tmvn spring-boot:run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tmvn spring-boot:run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tmvn compile\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\tmvn test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tmvn spring-boot:run\n") != null);
+}
+
+test "writeOutput emits gradle command records" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{
+        .sub_path = "gradlew",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const gradle_path = try std.fs.path.join(allocator, &.{ root, "build.gradle.kts" });
+    defer allocator.free(gradle_path);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .gradle,
+        .path = gradle_path,
+    },
+        \\plugins {
+        \\    id("application")
+        \\    id("org.springframework.boot") version "3.5.0"
+        \\}
+    );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-build\t./gradlew build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-test\t./gradlew test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-clean\t./gradlew clean\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-run\t./gradlew bootRun\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\t./gradlew bootRun\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\t./gradlew build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\ttest\t./gradlew test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\t./gradlew bootRun\n") != null);
 }
 
 test "writeOutput emits cmake primary target and discovered run path" {
@@ -524,31 +752,23 @@ test "writeOutput emits cmake primary target and discovered run path" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
-    try writeOutput(
-        out.writer(allocator),
-        allocator,
-        .{
-            .kind = .cmake,
-            .path = cmake_path,
-            .match_path = match_path,
-        },
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .cmake,
+        .path = cmake_path,
+        .match_path = match_path,
+    },
         \\project(demo-app)
         \\add_executable(${PROJECT_NAME} src/main.cpp)
     );
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "TARGET\tdemo-app\t1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tcmake-build-demo-app\tcmake --build build --target demo-app\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tcmake-run-demo-app\tcmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "RUN_PATH\tdemo-app\t./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_TARGET\tdemo-app\n") != null);
-    try std.testing.expect(
-        std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null
-    );
-    try std.testing.expect(
-        std.mem.indexOf(
-            u8,
-            out.items,
-            "PREFERRED\trun\tcmake --build build --target demo-app && ./build/bin/demo-app\n"
-        ) != null
-    );
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tbuild\tcmake --build build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\trun\tcmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
 }
 
 test "writeOutput emits bazel commands and primary targets" {
@@ -556,15 +776,12 @@ test "writeOutput emits bazel commands and primary targets" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
-    try writeOutput(
-        out.writer(allocator),
-        allocator,
-        .{
-            .kind = .bazel,
-            .path = "/tmp/bazelzig/app/BUILD.bazel",
-            .match_path = "/tmp/bazelzig/app/main.cc",
-            .package_path = "app",
-        },
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .bazel,
+        .path = "/tmp/bazelzig/app/BUILD.bazel",
+        .match_path = "/tmp/bazelzig/app/main.cc",
+        .package_path = "app",
+    },
         \\cc_binary(
         \\    name = "main",
         \\    srcs = ["main.cc"],
@@ -578,9 +795,7 @@ test "writeOutput emits bazel commands and primary targets" {
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
-    try std.testing.expect(
-        std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null
-    );
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tbazel run //app:main\n") != null);
 }

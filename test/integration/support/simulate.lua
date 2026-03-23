@@ -28,9 +28,42 @@ M.detect_backend_tool_commands = {
 M.project_backend_lines = {
 	make = { "bench", "test" },
 	["package-json"] = { "dev", "build" },
+	maven = {
+		"COMMAND\tmvn-build\tmvn compile",
+		"COMMAND\tmvn-test\tmvn test",
+		"COMMAND\tmvn-package\tmvn package",
+		"COMMAND\tmvn-run\tmvn spring-boot:run",
+		"PRIMARY_RUN\tmvn spring-boot:run",
+		"PREFERRED\tbuild\tmvn compile",
+		"PREFERRED\ttest\tmvn test",
+		"PREFERRED\trun\tmvn spring-boot:run",
+	},
+	gradle = {
+		"COMMAND\tgradle-build\t./gradlew build",
+		"COMMAND\tgradle-test\t./gradlew test",
+		"COMMAND\tgradle-clean\t./gradlew clean",
+		"COMMAND\tgradle-run\t./gradlew bootRun",
+		"PRIMARY_RUN\t./gradlew bootRun",
+		"PREFERRED\tbuild\t./gradlew build",
+		"PREFERRED\ttest\t./gradlew test",
+		"PREFERRED\trun\t./gradlew bootRun",
+	},
 	cmake = {
+		"COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+		"COMMAND\tcmake-clean\tcmake --build build --target clean",
+		"COMMAND\tcmake-debug\t"
+			.. "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		"COMMAND\tcmake-release\t"
+			.. "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		"COMMAND\tcmake-test\tctest --test-dir build",
+		"COMMAND\tinstall\tcmake --build build --target install",
 		"TARGET\tapp\t1",
+		"COMMAND\tcmake-build\tcmake --build build",
+		"COMMAND\tcmake-run\tcmake --build build --target app && ./build/bin/app",
+		"COMMAND\tcmake-build-app\tcmake --build build --target app",
+		"COMMAND\tcmake-run-app\tcmake --build build --target app && ./build/bin/app",
 		"RUN_PATH\tapp\t./build/bin/app",
+		"PREFERRED\tbuild\tcmake --build build",
 		"PRIMARY_TARGET\tapp",
 		"PRIMARY_RUN_PATH\t./build/bin/app",
 		"PREFERRED\trun\tcmake --build build --target app && ./build/bin/app",
@@ -41,16 +74,30 @@ M.project_backend_lines = {
 		"COMMAND\tbazel-run-app\tbazel run //:app",
 		"PRIMARY_BUILD\tbazel build //:app",
 		"PRIMARY_RUN\tbazel run //:app",
+		"PREFERRED\tbuild\tbazel build //:app",
+		"PREFERRED\trun\tbazel run //:app",
 	},
 	meson = {
+		"COMMAND\tmeson-setup\tmeson setup build",
+		"COMMAND\tmeson-clean\tmeson compile -C build --clean",
+		"COMMAND\tmeson-test\tmeson test -C build",
+		"COMMAND\tinstall\tmeson install -C build",
 		"TARGET\tapp\t1",
+		"COMMAND\tmeson-build\tmeson compile -C build",
+		"COMMAND\tmeson-run\tmeson compile -C build app && ./build/app",
+		"COMMAND\tmeson-build-app\tmeson compile -C build app",
+		"COMMAND\tmeson-run-app\tmeson compile -C build app && ./build/app",
 		"RUN_PATH\tapp\t./build/app",
+		"PREFERRED\tbuild\tmeson compile -C build",
 		"PRIMARY_TARGET\tapp",
 		"PRIMARY_RUN_PATH\t./build/app",
 		"PREFERRED\trun\tmeson compile -C build app && ./build/app",
 	},
 	cargo = {
 		"BIN\tapp\t1",
+		"COMMAND\tcargo-build-app\tcargo build --bin 'app'",
+		"COMMAND\tcargo-run-app\tcargo run --bin 'app'",
+		"COMMAND\tcargo-test-app\tcargo test --bin 'app'",
 		"PRIMARY_BIN\tapp",
 		"PRIMARY_RUN\tcargo run --bin 'app'",
 		"PRIMARY_RELEASE_RUN\tcargo run --release --bin 'app'",
@@ -60,6 +107,9 @@ M.project_backend_lines = {
 	go = {
 		"MODULE\texample.com/app",
 		"PRIMARY_SELECTOR\t./cmd/app",
+		"COMMAND\tgo-build-package\tgo build './cmd/app'",
+		"COMMAND\tgo-run-package\tgo run './cmd/app'",
+		"COMMAND\tgo-test-package\tgo test './cmd/app'",
 		"PRIMARY_BUILD\tgo build './cmd/app'",
 		"PRIMARY_RUN\tgo run './cmd/app'",
 		"PRIMARY_TEST\tgo test './cmd/app'",
@@ -81,6 +131,313 @@ local function split_lines(text)
 		end
 	end
 	return lines
+end
+
+---@param path string
+---@return string
+local function dirname(path)
+	return vim.fn.fnamemodify(path, ":h")
+end
+
+---@param path string
+---@return boolean
+local function filereadable(path)
+	return type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1
+end
+
+---@param root string
+---@param target string
+---@return string|nil
+local function discover_build_run_path(root, target)
+	local target_exe = target .. ".exe"
+	local candidates = {
+		"./build/" .. target,
+		"./build/" .. target_exe,
+		"./build/bin/" .. target,
+		"./build/bin/" .. target_exe,
+		"./build/Debug/" .. target,
+		"./build/Debug/" .. target_exe,
+		"./build/Release/" .. target,
+		"./build/Release/" .. target_exe,
+		"./build/RelWithDebInfo/" .. target,
+		"./build/RelWithDebInfo/" .. target_exe,
+		"./build/MinSizeRel/" .. target,
+		"./build/MinSizeRel/" .. target_exe,
+		"./build/bin/Debug/" .. target,
+		"./build/bin/Debug/" .. target_exe,
+		"./build/bin/Release/" .. target,
+		"./build/bin/Release/" .. target_exe,
+		"./build/bin/RelWithDebInfo/" .. target,
+		"./build/bin/RelWithDebInfo/" .. target_exe,
+		"./build/bin/MinSizeRel/" .. target,
+		"./build/bin/MinSizeRel/" .. target_exe,
+	}
+	for _, relative_path in ipairs(candidates) do
+		if filereadable(vim.fs.joinpath(root, relative_path:gsub("^%./", ""))) then
+			return relative_path
+		end
+	end
+	return nil
+end
+
+---@param target string
+---@param run_path string|nil
+---@return string
+local function build_discovered_run_suffix(target, run_path)
+	if type(run_path) == "string" and run_path ~= "" then
+		return run_path
+	end
+	local target_exe = target .. ".exe"
+	local candidate_paths = table.concat({
+		"./build/" .. target,
+		"./build/" .. target_exe,
+		"./build/bin/" .. target,
+		"./build/bin/" .. target_exe,
+		"./build/Debug/" .. target,
+		"./build/Debug/" .. target_exe,
+		"./build/Release/" .. target,
+		"./build/Release/" .. target_exe,
+		"./build/RelWithDebInfo/" .. target,
+		"./build/RelWithDebInfo/" .. target_exe,
+		"./build/MinSizeRel/" .. target,
+		"./build/MinSizeRel/" .. target_exe,
+		"./build/bin/Debug/" .. target,
+		"./build/bin/Debug/" .. target_exe,
+		"./build/bin/Release/" .. target,
+		"./build/bin/Release/" .. target_exe,
+		"./build/bin/RelWithDebInfo/" .. target,
+		"./build/bin/RelWithDebInfo/" .. target_exe,
+		"./build/bin/MinSizeRel/" .. target,
+		"./build/bin/MinSizeRel/" .. target_exe,
+	}, " ")
+	return string.format(
+		"for ZIGNITE_CANDIDATE in %s; do "
+			.. "if [ -x \"$ZIGNITE_CANDIDATE\" ]; then \"$ZIGNITE_CANDIDATE\"; exit $?; fi; "
+			.. "done; "
+			.. "ZIGNITE_BIN=$(find build -type f \\( -name %s -o -name %s \\) "
+			.. "! -path '*/CMakeFiles/*' ! -path '*/meson-private/*' ! -path '*/meson-logs/*' "
+			.. "| head -n 1) && "
+			.. "if [ -n \"$ZIGNITE_BIN\" ] && [ -x \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
+			.. "elif [ -n \"$ZIGNITE_BIN\" ]; then \"$ZIGNITE_BIN\"; "
+			.. "else %s; fi",
+		candidate_paths,
+		target,
+		target_exe,
+		"./build/" .. target
+	)
+end
+
+---@param root string
+---@return boolean
+local function has_cmake_build_tree(root)
+	return filereadable(vim.fs.joinpath(root, "build", "CMakeCache.txt"))
+end
+
+---@param root string
+---@return boolean
+local function has_meson_build_tree(root)
+	return filereadable(vim.fs.joinpath(root, "build", "build.ninja"))
+		or filereadable(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat"))
+end
+
+---@param root string
+---@return string[]
+local function build_cmake_backend_lines(root)
+	local ready = has_cmake_build_tree(root)
+	local target = "app"
+	local run_path = discover_build_run_path(root, target)
+	local target_build = ready and "cmake --build build --target app"
+		or "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target app"
+	local generic_build = ready and "cmake --build build"
+		or "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
+	local target_run = target_build .. " && " .. build_discovered_run_suffix(target, run_path)
+	local lines = {
+		"COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+		"COMMAND\tcmake-clean\t" .. (ready and "cmake --build build --target clean" or "cmake -E rm -rf build"),
+		"COMMAND\tcmake-debug\t"
+			.. "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		"COMMAND\tcmake-release\t"
+			.. "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		"COMMAND\tcmake-test\tctest --test-dir build",
+		"COMMAND\tinstall\tcmake --build build --target install",
+		"TARGET\tapp\t1",
+		"COMMAND\tcmake-build\t" .. generic_build,
+		"COMMAND\tcmake-run\t" .. target_run,
+		"COMMAND\tcmake-build-app\t" .. target_build,
+		"COMMAND\tcmake-run-app\t" .. target_run,
+		"PREFERRED\tbuild\t" .. generic_build,
+		"PRIMARY_TARGET\tapp",
+		"PREFERRED\trun\t" .. target_run,
+	}
+	if run_path then
+		lines[#lines + 1] = "RUN_PATH\tapp\t" .. run_path
+		lines[#lines + 1] = "PRIMARY_RUN_PATH\t" .. run_path
+	end
+	return lines
+end
+
+---@param root string
+---@return string[]
+local function build_meson_backend_lines(root)
+	local ready = has_meson_build_tree(root)
+	local target = "demo-app"
+	local run_path = discover_build_run_path(root, target)
+	local target_build = ready and "meson compile -C build demo-app"
+		or "meson setup build && meson compile -C build demo-app"
+	local generic_build = ready and "meson compile -C build" or "meson setup build && meson compile -C build"
+	local target_run = target_build .. " && " .. build_discovered_run_suffix(target, run_path)
+	local lines = {
+		"COMMAND\tmeson-setup\tmeson setup build",
+		"COMMAND\tmeson-clean\t" .. (ready and "meson compile -C build --clean" or "cmake -E rm -rf build"),
+		"COMMAND\tmeson-test\tmeson test -C build",
+		"COMMAND\tinstall\tmeson install -C build",
+		"TARGET\tdemo-app\t1",
+		"COMMAND\tmeson-build\t" .. generic_build,
+		"COMMAND\tmeson-run\t" .. target_run,
+		"COMMAND\tmeson-build-demo-app\t" .. target_build,
+		"COMMAND\tmeson-run-demo-app\t" .. target_run,
+		"PREFERRED\tbuild\t" .. generic_build,
+		"PRIMARY_TARGET\tdemo-app",
+		"PREFERRED\trun\t" .. target_run,
+	}
+	if run_path then
+		lines[#lines + 1] = "RUN_PATH\tdemo-app\t" .. run_path
+		lines[#lines + 1] = "PRIMARY_RUN_PATH\t" .. run_path
+	end
+	return lines
+end
+
+---@param root string
+---@param markers string[]
+---@return boolean
+local function has_any_marker(root, markers)
+	for _, marker in ipairs(markers or {}) do
+		if filereadable(vim.fs.joinpath(root, marker)) then
+			return true
+		end
+	end
+	return false
+end
+
+---@param start_path string
+---@param markers string[]
+---@param max_up integer
+---@return string|nil
+local function find_root_for_markers(start_path, markers, max_up)
+	local dir = dirname(start_path)
+	local limit = max_up or 12
+	for _ = 1, limit do
+		if has_any_marker(dir, markers) then
+			return dir
+		end
+		local parent = dirname(dir)
+		if parent == dir then
+			break
+		end
+		dir = parent
+	end
+	return nil
+end
+
+---@param request_text string
+---@return table<string, string>|nil
+local function parse_project_request_args(request_text)
+	local req_lines = split_lines(request_text or "")
+	if #req_lines < 3 then
+		return nil
+	end
+
+	local begin_line = req_lines[1]
+	local request_id = begin_line:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)$")
+	if not request_id then
+		return nil
+	end
+
+	local end_line = req_lines[#req_lines]
+	local end_id = end_line:match("^@@ZPRJ_REQ_END%s+(%d+)$")
+	if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+		return nil
+	end
+
+	---@type table<string, string>
+	local args = { request_id = request_id }
+	for index = 2, #req_lines - 1 do
+		local line = req_lines[index]
+		if line:sub(1, 1) == "\t" then
+			line = line:sub(2)
+		end
+		local key, value = line:match("^%-%-([^=]+)=(.+)$")
+		if key and value and value ~= "" then
+			args[key] = value
+		end
+	end
+	return args.kind and args or nil
+end
+
+---@param path string
+---@param query string|nil
+---@param project_root string|nil
+---@return string[]
+local function build_system_backend_lines(path, query, project_root)
+	local bazel_markers = { "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" }
+	local gradle_markers = { "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" }
+	local root = (type(project_root) == "string" and project_root ~= "") and project_root or dirname(path)
+
+	if query == "c-family" then
+		if has_any_marker(root, bazel_markers) then
+			return { "ROOT\t" .. root, "SYSTEM\tbazel" }
+		end
+		if has_any_marker(root, { "meson.build" }) then
+			local ready = filereadable(vim.fs.joinpath(root, "build", "build.ninja"))
+				or filereadable(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat"))
+			return { "ROOT\t" .. root, "SYSTEM\tmeson", "BUILD_READY\t" .. (ready and "1" or "0") }
+		end
+		if has_any_marker(root, { "CMakeLists.txt" }) then
+			local ready = filereadable(vim.fs.joinpath(root, "build", "CMakeCache.txt"))
+			return { "ROOT\t" .. root, "SYSTEM\tcmake", "BUILD_READY\t" .. (ready and "1" or "0") }
+		end
+		if filereadable(vim.fs.joinpath(root, "Makefile")) then
+			return { "ROOT\t" .. root, "SYSTEM\tmake" }
+		end
+		return { "ROOT\t" .. root }
+	end
+
+	if query == "bazel-root" then
+		if has_any_marker(root, bazel_markers) then
+			return { "ROOT\t" .. root, "SYSTEM\tbazel" }
+		end
+		local found = find_root_for_markers(path, bazel_markers, 12)
+		if found then
+			return { "ROOT\t" .. found, "SYSTEM\tbazel" }
+		end
+		return {}
+	end
+
+	if query == "jvm-root" then
+		if filereadable(vim.fs.joinpath(root, "pom.xml")) then
+			return { "ROOT\t" .. root, "SYSTEM\tmaven" }
+		end
+		if has_any_marker(root, gradle_markers) then
+			return { "ROOT\t" .. root, "SYSTEM\tgradle" }
+		end
+		local jvm_markers = {
+			"pom.xml",
+			"gradlew",
+			"settings.gradle.kts",
+			"settings.gradle",
+			"build.gradle.kts",
+			"build.gradle",
+		}
+		local found = find_root_for_markers(path, jvm_markers, 12)
+		if found then
+			if filereadable(vim.fs.joinpath(found, "pom.xml")) then
+				return { "ROOT\t" .. found, "SYSTEM\tmaven" }
+			end
+			return { "ROOT\t" .. found, "SYSTEM\tgradle" }
+		end
+	end
+
+	return {}
 end
 
 ---@param cmd string[]|string
@@ -367,45 +724,21 @@ end
 ---@param request_text string
 ---@return string[]|nil
 function M.parse_project_daemon_request(request_text)
-	local req_lines = split_lines(request_text or "")
-	if #req_lines < 3 then
+	local args = parse_project_request_args(request_text)
+	if not args then
 		return nil
 	end
 
-	local begin_line = req_lines[1]
-	local request_id = begin_line:match("^@@ZPRJ_REQ_BEGIN%s+(%d+)$")
-	if not request_id then
-		return nil
-	end
-
-	local end_line = req_lines[#req_lines]
-	local end_id = end_line:match("^@@ZPRJ_REQ_END%s+(%d+)$")
-	if not end_id or tonumber(end_id) ~= tonumber(request_id) then
-		return nil
-	end
-
-	local kind = nil
-	for index = 2, #req_lines - 1 do
-		local line = req_lines[index]
-		if line:sub(1, 1) == "\t" then
-			line = line:sub(2)
-		end
-		local parsed_kind = line:match("^%-%-kind=(.+)$")
-		if parsed_kind and parsed_kind ~= "" then
-			kind = parsed_kind
-			break
-		end
-	end
-	if not kind then
-		return nil
-	end
-
-	local response = { "@@ZPRJ_RES_BEGIN " .. request_id }
-	local lines = M.project_backend_lines[kind] or {}
+	local response = { "@@ZPRJ_RES_BEGIN " .. args.request_id }
+	local lines = args.kind == "system"
+			and build_system_backend_lines(args.path or "", args.query, args["project-root"])
+		or (args.kind == "cmake" and build_cmake_backend_lines(dirname(args.path or "")))
+		or (args.kind == "meson" and build_meson_backend_lines(dirname(args.path or "")))
+		or (M.project_backend_lines[args.kind] or {})
 	for _, line in ipairs(lines) do
 		response[#response + 1] = "\t" .. line
 	end
-	response[#response + 1] = "@@ZPRJ_RES_END " .. request_id
+	response[#response + 1] = "@@ZPRJ_RES_END " .. args.request_id
 	return response
 end
 

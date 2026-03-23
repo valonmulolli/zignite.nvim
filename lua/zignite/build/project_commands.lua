@@ -43,6 +43,20 @@ local function copy_commands(configured)
 	return state.copy_string_map(configured or {})
 end
 
+---@param configured table<string, string>
+---@param keys string[]
+---@return table<string, string>
+local function copy_selected_commands(configured, keys)
+	local selected = {}
+	for _, key in ipairs(keys or {}) do
+		local value = configured[key]
+		if type(value) == "string" and value ~= "" then
+			selected[key] = value
+		end
+	end
+	return selected
+end
+
 ---@param updated table<string, string>
 ---@param default_commands table<string, string>
 ---@param key string
@@ -82,6 +96,18 @@ end
 ---@return nil
 local function apply_info_preferred_commands(updated, default_commands, info)
 	replace_default_commands(updated, default_commands, get_info_preferred_commands(info))
+end
+
+---@param configured table<string, string>
+---@param default_commands table<string, string>
+---@param parser_commands table<string, string>|nil
+---@param info table|nil
+---@return table<string, string>
+local function merge_parser_backed_commands(configured, default_commands, parser_commands, info)
+	local updated = copy_commands(configured)
+	M.extend_string_map(updated, parser_commands)
+	apply_info_preferred_commands(updated, default_commands, info)
+	return updated
 end
 
 ---@param info table|nil
@@ -129,8 +155,7 @@ end
 ---@param command_key string
 ---@param configured_key string
 ---@param primary_run string|nil
----@param build_tree_ready boolean
----@param setup_command string
+---@param fallback_build_command string|nil
 ---@return nil
 local function set_system_run_command(
 	filtered,
@@ -138,8 +163,7 @@ local function set_system_run_command(
 	command_key,
 	configured_key,
 	primary_run,
-	build_tree_ready,
-	setup_command
+	fallback_build_command
 )
 	if type(primary_run) == "string" and primary_run ~= "" then
 		filtered[command_key] = primary_run
@@ -152,28 +176,57 @@ local function set_system_run_command(
 		return
 	end
 
-	filtered[command_key] = build_tree_ready
-		and configured_run
-		or (setup_command .. " && " .. configured_run)
+	if type(fallback_build_command) == "string" and fallback_build_command ~= "" then
+		filtered[command_key] = fallback_build_command .. " && " .. configured_run
+	else
+		filtered[command_key] = configured_run
+	end
 	filtered.run = filtered[command_key]
 end
 
 ---@param configured table<string, string>
----@param filepath string
+---@param default_commands table<string, string>
+---@param root string
+---@param cmake_commands table<string, string>
+---@param cmake_info table|nil
 ---@param root string
 ---@return table<string, string>
-local function build_cmake_commands(configured, filepath, root)
-	---@type table<string, string>
-	local filtered = {}
-	filtered["cmake-config"] = configured["cmake-config"] or systems.cmake_config_command(root)
-	filtered["cmake-build"] = systems.cmake_build_command(root, nil)
-	filtered["cmake-clean"] = systems.cmake_clean_command(root)
-	filtered["cmake-debug"] = configured["cmake-debug"]
+local function build_cmake_commands(configured, default_commands, root, cmake_commands, cmake_info)
+	local filtered = copy_selected_commands(configured, {
+		"cmake-config",
+		"cmake-build",
+		"cmake-clean",
+		"cmake-debug",
+		"cmake-release",
+		"cmake-test",
+		"cmake-run",
+		"install",
+	})
+	replace_default_commands(filtered, default_commands, {
+		["cmake-config"] = cmake_commands["cmake-config"] or systems.cmake_config_command(root),
+		["cmake-clean"] = cmake_commands["cmake-clean"] or systems.cmake_clean_command(root),
+		["cmake-debug"] = cmake_commands["cmake-debug"]
+			or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		["cmake-release"] = cmake_commands["cmake-release"]
+			or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+		["cmake-test"] = cmake_commands["cmake-test"] or "ctest --test-dir build",
+		install = cmake_commands.install or "cmake --build build --target install",
+		["cmake-build"] = cmake_commands["cmake-build"]
+			or get_info_preferred_command(cmake_info, "build")
+			or systems.cmake_build_command(root, nil),
+	})
+	filtered["cmake-config"] = filtered["cmake-config"] or systems.cmake_config_command(root)
+	filtered["cmake-clean"] = filtered["cmake-clean"] or systems.cmake_clean_command(root)
+	filtered["cmake-debug"] = filtered["cmake-debug"]
 		or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-	filtered["cmake-release"] = configured["cmake-release"]
+	filtered["cmake-release"] = filtered["cmake-release"]
 		or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
-	filtered["cmake-test"] = configured["cmake-test"] or "ctest --test-dir build"
-	filtered.install = "cmake --build build --target install"
+	filtered["cmake-test"] = filtered["cmake-test"] or "ctest --test-dir build"
+	filtered.install = filtered.install or "cmake --build build --target install"
+	filtered["cmake-build"] = filtered["cmake-build"]
+		or cmake_commands["cmake-build"]
+		or get_info_preferred_command(cmake_info, "build")
+		or systems.cmake_build_command(root, nil)
 	mirror_commands(filtered, {
 		build = "cmake-build",
 		clean = "cmake-clean",
@@ -182,49 +235,64 @@ local function build_cmake_commands(configured, filepath, root)
 		test = "cmake-test",
 		config = "cmake-config",
 	})
-
-	local _, cmake_info = parsers.detect_cmake_project_commands(filepath)
 	set_system_run_command(
 		filtered,
 		configured,
 		"cmake-run",
 		"cmake-run",
-		get_info_preferred_command(cmake_info, "run"),
-		systems.has_cmake_build_tree(root),
-		systems.cmake_config_command(root)
+		cmake_commands["cmake-run"] or get_info_preferred_command(cmake_info, "run"),
+		filtered["cmake-build"]
 	)
 
 	return filtered
 end
 
 ---@param configured table<string, string>
----@param filepath string
+---@param default_commands table<string, string>
+---@param root string
+---@param meson_commands table<string, string>
+---@param meson_info table|nil
 ---@param root string
 ---@return table<string, string>
-local function build_meson_commands(configured, filepath, root)
-	---@type table<string, string>
-	local filtered = {}
-	filtered["meson-setup"] = configured["meson-setup"] or systems.meson_setup_command(root)
-	filtered["meson-build"] = systems.meson_build_command(root, nil)
-	filtered["meson-clean"] = systems.meson_clean_command(root)
-	filtered["meson-test"] = configured["meson-test"] or "meson test -C build"
-	filtered.install = "meson install -C build"
+local function build_meson_commands(configured, default_commands, root, meson_commands, meson_info)
+	local filtered = copy_selected_commands(configured, {
+		"meson-setup",
+		"meson-build",
+		"meson-clean",
+		"meson-test",
+		"meson-run",
+		"install",
+	})
+	replace_default_commands(filtered, default_commands, {
+		["meson-setup"] = meson_commands["meson-setup"] or systems.meson_setup_command(root),
+		["meson-clean"] = meson_commands["meson-clean"] or systems.meson_clean_command(root),
+		["meson-test"] = meson_commands["meson-test"] or "meson test -C build",
+		install = meson_commands.install or "meson install -C build",
+		["meson-build"] = meson_commands["meson-build"]
+			or get_info_preferred_command(meson_info, "build")
+			or systems.meson_build_command(root, nil),
+	})
+	filtered["meson-setup"] = filtered["meson-setup"] or systems.meson_setup_command(root)
+	filtered["meson-clean"] = filtered["meson-clean"] or systems.meson_clean_command(root)
+	filtered["meson-test"] = filtered["meson-test"] or "meson test -C build"
+	filtered.install = filtered.install or "meson install -C build"
+	filtered["meson-build"] = filtered["meson-build"]
+		or meson_commands["meson-build"]
+		or get_info_preferred_command(meson_info, "build")
+		or systems.meson_build_command(root, nil)
 	mirror_commands(filtered, {
 		build = "meson-build",
 		clean = "meson-clean",
 		test = "meson-test",
 		setup = "meson-setup",
 	})
-
-	local _, meson_info = parsers.detect_meson_project_commands(filepath)
 	set_system_run_command(
 		filtered,
 		configured,
 		"meson-run",
 		"meson-run",
-		get_info_preferred_command(meson_info, "run"),
-		systems.has_meson_build_tree(root),
-		systems.meson_setup_command(root)
+		meson_commands["meson-run"] or get_info_preferred_command(meson_info, "run"),
+		filtered["meson-build"]
 	)
 
 	return filtered
@@ -296,32 +364,7 @@ end
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
 function M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-	---@type table<string, string>
-	local commands = {}
-
-	if filetype == "c" or filetype == "cpp" then
-		local system = systems.detect_c_family_build_system(filepath)
-		if system == "make" and is_detection_enabled("c_cpp_make") then
-			M.extend_string_map(commands, parsers.detect_makefile_targets(filepath))
-		elseif system == "cmake" then
-			local cmake_commands = parsers.detect_cmake_project_commands(filepath)
-			M.extend_string_map(commands, cmake_commands)
-		elseif system == "meson" then
-			local meson_commands = parsers.detect_meson_project_commands(filepath)
-			M.extend_string_map(commands, meson_commands)
-		end
-	end
-	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
-		M.extend_string_map(commands, parsers.detect_package_scripts(filepath))
-	end
-	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		M.extend_string_map(commands, parsers.detect_java_like_project_commands(filepath))
-	end
-	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		M.extend_string_map(commands, parsers.detect_bazel_project_commands(filepath))
-	end
-
-	return commands
+	return parsers.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
 end
 
 ---@param filetype string
@@ -384,41 +427,30 @@ function M.get_configured_build_commands(filetype, filepath)
 	if filetype == "python" then
 		return apply_python_tool_defaults(filepath, configured)
 	end
-	if filetype == "go" then
-		local updated = copy_commands(configured)
-		local go_commands, go_info = parsers.detect_go_project_commands(filepath)
-		M.extend_string_map(updated, go_commands)
-		local default_commands = get_default_build_commands("go")
-		apply_info_preferred_commands(updated, default_commands, go_info)
-		return updated
-	end
-	if filetype == "rust" then
-		local detect_options = config.options.detect or {}
-		if detect_options.rust == false then
+	local parser_result = parsers.detect_parser_backed_build_result(filetype, filepath)
+	if parser_result then
+		local detect_enabled = config_detection_enabled()
+		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
 			return configured
 		end
-		local updated = copy_commands(configured)
-		local cargo_commands, cargo_info = parsers.detect_cargo_project_commands(filepath)
-		M.extend_string_map(updated, cargo_commands)
-		local default_commands = get_default_build_commands("rust")
-		apply_info_preferred_commands(updated, default_commands, cargo_info)
-		return updated
+		local default_commands = get_default_build_commands(parser_result.default_key or filetype)
+		return merge_parser_backed_commands(configured, default_commands, parser_result.commands, parser_result.info)
 	end
 	if filetype ~= "c" and filetype ~= "cpp" then
 		return configured
 	end
 
-	local system, root = systems.detect_c_family_build_system(filepath)
-	if system == nil then
+	local c_family_result = parsers.detect_c_family_build_result(filepath)
+	if not c_family_result or c_family_result.system == nil then
 		return configured
 	end
-	if system == "bazel" then
+	if c_family_result.system == "bazel" then
 		return {}
 	end
 
 	---@type table<string, string>
 	local filtered = {}
-	if system == "make" then
+	if c_family_result.system == "make" then
 		for _, key in ipairs({ "build", "run", "clean", "test", "install", "debug" }) do
 			if configured[key] then
 				filtered[key] = configured[key]
@@ -427,12 +459,26 @@ function M.get_configured_build_commands(filetype, filepath)
 		return filtered
 	end
 
-	if system == "cmake" then
-		return build_cmake_commands(configured, filepath, root)
+	if c_family_result.system == "cmake" then
+		local default_commands = get_default_build_commands(filetype)
+		return build_cmake_commands(
+			configured,
+			default_commands,
+			c_family_result.root,
+			c_family_result.commands,
+			c_family_result.info
+		)
 	end
 
-	if system == "meson" then
-		return build_meson_commands(configured, filepath, root)
+	if c_family_result.system == "meson" then
+		local default_commands = get_default_build_commands(filetype)
+		return build_meson_commands(
+			configured,
+			default_commands,
+			c_family_result.root,
+			c_family_result.commands,
+			c_family_result.info
+		)
 	end
 
 	return configured

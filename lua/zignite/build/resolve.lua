@@ -1,7 +1,7 @@
 local config = require("zignite.config")
+local commands = require("zignite.build.project_commands")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")
-local targets = require("zignite.build.targets")
 
 ---@type table
 local M = {}
@@ -96,7 +96,7 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		callbacks = type(on_refresh) == "function" and { on_refresh } or {},
 	}
 
-	targets.detect_tool_commands_for_filetype_async(
+	commands.detect_tool_commands_for_filetype_async(
 		filetype,
 		filepath,
 		function(detected_commands)
@@ -122,7 +122,7 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 				}
 			)
 
-			local merged_commands = targets.merge_build_commands(filetype, filepath, detected_copy)
+				local merged_commands = commands.merge_build_commands(filetype, filepath, detected_copy)
 			local pending = state.detect_runtime_inflight[cache_key]
 			state.detect_runtime_inflight[cache_key] = nil
 			if not pending or type(pending.callbacks) ~= "table" then
@@ -158,7 +158,7 @@ end
 ---@param build_cmds table<string, string>
 ---@return string|nil
 function M.select_live_command_name(build_cmds)
-	return targets.select_live_command_name(build_cmds)
+	return commands.select_live_command_name(build_cmds)
 end
 
 ---@param filetype string
@@ -166,7 +166,7 @@ end
 ---@param build_cmds table<string, string>
 ---@return string|nil
 function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds)
-	return targets.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
+	return commands.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
 end
 
 ---@param filetype string
@@ -203,12 +203,12 @@ end
 ---@param filepath string
 ---@return table<string, string>
 function M.get_build_commands_for_filetype(filetype, filepath)
-	local detected_commands = targets.detect_tool_commands_for_filetype(
+	local detected_commands = commands.detect_tool_commands_for_filetype(
 		filetype,
 		filepath,
 		is_detection_enabled
 	)
-	return targets.merge_build_commands(filetype, filepath, detected_commands)
+	return commands.merge_build_commands(filetype, filepath, detected_commands)
 end
 
 ---@param filetype string
@@ -217,7 +217,7 @@ end
 ---@return table<string, string>, boolean
 function M.get_build_commands_for_cached_lookup(filetype, filepath, on_refresh)
 	local cached_detected = get_cached_detected_commands(filetype, filepath)
-	local merged = targets.merge_build_commands(filetype, filepath, cached_detected)
+	local merged = commands.merge_build_commands(filetype, filepath, cached_detected)
 	local refresh_started = request_build_command_refresh(filetype, filepath, on_refresh)
 	return merged, refresh_started
 end
@@ -239,7 +239,7 @@ end
 ---@param filepath string
 ---@return table|nil
 function M.get_preferred_project_command(filetype, filepath)
-	return targets.get_preferred_project_command(filetype, filepath)
+	return commands.get_preferred_project_command(filetype, filepath)
 end
 
 ---@param filetype string
