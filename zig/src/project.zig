@@ -22,6 +22,7 @@ pub const Kind = enum {
     gradle,
     cmake,
     bazel,
+    bazel_workspace,
     meson,
     cargo,
     pyproject,
@@ -172,6 +173,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
+    if (std.ascii.eqlIgnoreCase(value, "bazel-workspace")) return .bazel_workspace;
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
@@ -224,6 +226,9 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
         return allocator.dupe(u8, "");
     }
     if (kind == .system) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .bazel_workspace) {
         return allocator.dupe(u8, "");
     }
     return common.readFileAlloc(allocator, path);
@@ -556,6 +561,34 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
+    if (options.kind == .bazel_workspace) {
+        const info = try bazel.buildWorkspaceCommandInfo(allocator, options.path, options.match_path);
+        defer bazel.freeOwnedCommandInfo(allocator, info);
+
+        for (info.commands) |entry| {
+            try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+        }
+        if (info.primary_build) |command| {
+            try stdout.print("COMMAND\tbazel-build\t{s}\n", .{command});
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
+            try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
+        }
+        if (info.primary_run) |command| {
+            try stdout.print("COMMAND\tbazel-run\t{s}\n", .{command});
+            try stdout.print("COMMAND\trun\t{s}\n", .{command});
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+        }
+        if (info.primary_test) |command| {
+            try stdout.print("COMMAND\tbazel-test\t{s}\n", .{command});
+            try stdout.print("COMMAND\ttest\t{s}\n", .{command});
+            try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
+            try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
+        }
+        return;
+    }
+
     if (options.kind == .maven) {
         var names: std.ArrayList([]u8) = .empty;
         defer common.freeOwnedNameList(allocator, names.items);
@@ -679,6 +712,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
         .bazel => return error.InvalidProjectParseKind,
+        .bazel_workspace => return error.InvalidProjectParseKind,
         .meson => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,
@@ -987,6 +1021,51 @@ test "writeOutput emits bazel commands and primary targets" {
         \\    srcs = ["main_test.cc"],
         \\)
     );
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run\tbazel run //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tbazel run //app:main\n") != null);
+}
+
+test "writeOutput emits bazel workspace commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{
+        .sub_path = "app/BUILD.bazel",
+        .data =
+            \\cc_binary(
+            \\    name = "main",
+            \\    srcs = ["main.cc"],
+            \\)
+            \\
+            \\cc_test(
+            \\    name = "main_test",
+            \\    srcs = ["main_test.cc"],
+            \\)
+        ,
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.cc", .data = "int main() { return 0; }\n" });
+
+    const workspace_root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(workspace_root);
+    const match_path = try tmp.dir.realpathAlloc(allocator, "app/main.cc");
+    defer allocator.free(match_path);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .bazel_workspace,
+        .path = workspace_root,
+        .match_path = match_path,
+    }, "");
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run-main\tbazel run //app:main\n") != null);

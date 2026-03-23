@@ -78,7 +78,7 @@ fn printUsage() void {
         \\  zignite --detect --tool=zig|go|cargo|odin
         \\  zignite --detect-daemon
         \\  zignite --project-parse-daemon
-        \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
+        \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|bazel-workspace|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
     , .{});
 }
 
