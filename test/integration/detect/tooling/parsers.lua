@@ -37,7 +37,7 @@ local function test_c_detected_make_targets_in_picker()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make-auto" then
             vim.v.shell_error = 0
             return {
                 "COMMAND\tbench\tmake bench",
@@ -96,16 +96,11 @@ local function test_make_targets_use_zig_project_parser()
     })
 
     local make_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
-    utils_module.get_project_root = function()
-        return "/tmp/cdetect"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 1
@@ -119,7 +114,8 @@ local function test_make_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig project parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Make parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=make", "Make parser should use the make parser kind")
+        assert(cmd[3] == "--kind=make-auto", "Make parser should use the make-auto parser kind")
+        assert(cmd[4] == "--path=/tmp/cdetect/main.c", "Make parser should target the current source path")
         return {
             "COMMAND\tbench\tmake bench",
             "COMMAND\ttest\tmake test",
@@ -148,7 +144,6 @@ local function test_make_targets_use_zig_project_parser()
     assert(commands.bench == "make bench", "Zig Make parser should return bench target")
     assert(commands.test == "make test", "Zig Make parser should return test target")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -924,9 +919,6 @@ local function test_make_targets_use_zig_project_daemon()
     local original_readfile = vim.fn.readfile
     local original_wait = vim.wait
 
-    utils_module.get_project_root = function()
-        return "/tmp/cdetect"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 1
@@ -1019,7 +1011,7 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make-auto" then
             return {
                 "COMMAND\tbench\tmake bench",
                 "COMMAND\ttest\tmake test",

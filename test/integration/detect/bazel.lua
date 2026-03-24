@@ -28,7 +28,7 @@ local function make_bazel_systemlist_override(outputs)
 			end
 			return {}
 		end
-		if cmd[2] ~= "--project-parse" or cmd[3] ~= "--kind=bazel-workspace" then
+		if cmd[2] ~= "--project-parse" or cmd[3] ~= "--kind=bazel-auto" then
 			if original_systemlist then
 				return original_systemlist(cmd)
 			end
@@ -107,7 +107,7 @@ local function test_bazel_project_commands_in_picker()
 			"/tmp/bazelapp/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelapp"] = {
+			["--path=/tmp/bazelapp/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -161,7 +161,7 @@ local function test_run_build_command_with_detected_bazel_command()
 			"/tmp/bazelapp/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelapp"] = {
+			["--path=/tmp/bazelapp/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -211,7 +211,7 @@ local function test_bazel_targets_use_zig_project_parser()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig"] = {
+			["--path=/tmp/bazelzig/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -265,7 +265,7 @@ local function test_run_build_command_with_inferred_bazel_target()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig"] = {
+			["--path=/tmp/bazelzig/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -310,7 +310,7 @@ local function test_detected_bazel_preferred_run_alias()
 			"/tmp/bazelzig/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelzig"] = {
+			["--path=/tmp/bazelzig/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -347,7 +347,7 @@ local function test_bazel_related_test_inference()
 			"/tmp/bazeltests/app/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazeltests"] = {
+			["--path=/tmp/bazeltests/app/foo.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
@@ -391,7 +391,7 @@ local function test_bazel_parent_package_inference()
 			"/tmp/bazelparent/BUILD.bazel",
 		},
 		systemlist = make_bazel_systemlist_override({
-			["--path=/tmp/bazelparent"] = {
+			["--path=/tmp/bazelparent/app/main.cc"] = {
 				"COMMAND\tbazel-query\tbazel query $zignite_args",
 				"COMMAND\tbazel-clean\tbazel clean",
 				"COMMAND\tbazel-build-all\tbazel build //...",
