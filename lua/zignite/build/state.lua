@@ -8,6 +8,7 @@ M.DETECT_RUNTIME_FAILED_TTL_MS = 1000
 M.SYSTEM_RUNTIME_DEFAULT_TTL_MS = 15000
 M.PACKAGE_SCRIPT_CACHE_MAX = 128
 M.MAKE_TARGET_CACHE_MAX = 128
+M.C_FAMILY_PROJECT_CACHE_MAX = 128
 M.CMAKE_TARGET_CACHE_MAX = 128
 M.MESON_TARGET_CACHE_MAX = 128
 M.CARGO_TARGET_CACHE_MAX = 128
@@ -25,6 +26,10 @@ M.package_script_cache_order = {}
 M.make_target_cache = {}
 ---@type string[]
 M.make_target_cache_order = {}
+---@type table<string, table>
+M.c_family_project_cache = {}
+---@type string[]
+M.c_family_project_cache_order = {}
 ---@type table<string, table>
 M.cmake_target_cache = {}
 ---@type string[]
@@ -144,6 +149,8 @@ function M.reset()
 	clear_table(M.package_script_cache_order)
 	clear_table(M.make_target_cache)
 	clear_table(M.make_target_cache_order)
+	clear_table(M.c_family_project_cache)
+	clear_table(M.c_family_project_cache_order)
 	clear_table(M.cmake_target_cache)
 	clear_table(M.cmake_target_cache_order)
 	clear_table(M.meson_target_cache)
@@ -165,6 +172,8 @@ function M.debug_state()
 	return {
 		cargo_target_cache = M.cargo_target_cache,
 		cargo_target_cache_order = M.cargo_target_cache_order,
+		c_family_project_cache = M.c_family_project_cache,
+		c_family_project_cache_order = M.c_family_project_cache_order,
 		go_project_cache = M.go_project_cache,
 		go_project_cache_order = M.go_project_cache_order,
 		detect_runtime_cache = M.detect_runtime_cache,

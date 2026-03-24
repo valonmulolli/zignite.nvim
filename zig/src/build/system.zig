@@ -42,22 +42,45 @@ fn detectCFamily(
     path: []const u8,
     project_root: ?[]const u8,
 ) !Result {
-    const root = try resolveBaseRoot(allocator, path, project_root);
-    errdefer allocator.free(root);
+    if (project_root) |root| {
+        if (root.len > 0) {
+            if (rootHasAnyMarker(root, &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" })) {
+                return .{ .root = try allocator.dupe(u8, root), .system = "bazel" };
+            }
+            if (rootHasAnyMarker(root, &.{"meson.build"})) {
+                return .{
+                    .root = try allocator.dupe(u8, root),
+                    .system = "meson",
+                    .build_ready = common.hasMesonBuildTree(root),
+                };
+            }
+            if (rootHasAnyMarker(root, &.{"CMakeLists.txt"})) {
+                return .{
+                    .root = try allocator.dupe(u8, root),
+                    .system = "cmake",
+                    .build_ready = common.hasCmakeBuildTree(root),
+                };
+            }
+            if (pathHasFile(root, "Makefile")) {
+                return .{ .root = try allocator.dupe(u8, root), .system = "make" };
+            }
+        }
+    }
 
-    if (rootHasAnyMarker(root, &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" })) {
+    if (try findRootForFilesAlloc(allocator, path, &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" }, 12)) |root| {
         return .{ .root = root, .system = "bazel" };
     }
-    if (rootHasAnyMarker(root, &.{"meson.build"})) {
+    if (try findRootForFilesAlloc(allocator, path, &.{"meson.build"}, 12)) |root| {
         return .{ .root = root, .system = "meson", .build_ready = common.hasMesonBuildTree(root) };
     }
-    if (rootHasAnyMarker(root, &.{"CMakeLists.txt"})) {
+    if (try findRootForFilesAlloc(allocator, path, &.{"CMakeLists.txt"}, 12)) |root| {
         return .{ .root = root, .system = "cmake", .build_ready = common.hasCmakeBuildTree(root) };
     }
-    if (pathHasFile(root, "Makefile")) {
+    if (try findRootForFilesAlloc(allocator, path, &.{"Makefile"}, 12)) |root| {
         return .{ .root = root, .system = "make" };
     }
 
+    const root = try resolveBaseRoot(allocator, path, project_root);
     return .{ .root = root };
 }
 
@@ -208,6 +231,27 @@ test "detect c family system and build readiness" {
     try std.testing.expectEqualStrings(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
     try std.testing.expect(result.build_ready.?);
+}
+
+test "detect c family by walking parent markers" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src/nested");
+    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data = "project(demo)\n" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "nested", "main.cpp" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .c_family, filepath, null);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expect(result.root != null);
+    try std.testing.expectEqualStrings(root, result.root.?);
+    try std.testing.expectEqualStrings("cmake", result.system.?);
 }
 
 test "detect bazel root by walking parents" {

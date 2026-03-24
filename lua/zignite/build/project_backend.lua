@@ -7,7 +7,6 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 local PARSER_BACKED_BUILD_SOURCES
-local C_FAMILY_BUILD_SOURCES
 
 ---@param text string
 ---@return string
@@ -30,6 +29,25 @@ local function decode_backend_commands(lines)
 		end
 	end
 	return commands
+end
+
+---@param lines string[]|nil
+---@return table
+local function decode_backend_project_result(lines)
+	local result = {
+		commands = decode_backend_commands(lines),
+	}
+	for _, raw_line in ipairs(lines or {}) do
+		local kind, value = tostring(raw_line or ""):match("^([^\t]+)\t(.+)$")
+		if kind == "SYSTEM" and type(value) == "string" and value ~= "" then
+			result.system = value
+		elseif kind == "ROOT" and type(value) == "string" and value ~= "" then
+			result.root = value
+		elseif kind == "BUILD_READY" then
+			result.build_ready = value == "1"
+		end
+	end
+	return result
 end
 
 ---@param filepath string
@@ -442,19 +460,6 @@ PARSER_BACKED_BUILD_SOURCES = {
 	},
 }
 
-C_FAMILY_BUILD_SOURCES = {
-	make = {
-		detect = M.detect_makefile_targets,
-		detect_flag = "c_cpp_make",
-	},
-	cmake = {
-		detect = M.detect_cmake_project_commands,
-	},
-	meson = {
-		detect = M.detect_meson_project_commands,
-	},
-}
-
 ---@param filetype string
 ---@param filepath string
 ---@return table|nil
@@ -477,28 +482,84 @@ end
 ---@param filepath string
 ---@return table|nil
 function M.detect_c_family_build_result(filepath)
-	local system, root = systems.detect_c_family_build_system(filepath)
-	if not system then
+	if not filepath or filepath == "" then
 		return nil
 	end
-
-	local source = C_FAMILY_BUILD_SOURCES[system]
-	if not source then
+	local local_system, local_root = systems.detect_c_family_build_system(filepath)
+	if not local_system then
+		return nil
+	end
+	if local_system == "bazel" then
 		return {
-			system = system,
-			root = root,
+			system = local_system,
+			root = local_root,
 			commands = {},
 			info = nil,
 		}
 	end
 
-	local commands, info = source.detect(filepath)
+	local root = local_root or systems.resolve_project_root_for_detection(filepath)
+	local cache_key = normalize_path_text(filepath)
+	local mtime_key = table.concat({
+		"Makefile:" .. systems.detect_file_signature(vim.fs.joinpath(root, "Makefile")),
+		"CMakeLists.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "CMakeLists.txt")),
+		"meson.build:" .. systems.detect_file_signature(vim.fs.joinpath(root, "meson.build")),
+		"build/CMakeCache.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "CMakeCache.txt")),
+		"build/build.ninja:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "build.ninja")),
+		"build/meson-private/coredata.dat:"
+			.. systems.detect_file_signature(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat")),
+	}, "|")
+	local cached = state.get_bounded_cache_entry(
+		state.c_family_project_cache,
+		state.c_family_project_cache_order,
+		cache_key
+	)
+	if cached and cached.mtime_key == mtime_key then
+		if type(cached.system) ~= "string" or cached.system == "" then
+			return nil
+		end
+		return {
+			system = cached.system,
+			root = cached.root,
+			detect_flag = cached.detect_flag,
+			commands = state.copy_string_map(cached.commands),
+			info = nil,
+		}
+	end
+
+	local zig_lines = detect_backend.parse_project_lines_once("c-family-auto", filepath, {
+		"--project-root=" .. root,
+	})
+	local decoded = decode_backend_project_result(zig_lines)
+	local system = decoded.system
+	if type(system) ~= "string" or system == "" then
+		system = local_system
+		decoded.system = local_system
+		decoded.root = local_root or decoded.root or root
+	end
+	local detect_flag = system == "make" and "c_cpp_make" or nil
+	state.set_bounded_cache_entry(
+		state.c_family_project_cache,
+		state.c_family_project_cache_order,
+		state.C_FAMILY_PROJECT_CACHE_MAX,
+		cache_key,
+		{
+			mtime_key = mtime_key,
+			system = system,
+			root = decoded.root or root,
+			detect_flag = detect_flag,
+			commands = state.copy_string_map(decoded.commands),
+		}
+	)
+	if type(system) ~= "string" or system == "" then
+		return nil
+	end
 	return {
 		system = system,
-		root = root,
-		detect_flag = source.detect_flag,
-		commands = commands or {},
-		info = info,
+		root = decoded.root or root,
+		detect_flag = detect_flag,
+		commands = decoded.commands or {},
+		info = nil,
 	}
 end
 
