@@ -1,8 +1,8 @@
 const std = @import("std");
 const build_system = @import("build/system.zig");
-const project_io = @import("project/io.zig");
-const project_output = @import("project/output.zig");
-const types = @import("project/types.zig");
+const project_io = @import("project/core/io.zig");
+const project_output = @import("project/core/output.zig");
+const types = @import("project/core/types.zig");
 
 pub const Kind = types.Kind;
 pub const Options = types.Options;

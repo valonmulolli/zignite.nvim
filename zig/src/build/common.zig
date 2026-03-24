@@ -1,5 +1,5 @@
 const std = @import("std");
-const project_common = @import("../project/common.zig");
+const project_common = @import("../project/core/common.zig");
 
 pub fn hasCmakeBuildTree(root: []const u8) bool {
     return buildJoinedPathExists(std.heap.page_allocator, root, &.{ "build", "CMakeCache.txt" });

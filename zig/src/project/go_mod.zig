@@ -1,5 +1,5 @@
 const std = @import("std");
-const common = @import("common.zig");
+const common = @import("core/common.zig");
 
 pub fn parseModuleName(allocator: std.mem.Allocator, contents: []const u8) !?[]u8 {
     var lines = std.mem.splitScalar(u8, contents, '\n');
