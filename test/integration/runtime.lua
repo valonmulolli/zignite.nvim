@@ -221,7 +221,7 @@ end
 
 -- Test Go package selectors with shell metacharacters remain safe in argv mode.
 local function test_go_project_commands_quote_package_selectors()
-    local go_parser = require("zignite.build.project_backend")
+    local go_parser = require("zignite.build.project_query")
     local runtime = require("zignite.runtime")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root
@@ -289,7 +289,7 @@ end
 
 -- Test Cargo bin names with shell metacharacters remain safe in argv mode.
 local function test_cargo_project_commands_quote_bin_names()
-    local cargo_parser = require("zignite.build.project_backend")
+    local cargo_parser = require("zignite.build.project_query")
     local runtime = require("zignite.runtime")
     local utils_module = require("zignite.utils")
     local original_get_project_root = utils_module.get_project_root

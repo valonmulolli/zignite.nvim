@@ -128,7 +128,7 @@ local function test_bazel_project_commands_in_picker()
 			error("Lua Bazel fallback parser should not read BUILD files")
 		end,
 	}, function()
-		commands = require("zignite.build.project_backend").detect_bazel_project_commands(
+		commands = require("zignite.build.project_query").detect_bazel_project_commands(
 			"/tmp/bazelapp/app/main.cc"
 		)
 		picker_opened, rendered_lines = capture_picker_lines(function()
@@ -234,7 +234,7 @@ local function test_bazel_targets_use_zig_project_parser()
 			error("Lua Bazel parser should not be used when Zig parser succeeds")
 		end,
 	}, function()
-		local commands = require("zignite.build.project_backend").detect_bazel_project_commands("/tmp/bazelzig/app/main.cc")
+		local commands = require("zignite.build.project_query").detect_bazel_project_commands("/tmp/bazelzig/app/main.cc")
 		assert(commands.build == "bazel build //app:main", "Zig Bazel parser should expose preferred generic build")
 		assert(commands.run == "bazel run //app:main", "Zig Bazel parser should expose preferred generic run")
 		local picker_opened
