@@ -1,5 +1,5 @@
 local detect = require("zignite.build.detect")
-local resolve = require("zignite.build.resolve")
+local resolve = require("zignite.build.runtime_lookup")
 
 ---@type table
 local M = {}
