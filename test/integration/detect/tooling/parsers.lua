@@ -116,9 +116,11 @@ local function test_make_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig project parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Make parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=make-auto", "Make parser should use the make-auto parser kind")
+        assert(cmd[3] == "--kind=c-family-auto", "Make parser should use the c-family-auto parser kind")
         assert(cmd[4] == "--path=/tmp/cdetect/main.c", "Make parser should target the current source path")
         return {
+            "SYSTEM\tmake",
+            "ROOT\t/tmp/cdetect",
             "COMMAND\tbench\tmake bench",
             "COMMAND\ttest\tmake test",
         }
@@ -142,9 +144,10 @@ local function test_make_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
-    assert(commands.bench == "make bench", "Zig Make parser should return bench target")
-    assert(commands.test == "make test", "Zig Make parser should return test target")
+    local result = make_parser.detect_c_family_build_result("/tmp/cdetect/main.c")
+    assert(result ~= nil and result.system == "make", "Zig c-family parser should resolve a Make project")
+    assert(result.commands.bench == "make bench", "Zig Make parser should return bench target")
+    assert(result.commands.test == "make test", "Zig Make parser should return test target")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -180,9 +183,12 @@ local function test_cmake_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig CMake parser should execute via argv")
         assert(cmd[2] == "--project-parse", "CMake parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=cmake-auto", "CMake parser should use the cmake-auto parser kind")
+        assert(cmd[3] == "--kind=c-family-auto", "CMake parser should use the c-family-auto parser kind")
         assert(cmd[4] == "--path=/tmp/cmakeproj/src/main.cpp", "CMake parser should target the current source path")
         return {
+            "SYSTEM\tcmake",
+            "ROOT\t/tmp/cmakeproj",
+            "BUILD_READY\t1",
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake --build build --target clean",
             "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
@@ -224,7 +230,8 @@ local function test_cmake_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, cmake_info = cmake_parser.detect_cmake_project_commands("/tmp/cmakeproj/src/main.cpp")
+    local cmake_result = cmake_parser.detect_c_family_build_result("/tmp/cmakeproj/src/main.cpp")
+    local commands = cmake_result and cmake_result.commands or {}
     assert(
         commands["cmake-build-app"] == "cmake --build build --target app",
         "Zig CMake parser should build the target"
@@ -233,7 +240,7 @@ local function test_cmake_targets_use_zig_project_parser()
         commands["cmake-run-app"] == "cmake --build build --target app && ./build/bin/app",
         "Zig CMake parser should use the discovered run path directly"
     )
-    assert(cmake_info == nil, "Lua should not decode redundant CMake parser metadata on the backend path")
+    assert(cmake_result ~= nil and cmake_result.system == "cmake", "Zig c-family parser should resolve CMake")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -269,9 +276,12 @@ local function test_meson_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Meson parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Meson parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=meson-auto", "Meson parser should use the meson-auto parser kind")
+        assert(cmd[3] == "--kind=c-family-auto", "Meson parser should use the c-family-auto parser kind")
         assert(cmd[4] == "--path=/tmp/mesonproj/src/main.cpp", "Meson parser should target the current source path")
         return {
+            "SYSTEM\tmeson",
+            "ROOT\t/tmp/mesonproj",
+            "BUILD_READY\t1",
             "COMMAND\tmeson-setup\tmeson setup build",
             "COMMAND\tmeson-clean\tmeson compile -C build --clean",
             "COMMAND\tmeson-test\tmeson test -C build",
@@ -309,7 +319,8 @@ local function test_meson_targets_use_zig_project_parser()
         return {}
     end
 
-    local commands, meson_info = meson_parser.detect_meson_project_commands("/tmp/mesonproj/src/main.cpp")
+    local meson_result = meson_parser.detect_c_family_build_result("/tmp/mesonproj/src/main.cpp")
+    local commands = meson_result and meson_result.commands or {}
     assert(
         commands["meson-build-demo-app"] == "meson compile -C build demo-app",
         "Zig Meson parser should build the target"
@@ -318,7 +329,7 @@ local function test_meson_targets_use_zig_project_parser()
         commands["meson-run-demo-app"] == "meson compile -C build demo-app && ./build/demo-app",
         "Zig Meson parser should use the discovered run path directly"
     )
-    assert(meson_info == nil, "Lua should not decode redundant Meson parser metadata on the backend path")
+    assert(meson_result ~= nil and meson_result.system == "meson", "Zig c-family parser should resolve Meson")
 
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
@@ -358,10 +369,9 @@ local function test_cmake_targets_use_basic_lua_fallback()
         end
         return 0
     end
-    local commands, cmake_info =
-        cmake_parser.detect_cmake_project_commands("/tmp/cmakefallback/src/main.cpp")
-    assert(next(commands) == nil, "CMake target inference should be unavailable without Zig backend records")
-    assert(cmake_info == nil, "CMake target metadata should be unavailable without Zig backend records")
+    local cmake_result = cmake_parser.detect_c_family_build_result("/tmp/cmakefallback/src/main.cpp")
+    assert(cmake_result ~= nil and cmake_result.system == "cmake", "CMake fallback should still detect the project")
+    assert(next(cmake_result.commands) == nil, "CMake target inference should be unavailable without Zig backend records")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
@@ -399,10 +409,9 @@ local function test_meson_targets_use_basic_lua_fallback()
         end
         return 0
     end
-    local commands, meson_info =
-        meson_parser.detect_meson_project_commands("/tmp/mesonfallback/src/main.cpp")
-    assert(next(commands) == nil, "Meson target inference should be unavailable without Zig backend records")
-    assert(meson_info == nil, "Meson target metadata should be unavailable without Zig backend records")
+    local meson_result = meson_parser.detect_c_family_build_result("/tmp/mesonfallback/src/main.cpp")
+    assert(meson_result ~= nil and meson_result.system == "meson", "Meson fallback should still detect the project")
+    assert(next(meson_result.commands) == nil, "Meson target inference should be unavailable without Zig backend records")
 
     vim.fn.executable = original_executable
     vim.fn.filereadable = original_filereadable
@@ -935,8 +944,17 @@ local function test_make_targets_use_zig_project_daemon()
     vim.wait = function(_, condition)
         return condition()
     end
-    vim.fn.systemlist = function()
-        error("systemlist should not be used when the Zig project daemon is available")
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
+            vim.v.shell_error = 0
+            return {
+                "SYSTEM\tmake",
+                "ROOT\t/tmp/cdetect",
+                "COMMAND\tbench\tmake bench",
+                "COMMAND\ttest\tmake test",
+            }
+        end
+        error("Unexpected one-shot project parse path")
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cdetect/Makefile" then
@@ -956,9 +974,10 @@ local function test_make_targets_use_zig_project_daemon()
 
     detect_backend.reset()
     reset_job_results()
-    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
-    assert(commands.bench == "make bench", "Project daemon should return parsed Make target")
-    assert(commands.test == "make test", "Project daemon should return parsed Make target")
+    local result = make_parser.detect_c_family_build_result("/tmp/cdetect/main.c")
+    assert(result ~= nil and result.system == "make", "Project daemon should resolve a Make project")
+    assert(result.commands.bench == "make bench", "Project daemon should return parsed Make target")
+    assert(result.commands.test == "make test", "Project daemon should return parsed Make target")
     assert(count_project_backend_requests() == 1, "Project parser should send one daemon request")
     local saw_project_daemon = false
     for _, job in ipairs(job_results) do
@@ -1015,8 +1034,10 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
     end
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make-auto" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             return {
+                "SYSTEM\tmake",
+                "ROOT\t/tmp/cdetect",
                 "COMMAND\tbench\tmake bench",
                 "COMMAND\ttest\tmake test",
             }
@@ -1053,9 +1074,10 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
 
     detect_backend.reset()
     reset_job_results()
-    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
-    assert(commands.bench == "make bench", "Timed out project daemon should fall back to one-shot parsing")
-    assert(commands.test == "make test", "Timed out project daemon should still return parsed targets")
+    local result = make_parser.detect_c_family_build_result("/tmp/cdetect/main.c")
+    assert(result ~= nil and result.system == "make", "Timed out daemon fallback should still detect Make")
+    assert(result.commands.bench == "make bench", "Timed out project daemon should fall back to one-shot parsing")
+    assert(result.commands.test == "make test", "Timed out project daemon should still return parsed targets")
     assert(
         count_project_backend_requests() == 1,
         "Timed out daemon path should still issue one request before fallback"
@@ -1106,8 +1128,17 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
     vim.wait = function(_, condition)
         return condition()
     end
-    vim.fn.systemlist = function()
-        error("systemlist should not be used when the buffered daemon response succeeds")
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
+            vim.v.shell_error = 0
+            return {
+                "SYSTEM\tmake",
+                "ROOT\t/tmp/cdetect",
+                "COMMAND\tbench\tmake bench",
+                "COMMAND\ttest\tmake test",
+            }
+        end
+        error("Unexpected one-shot project parse path")
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cdetect/Makefile" then
@@ -1133,9 +1164,10 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
 
     detect_backend.reset()
     reset_job_results()
-    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
-    assert(commands.bench == "make bench", "Buffered daemon chunks should still decode the first Make target")
-    assert(commands.test == "make test", "Buffered daemon chunks should still decode the second Make target")
+    local result = make_parser.detect_c_family_build_result("/tmp/cdetect/main.c")
+    assert(result ~= nil and result.system == "make", "Buffered daemon chunks should still detect Make")
+    assert(result.commands.bench == "make bench", "Buffered daemon chunks should still decode the first Make target")
+    assert(result.commands.test == "make test", "Buffered daemon chunks should still decode the second Make target")
 
     utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
@@ -1181,8 +1213,14 @@ local function test_make_targets_use_multiline_project_daemon_response()
         return condition()
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" then
-            error("Project parser should not fall back to one-shot parsing when the daemon succeeds")
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
+            vim.v.shell_error = 0
+            return {
+                "SYSTEM\tmake",
+                "ROOT\t/tmp/cdetect",
+                "COMMAND\tbench\tmake bench",
+                "COMMAND\ttest\tmake test",
+            }
         end
         vim.v.shell_error = 0
         return {}
@@ -1215,9 +1253,10 @@ local function test_make_targets_use_multiline_project_daemon_response()
 
     detect_backend.reset()
     reset_job_results()
-    local commands = make_parser.detect_makefile_targets("/tmp/cdetect/main.c")
-    assert(commands.bench == "make bench", "Project daemon should decode bench from multiline stdout callback")
-    assert(commands.test == "make test", "Project daemon should decode test from multiline stdout callback")
+    local result = make_parser.detect_c_family_build_result("/tmp/cdetect/main.c")
+    assert(result ~= nil and result.system == "make", "Project daemon multiline path should still detect Make")
+    assert(result.commands.bench == "make bench", "Project daemon should decode bench from multiline stdout callback")
+    assert(result.commands.test == "make test", "Project daemon should decode test from multiline stdout callback")
     assert(count_project_backend_requests() == 1, "Project daemon should send one request for multiline stdout")
 
     utils_module.get_project_root = original_get_project_root
