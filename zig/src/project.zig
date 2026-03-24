@@ -17,12 +17,15 @@ const pyproject = @import("project/pyproject.zig");
 
 pub const Kind = enum {
     make,
+    make_auto,
     package_json,
+    package_json_auto,
     maven,
     jvm_auto,
     gradle,
     cmake,
     bazel,
+    bazel_auto,
     bazel_workspace,
     meson,
     cargo,
@@ -171,12 +174,15 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
 fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "make")) return .make;
+    if (std.ascii.eqlIgnoreCase(value, "make-auto")) return .make_auto;
     if (std.ascii.eqlIgnoreCase(value, "package-json")) return .package_json;
+    if (std.ascii.eqlIgnoreCase(value, "package-json-auto")) return .package_json_auto;
     if (std.ascii.eqlIgnoreCase(value, "maven")) return .maven;
     if (std.ascii.eqlIgnoreCase(value, "jvm-auto")) return .jvm_auto;
     if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
+    if (std.ascii.eqlIgnoreCase(value, "bazel-auto")) return .bazel_auto;
     if (std.ascii.eqlIgnoreCase(value, "bazel-workspace")) return .bazel_workspace;
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
@@ -237,6 +243,9 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
     if (kind == .bazel_workspace) {
         return allocator.dupe(u8, "");
     }
+    if (kind == .bazel_auto) {
+        return allocator.dupe(u8, "");
+    }
     if (kind == .jvm_auto) {
         return allocator.dupe(u8, "");
     }
@@ -244,6 +253,22 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
         return allocator.dupe(u8, "");
     }
     if (kind == .go_auto) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .make_auto) {
+        const makefile_path = try findParentFileAlloc(allocator, path, "Makefile", 12);
+        defer if (makefile_path) |value| allocator.free(value);
+        if (makefile_path) |value| {
+            return common.readFileAlloc(allocator, value);
+        }
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .package_json_auto) {
+        const package_json_path = try findParentFileAlloc(allocator, path, "package.json", 12);
+        defer if (package_json_path) |value| allocator.free(value);
+        if (package_json_path) |value| {
+            return common.readFileAlloc(allocator, value);
+        }
         return allocator.dupe(u8, "");
     }
     return common.readFileAlloc(allocator, path);
@@ -793,6 +818,43 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
+    if (options.kind == .bazel_auto) {
+        const result = try build_system.detect(allocator, .bazel_root, options.path, options.project_root);
+        defer build_system.freeOwnedResult(allocator, result);
+
+        if (result.root == null) return;
+        const match_path = options.match_path orelse options.path;
+        const info = try bazel.buildWorkspaceCommandInfo(allocator, result.root.?, match_path);
+        defer bazel.freeOwnedCommandInfo(allocator, info);
+
+        for (info.commands) |entry| {
+            try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+        }
+        try stdout.print("COMMAND\tbazel-query\tbazel query $zignite_args\n", .{});
+        try stdout.print("COMMAND\tbazel-clean\tbazel clean\n", .{});
+        try stdout.print("COMMAND\tbazel-build-all\tbazel build //...\n", .{});
+        try stdout.print("COMMAND\tbazel-test-all\tbazel test //...\n", .{});
+        if (info.primary_build) |command| {
+            try stdout.print("COMMAND\tbazel-build\t{s}\n", .{command});
+            try stdout.print("COMMAND\tbuild\t{s}\n", .{command});
+            try stdout.print("PRIMARY_BUILD\t{s}\n", .{command});
+            try stdout.print("PREFERRED\tbuild\t{s}\n", .{command});
+        }
+        if (info.primary_run) |command| {
+            try stdout.print("COMMAND\tbazel-run\t{s}\n", .{command});
+            try stdout.print("COMMAND\trun\t{s}\n", .{command});
+            try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
+            try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+        }
+        if (info.primary_test) |command| {
+            try stdout.print("COMMAND\tbazel-test\t{s}\n", .{command});
+            try stdout.print("COMMAND\ttest\t{s}\n", .{command});
+            try stdout.print("PRIMARY_TEST\t{s}\n", .{command});
+            try stdout.print("PREFERRED\ttest\t{s}\n", .{command});
+        }
+        return;
+    }
+
     if (options.kind == .maven) {
         try writeMavenOutput(stdout, allocator, contents);
         return;
@@ -803,7 +865,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
-    if (options.kind == .make) {
+    if (options.kind == .make or options.kind == .make_auto) {
         const names = try parseNames(allocator, options.kind, contents);
         defer common.freeOwnedNameList(allocator, names);
         for (names) |name| {
@@ -812,7 +874,7 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
-    if (options.kind == .package_json) {
+    if (options.kind == .package_json or options.kind == .package_json_auto) {
         const names = try parseNames(allocator, options.kind, contents);
         defer common.freeOwnedNameList(allocator, names);
         const manager = options.package_manager orelse "npm";
@@ -839,13 +901,14 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
     }
 
     switch (kind) {
-        .make => try make.parseTargets(allocator, contents, &names),
-        .package_json => try package_json.parseScripts(allocator, contents, &names),
+        .make, .make_auto => try make.parseTargets(allocator, contents, &names),
+        .package_json, .package_json_auto => try package_json.parseScripts(allocator, contents, &names),
         .maven => try maven.parseGoals(allocator, contents, &names),
         .jvm_auto => return error.InvalidProjectParseKind,
         .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
         .bazel => return error.InvalidProjectParseKind,
+        .bazel_auto => return error.InvalidProjectParseKind,
         .bazel_workspace => return error.InvalidProjectParseKind,
         .meson => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,

@@ -34,7 +34,7 @@ local function test_javascript_package_scripts_detection()
 			tbl = vim.fn,
 			key = "systemlist",
 			value = function(cmd)
-				if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json" then
+				if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
 					vim.v.shell_error = 0
 					return {
 						"COMMAND\tdev\tnpm run dev",
@@ -78,16 +78,11 @@ local function test_javascript_package_scripts_use_zig_project_parser()
     })
 
     local package_parser = require("zignite.build.project_backend")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
-    utils_module.get_project_root = function()
-        return "/tmp/jsapp"
-    end
     vim.fn.executable = function(path)
         if tostring(path):match("zignite$") then
             return 1
@@ -101,8 +96,8 @@ local function test_javascript_package_scripts_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig package parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Package parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=package-json", "Package parser should use the package-json parser kind")
-        assert(cmd[4] == "--path=/tmp/jsapp/package.json", "Package parser should target package.json")
+        assert(cmd[3] == "--kind=package-json-auto", "Package parser should use the package-json-auto parser kind")
+        assert(cmd[4] == "--path=/tmp/jsapp/src/main.js", "Package parser should target the current source path")
         assert(cmd[5] == "--package-manager=npm", "Package parser should pass the detected package manager")
         return {
             "COMMAND\tdev\tnpm run dev",
@@ -132,7 +127,6 @@ local function test_javascript_package_scripts_use_zig_project_parser()
     assert(commands.dev == "npm run dev", "Zig package parser should return npm run dev")
     assert(commands.lint == "npm run lint", "Zig package parser should return npm run lint")
 
-    utils_module.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -168,7 +162,7 @@ local function test_javascript_package_scripts_detect_package_manager()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
             vim.v.shell_error = 0
             assert(cmd[5] == "--package-manager=pnpm", "Package parser should pass the detected package manager")
             return {
