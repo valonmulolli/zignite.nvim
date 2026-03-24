@@ -624,6 +624,128 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	print("✓ Async system prewarm Zig query test passed")
 end
 
+-- Test cached C/C++ lookup returns local fallback immediately, then upgrades from warmed Zig project records.
+---@return nil
+local function test_async_c_family_project_prewarm_avoids_sync_parse()
+	init.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = true,
+			cache_ttl_ms = 15000,
+			live_merge = false,
+		},
+	})
+
+	local detect_backend = require("zignite.build.detect.backend")
+	local utils_module = require("zignite.utils")
+	local original_get_project_root = utils_module.get_project_root
+	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
+	local original_parse_project_lines_once = detect_backend.parse_project_lines_once
+	local original_filereadable = vim.fn.filereadable
+	local async_queries = {}
+	local sync_c_family_auto_called = false
+	local refreshed_commands = nil
+
+	build_module.reset()
+
+	utils_module.get_project_root = function(path)
+		if type(path) == "string" and path:match("^/tmp/warm%-cfamily/") then
+			return "/tmp/warm-cfamily"
+		end
+		if original_get_project_root then
+			return original_get_project_root(path)
+		end
+		return nil
+	end
+	vim.fn.filereadable = function(path)
+		if path == "/tmp/warm-cfamily/CMakeLists.txt" then
+			return 1
+		end
+		if path == "/tmp/warm-cfamily/build/CMakeCache.txt" then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+	detect_backend.parse_project_lines_once = function(kind, path, extra_args)
+		if kind == "c-family-auto" then
+			sync_c_family_auto_called = true
+			error("cached lookup should not sync-parse c-family-auto")
+		end
+		if original_parse_project_lines_once then
+			return original_parse_project_lines_once(kind, path, extra_args)
+		end
+		return {}
+	end
+	detect_backend.parse_project_lines_async = function(kind, path, _extra_args, on_done)
+		async_queries[#async_queries + 1] = string.format("%s::%s", tostring(kind), tostring(path))
+		if kind == "system" then
+			on_done({
+				"ROOT\t/tmp/warm-cfamily",
+				"SYSTEM\tcmake",
+				"BUILD_READY\t1",
+			})
+			return true
+		end
+		if kind == "c-family-auto" then
+			on_done({
+				"ROOT\t/tmp/warm-cfamily",
+				"SYSTEM\tcmake",
+				"BUILD_READY\t1",
+				"COMMAND\tcmake-build\tcmake --build build",
+				"COMMAND\tcmake-run\tcmake --build build --target app && ./build/app",
+				"COMMAND\tbuild\tcmake --build build",
+				"COMMAND\trun\tcmake --build build --target app && ./build/app",
+				"COMMAND\tcmake-build-app\tcmake --build build --target app",
+				"COMMAND\tcmake-run-app\tcmake --build build --target app && ./build/app",
+			})
+			return true
+		end
+		return false
+	end
+
+	local immediate_commands, refresh_started = build_module.get_build_commands_for_cached_lookup(
+		"cpp",
+		"/tmp/warm-cfamily/src/main.cpp",
+		function(updated_commands)
+			refreshed_commands = updated_commands
+		end
+	)
+
+	assert(refresh_started, "Cached C/C++ lookup should start async refresh")
+	assert(
+		type(immediate_commands["cmake-build"]) == "string",
+		"Immediate cached C/C++ lookup should still expose fallback CMake commands"
+	)
+	assert(
+		immediate_commands["cmake-build-app"] == nil,
+		"Immediate cached C/C++ lookup should not invent target-specific commands before Zig warms the cache"
+	)
+	assert(
+		type(refreshed_commands) == "table" and refreshed_commands["cmake-build-app"] == "cmake --build build --target app",
+		"Async refresh should merge warmed Zig C/C++ project commands"
+	)
+	assert(
+		vim.tbl_contains(async_queries, "system::/tmp/warm-cfamily/src/main.cpp"),
+		"C/C++ cached lookup should prewarm the Zig system query"
+	)
+	assert(
+		vim.tbl_contains(async_queries, "c-family-auto::/tmp/warm-cfamily/src/main.cpp"),
+		"C/C++ cached lookup should prewarm the Zig c-family project query"
+	)
+	assert(not sync_c_family_auto_called, "Cached C/C++ lookup should not fall back to sync c-family-auto parsing")
+
+	detect_backend.parse_project_lines_async = original_parse_project_lines_async
+	detect_backend.parse_project_lines_once = original_parse_project_lines_once
+	utils_module.get_project_root = original_get_project_root
+	vim.fn.filereadable = original_filereadable
+	build_module.reset()
+
+	print("✓ Async C/C++ project prewarm test passed")
+end
+
 test_picker_async_path_without_wait()
 test_run_build_async_detect_without_wait()
 test_run_build_completion_nonblocking_prefix()
@@ -634,3 +756,4 @@ test_shebang_cache_is_bounded()
 test_detect_runtime_cache_is_bounded()
 test_cached_zig_system_results_take_precedence()
 test_async_system_prewarm_prefers_zig_queries_over_local_gating()
+test_async_c_family_project_prewarm_avoids_sync_parse()

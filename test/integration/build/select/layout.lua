@@ -314,7 +314,11 @@ local function test_build_picker_hides_redundant_cmake_aliases()
     local rendered_lines = {}
     local wrap_disabled = false
 
-    init.setup({})
+    init.setup({
+        detect_runtime = {
+            async_picker = false,
+        },
+    })
     vim.bo.filetype = "cpp"
 
     vim.fn.expand = function(expr)

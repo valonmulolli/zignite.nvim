@@ -11,6 +11,9 @@
 local function test_c_detected_make_targets_in_picker()
     init.setup({
         build_commands = {},
+        detect_runtime = {
+            async_picker = false,
+        },
     })
 
     vim.bo.filetype = "c"
