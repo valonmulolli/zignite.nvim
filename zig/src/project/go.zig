@@ -1,5 +1,5 @@
 const std = @import("std");
-const common = @import("common.zig");
+const common = @import("core/common.zig");
 const go_mod = @import("go_mod.zig");
 const go_work = @import("go_work.zig");
 

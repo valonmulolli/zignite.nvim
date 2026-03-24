@@ -1,5 +1,5 @@
 const std = @import("std");
-const common = @import("common.zig");
+const common = @import("core/common.zig");
 
 pub const Target = struct {
     name: []u8,

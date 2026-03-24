@@ -1,5 +1,5 @@
 const std = @import("std");
-const common = @import("common.zig");
+const common = @import("core/common.zig");
 
 pub const UseEntry = struct {
     path: []u8,
