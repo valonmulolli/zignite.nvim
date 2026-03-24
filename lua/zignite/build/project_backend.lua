@@ -50,6 +50,56 @@ local function decode_backend_project_result(lines)
 	return result
 end
 
+---@param root string
+---@return string
+local function c_family_project_mtime_key(root)
+	return table.concat({
+		"Makefile:" .. systems.detect_file_signature(vim.fs.joinpath(root, "Makefile")),
+		"CMakeLists.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "CMakeLists.txt")),
+		"meson.build:" .. systems.detect_file_signature(vim.fs.joinpath(root, "meson.build")),
+		"build/CMakeCache.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "CMakeCache.txt")),
+		"build/build.ninja:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "build.ninja")),
+		"build/meson-private/coredata.dat:"
+			.. systems.detect_file_signature(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat")),
+	}, "|")
+end
+
+---@param filepath string
+---@param root string
+---@return table|nil, string, string
+local function get_c_family_cached_entry(filepath, root)
+	local cache_key = normalize_path_text(filepath)
+	local mtime_key = c_family_project_mtime_key(root)
+	local cached = state.get_bounded_cache_entry(
+		state.c_family_project_cache,
+		state.c_family_project_cache_order,
+		cache_key
+	)
+	return cached, cache_key, mtime_key
+end
+
+---@param cache_key string
+---@param mtime_key string
+---@param system string|nil
+---@param root string
+---@param commands table<string, string>
+---@return nil
+local function store_c_family_cached_entry(cache_key, mtime_key, system, root, commands)
+	state.set_bounded_cache_entry(
+		state.c_family_project_cache,
+		state.c_family_project_cache_order,
+		state.C_FAMILY_PROJECT_CACHE_MAX,
+		cache_key,
+		{
+			mtime_key = mtime_key,
+			system = system,
+			root = root,
+			detect_flag = system == "make" and "c_cpp_make" or nil,
+			commands = state.copy_string_map(commands),
+		}
+	)
+end
+
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_package_scripts(filepath)
@@ -316,21 +366,7 @@ function M.detect_c_family_build_result(filepath)
 	end
 
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
-	local cache_key = normalize_path_text(filepath)
-	local mtime_key = table.concat({
-		"Makefile:" .. systems.detect_file_signature(vim.fs.joinpath(root, "Makefile")),
-		"CMakeLists.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "CMakeLists.txt")),
-		"meson.build:" .. systems.detect_file_signature(vim.fs.joinpath(root, "meson.build")),
-		"build/CMakeCache.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "CMakeCache.txt")),
-		"build/build.ninja:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "build.ninja")),
-		"build/meson-private/coredata.dat:"
-			.. systems.detect_file_signature(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat")),
-	}, "|")
-	local cached = state.get_bounded_cache_entry(
-		state.c_family_project_cache,
-		state.c_family_project_cache_order,
-		cache_key
-	)
+	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
 	if cached and cached.mtime_key == mtime_key then
 		if type(cached.system) ~= "string" or cached.system == "" then
 			return nil
@@ -355,19 +391,7 @@ function M.detect_c_family_build_result(filepath)
 		decoded.root = local_root or decoded.root or root
 	end
 	local detect_flag = system == "make" and "c_cpp_make" or nil
-	state.set_bounded_cache_entry(
-		state.c_family_project_cache,
-		state.c_family_project_cache_order,
-		state.C_FAMILY_PROJECT_CACHE_MAX,
-		cache_key,
-		{
-			mtime_key = mtime_key,
-			system = system,
-			root = decoded.root or root,
-			detect_flag = detect_flag,
-			commands = state.copy_string_map(decoded.commands),
-		}
-	)
+	store_c_family_cached_entry(cache_key, mtime_key, system, decoded.root or root, decoded.commands)
 	if type(system) ~= "string" or system == "" then
 		return nil
 	end
@@ -380,6 +404,80 @@ function M.detect_c_family_build_result(filepath)
 	}
 end
 
+---@param filepath string
+---@return table|nil
+function M.detect_c_family_build_result_cached(filepath)
+	if not filepath or filepath == "" then
+		return nil
+	end
+	local local_system, local_root = systems.detect_c_family_build_system(filepath)
+	if not local_system then
+		return nil
+	end
+	if local_system == "bazel" then
+		return {
+			system = local_system,
+			root = local_root,
+			commands = {},
+			info = nil,
+		}
+	end
+
+	local root = local_root or systems.resolve_project_root_for_detection(filepath)
+	local cached, _, mtime_key = get_c_family_cached_entry(filepath, root)
+	if cached and cached.mtime_key == mtime_key and type(cached.system) == "string" and cached.system ~= "" then
+		return {
+			system = cached.system,
+			root = cached.root,
+			detect_flag = cached.detect_flag,
+			commands = state.copy_string_map(cached.commands),
+			info = nil,
+		}
+	end
+
+	return {
+		system = local_system,
+		root = root,
+		detect_flag = local_system == "make" and "c_cpp_make" or nil,
+		commands = {},
+		info = nil,
+	}
+end
+
+---@param filepath string
+---@param on_done fun():nil
+---@return boolean
+function M.prime_c_family_project_commands_async(filepath, on_done)
+	if not filepath or filepath == "" then
+		return false
+	end
+	local local_system, local_root = systems.detect_c_family_build_system(filepath)
+	if not local_system or local_system == "bazel" then
+		return false
+	end
+
+	local root = local_root or systems.resolve_project_root_for_detection(filepath)
+	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
+	if cached and cached.mtime_key == mtime_key then
+		vim.schedule(on_done)
+		return true
+	end
+
+	return detect_backend.parse_project_lines_async("c-family-auto", filepath, {
+		"--project-root=" .. root,
+	}, function(lines)
+		local decoded = decode_backend_project_result(lines)
+		local system = decoded.system
+		if type(system) ~= "string" or system == "" then
+			system = local_system
+			decoded.system = local_system
+			decoded.root = local_root or decoded.root or root
+		end
+		store_c_family_cached_entry(cache_key, mtime_key, system, decoded.root or root, decoded.commands or {})
+		on_done()
+	end)
+end
+
 ---@param filetype string
 ---@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
@@ -390,6 +488,49 @@ function M.collect_sync_project_commands(filetype, filepath, is_detection_enable
 
 	if filetype == "c" or filetype == "cpp" then
 		local result = M.detect_c_family_build_result(filepath)
+		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
+			for key, value in pairs(result.commands or {}) do
+				if type(key) == "string" and type(value) == "string" then
+					commands[key] = value
+				end
+			end
+		end
+	end
+	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
+		for key, value in pairs(M.detect_package_scripts(filepath)) do
+			if type(key) == "string" and type(value) == "string" then
+				commands[key] = value
+			end
+		end
+	end
+	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
+		for key, value in pairs(M.detect_java_like_project_commands(filepath)) do
+			if type(key) == "string" and type(value) == "string" then
+				commands[key] = value
+			end
+		end
+	end
+	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
+		for key, value in pairs(M.detect_bazel_project_commands(filepath)) do
+			if type(key) == "string" and type(value) == "string" then
+				commands[key] = value
+			end
+		end
+	end
+
+	return commands
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
+function M.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
+	---@type table<string, string>
+	local commands = {}
+
+	if filetype == "c" or filetype == "cpp" then
+		local result = M.detect_c_family_build_result_cached(filepath)
 		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
 			for key, value in pairs(result.commands or {}) do
 				if type(key) == "string" and type(value) == "string" then
