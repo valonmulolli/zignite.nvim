@@ -277,65 +277,58 @@ end
 
 -- Test run_build_command can execute cpp commands detected from Makefile targets.
 local function test_run_build_command_with_detected_cpp_make_target()
-    init.setup({
-        build_commands = {},
-    })
+	init.setup({
+		build_commands = {},
+	})
 
-    vim.bo.filetype = "cpp"
-    local original_expand = vim.fn.expand
-    local original_executable = vim.fn.executable
-    local original_systemlist = vim.fn.systemlist
-    local original_filereadable = vim.fn.filereadable
-    vim.fn.expand = function(expr)
-        if expr == "%:p" then return "/tmp/cppdetect/main.cpp" end
-        return original_expand(expr)
-    end
-    vim.fn.executable = function(path)
-        if tostring(path):match("zignite$") then
-            return 1
-        end
-        if original_executable then
-            return original_executable(path)
-        end
-        return 0
-    end
-    vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
-            vim.v.shell_error = 0
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cppdetect",
-                "COMMAND\tcustom-target\tmake custom-target",
-            }
-        end
-        if original_systemlist then
-            return original_systemlist(cmd)
-        end
-        return {}
-    end
-    vim.fn.filereadable = function(path)
-        if path == "/tmp/cppdetect/Makefile" then
-            return 1
-        end
-        if original_filereadable then
-            return original_filereadable(path)
-        end
-        return 0
-    end
+	local detect_backend = require("zignite.build.detect.backend")
 
-    reset_job_results()
-    init.run_build_command("custom-target", "float")
-    assert(#job_results > 0, "Detected cpp Makefile target should start a job")
-    local command = command_to_string(job_results[#job_results].cmd)
-    assert(command:match("make custom%-target"), "Detected cpp Makefile target should execute via make custom-target")
+	with_overrides({
+		{ tbl = vim.bo, key = "filetype", value = "cpp" },
+		{ tbl = vim.fn, key = "expand", value = make_expand_override("/tmp/cppdetect/main.cpp") },
+		{
+			tbl = vim.fn,
+			key = "filereadable",
+			value = function(path)
+				if path == "/tmp/cppdetect/Makefile" then
+					return 1
+				end
+				return 0
+			end,
+		},
+		{
+			tbl = detect_backend,
+			key = "parse_project_lines_async",
+			value = function(kind, path, _extra_args, on_done)
+				if kind == "system" then
+					on_done({
+						"ROOT\t/tmp/cppdetect",
+						"SYSTEM\tmake",
+					})
+					return true
+				end
+				if kind == "c-family-auto" then
+					assert(path == "/tmp/cppdetect/main.cpp", "C/C++ refresh should query the current source path")
+					on_done({
+						"SYSTEM\tmake",
+						"ROOT\t/tmp/cppdetect",
+						"COMMAND\tcustom-target\tmake custom-target",
+					})
+					return true
+				end
+				return false
+			end,
+		},
+	}, function()
+		reset_job_results()
+		init.run_build_command("custom-target", "float")
+		assert(#job_results > 0, "Detected cpp Makefile target should start a job")
+		local command = command_to_string(job_results[#job_results].cmd)
+		assert(command:match("make custom%-target"), "Detected cpp Makefile target should execute via make custom-target")
+		reset_job_results()
+	end)
 
-    vim.fn.expand = original_expand
-    vim.fn.executable = original_executable
-    vim.fn.systemlist = original_systemlist
-    vim.fn.filereadable = original_filereadable
-    reset_job_results()
-
-    print("✓ RunBuild with detected cpp Makefile target test passed")
+	print("✓ RunBuild with detected cpp Makefile target test passed")
 end
 
 -- Test run_build_command can execute odin commands detected from `odin help`.

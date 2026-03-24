@@ -1,4 +1,5 @@
 local config = require("zignite.config")
+local backend = require("zignite.build.project_backend")
 local commands = require("zignite.build.project_commands")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")
@@ -100,6 +101,7 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 	local latest_status = "ready"
 	local latest_mtime_signature = mtime_signature
 	local pending = 1
+	local detect_async = commands.detect_tool_commands_for_filetype_async
 
 	local function complete_refresh()
 		pending = pending - 1
@@ -147,7 +149,24 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		pending = pending - 1
 	end
 
-	commands.detect_tool_commands_for_filetype_async(
+	if filetype == "c" or filetype == "cpp" then
+		detect_async = commands.detect_tool_commands_for_filetype_async_cached
+		pending = pending + 1
+		if not backend.prime_c_family_project_commands_async(filepath, function()
+			latest_detected = commands.collect_sync_detected_commands_cached(
+				filetype,
+				filepath,
+				is_detection_enabled
+			)
+			latest_status = "ready"
+			latest_mtime_signature = systems.get_mtime_signature_for_filetype(filetype, filepath, is_detection_enabled)
+			complete_refresh()
+		end) then
+			pending = pending - 1
+		end
+	end
+
+	detect_async(
 		filetype,
 		filepath,
 		function(detected_commands)
@@ -243,7 +262,7 @@ end
 ---@return table<string, string>, boolean
 function M.get_build_commands_for_cached_lookup(filetype, filepath, on_refresh)
 	local cached_detected = get_cached_detected_commands(filetype, filepath)
-	local merged = commands.merge_build_commands(filetype, filepath, cached_detected)
+	local merged = commands.merge_build_commands_cached(filetype, filepath, cached_detected)
 	local refresh_started = request_build_command_refresh(filetype, filepath, on_refresh)
 	return merged, refresh_started
 end

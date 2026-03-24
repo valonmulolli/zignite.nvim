@@ -391,6 +391,19 @@ end
 ---@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
+function M.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
+	local commands = backend.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
+	local detector = TOOL_DETECTORS[filetype]
+	if detector and is_detection_enabled(detector.flag) then
+		M.extend_string_map(commands, detector.sync())
+	end
+	return commands
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
 function M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
 	local commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
 	local detector = TOOL_DETECTORS[filetype]
@@ -408,6 +421,48 @@ end
 ---@return nil
 function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, force_refresh, is_detection_enabled)
 	local sync_commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
+
+	---@param async_commands table<string, string>|nil
+	---@return nil
+	local function finish(async_commands)
+		if async_commands == nil then
+			if vim.tbl_isempty(sync_commands) then
+				on_done(nil)
+			else
+				on_done(state.copy_string_map(sync_commands))
+			end
+			return
+		end
+
+		local merged = state.copy_string_map(sync_commands)
+		M.extend_string_map(merged, async_commands)
+		on_done(merged)
+	end
+
+	local detector = TOOL_DETECTORS[filetype]
+	if detector and is_detection_enabled(detector.flag) then
+		detector.async(finish, force_refresh)
+		return
+	end
+	vim.schedule(function()
+		on_done(state.copy_string_map(sync_commands))
+	end)
+end
+
+---@param filetype string
+---@param filepath string
+---@param on_done fun(commands: table<string, string>|nil):nil
+---@param force_refresh boolean|nil
+---@param is_detection_enabled fun(flag: string): boolean
+---@return nil
+function M.detect_tool_commands_for_filetype_async_cached(
+	filetype,
+	filepath,
+	on_done,
+	force_refresh,
+	is_detection_enabled
+)
+	local sync_commands = M.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
 
 	---@param async_commands table<string, string>|nil
 	---@return nil
@@ -491,11 +546,70 @@ end
 
 ---@param filetype string
 ---@param filepath string
+---@return table<string, string>
+function M.get_configured_build_commands_cached(filetype, filepath)
+	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
+	if filetype == "javascript" or filetype == "typescript" then
+		return apply_node_package_manager_defaults(filetype, filepath, configured)
+	end
+	if filetype == "python" then
+		return apply_python_tool_defaults(filepath, configured)
+	end
+	if filetype ~= "c" and filetype ~= "cpp" then
+		return M.get_configured_build_commands(filetype, filepath)
+	end
+
+	local c_family_result = backend.detect_c_family_build_result_cached(filepath)
+	if not c_family_result or c_family_result.system == nil then
+		return configured
+	end
+	if c_family_result.system == "bazel" then
+		return {}
+	end
+
+	if c_family_result.system == "make" then
+		local filtered = {}
+		for _, key in ipairs({ "build", "run", "clean", "test", "install", "debug" }) do
+			if configured[key] then
+				filtered[key] = configured[key]
+			end
+		end
+		return filtered
+	end
+
+	if c_family_result.system == "cmake" then
+		return build_cmake_commands(configured, c_family_result.root, c_family_result.commands)
+	end
+
+	if c_family_result.system == "meson" then
+		return build_meson_commands(configured, c_family_result.root, c_family_result.commands)
+	end
+
+	return configured
+end
+
+---@param filetype string
+---@param filepath string
 ---@param detected table<string, string>|nil
 ---@return table<string, string>
 function M.merge_build_commands(filetype, filepath, detected)
 	local merged = state.copy_string_map(detected)
 	local configured = M.get_configured_build_commands(filetype, filepath)
+	for key, value in pairs(configured) do
+		if type(key) == "string" and type(value) == "string" then
+			merged[key] = value
+		end
+	end
+	return merged
+end
+
+---@param filetype string
+---@param filepath string
+---@param detected table<string, string>|nil
+---@return table<string, string>
+function M.merge_build_commands_cached(filetype, filepath, detected)
+	local merged = state.copy_string_map(detected)
+	local configured = M.get_configured_build_commands_cached(filetype, filepath)
 	for key, value in pairs(configured) do
 		if type(key) == "string" and type(value) == "string" then
 			merged[key] = value
