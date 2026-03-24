@@ -9,73 +9,47 @@ local utils = require("zignite.utils")
 local M = {}
 
 ---@param filepath string
----@return string
-local function resolve_project_root(filepath)
-	local root = utils.get_project_root(filepath, config.options.project)
-	if root and root ~= "" then
-		return root
-	end
-	return vim.fn.fnamemodify(filepath, ":h")
-end
-
----@param project_file string
----@param cache table<string, table>
----@param order string[]
----@return table|nil
-local function get_cached_entry(project_file, cache, order)
-	local mtime_key = state.get_file_mtime_key(project_file)
-	local cached = state.get_bounded_cache_entry(cache, order, project_file)
-	if cached and cached.mtime_key == mtime_key then
-		return cached
-	end
-	return nil
-end
-
----@param project_file string
----@param cache table<string, table>
----@param order string[]
----@param max_entries integer
----@param entry table
----@return nil
-local function set_cached_entry(project_file, cache, order, max_entries, entry)
-	state.set_bounded_cache_entry(cache, order, max_entries, project_file, entry)
-end
-
----@param filepath string
 ---@return table<string, string>
 function M.detect_makefile_targets(filepath)
 	if not filepath or filepath == "" then
 		return {}
 	end
-	if type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
-
-	local root = resolve_project_root(filepath)
-	local makefile_path = vim.fs.joinpath(root, "Makefile")
-	if vim.fn.filereadable(makefile_path) ~= 1 then
-		return {}
-	end
-
-	local cached = get_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order)
+	local cache_key = common.normalize_path_text(filepath)
+	local cached = state.get_bounded_cache_entry(
+		state.make_target_cache,
+		state.make_target_cache_order,
+		cache_key
+	)
 	if cached then
 		return state.copy_string_map(cached.commands)
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("make", makefile_path)
+	local zig_lines = detect_backend.parse_project_lines_once("make-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		local commands = common.decode_backend_commands(zig_lines)
-		set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
-			mtime_key = state.get_file_mtime_key(makefile_path),
+		state.set_bounded_cache_entry(
+			state.make_target_cache,
+			state.make_target_cache_order,
+			state.MAKE_TARGET_CACHE_MAX,
+			cache_key,
+			{
+			mtime_key = "auto",
 			commands = state.copy_string_map(commands),
-		})
+			}
+		)
 		return commands
 	end
 
-	set_cached_entry(makefile_path, state.make_target_cache, state.make_target_cache_order, state.MAKE_TARGET_CACHE_MAX, {
-		mtime_key = state.get_file_mtime_key(makefile_path),
+	state.set_bounded_cache_entry(
+		state.make_target_cache,
+		state.make_target_cache_order,
+		state.MAKE_TARGET_CACHE_MAX,
+		cache_key,
+		{
+		mtime_key = "auto",
 		commands = {},
-	})
+		}
+	)
 	return {}
 end
 
@@ -85,34 +59,30 @@ function M.detect_package_scripts(filepath)
 	if not filepath or filepath == "" then
 		return {}
 	end
-	if type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
 
-	local root = resolve_project_root(filepath)
-	local package_json_path = vim.fs.joinpath(root, "package.json")
-	if vim.fn.filereadable(package_json_path) ~= 1 then
-		return {}
-	end
-
-	local package_manager = utils.detect_node_package_manager_root(root)
-	local cached = get_cached_entry(package_json_path, state.package_script_cache, state.package_script_cache_order)
+	local package_manager = utils.detect_node_package_manager(filepath, config.options.project)
+	local cache_key = common.normalize_path_text(filepath)
+	local cached = state.get_bounded_cache_entry(
+		state.package_script_cache,
+		state.package_script_cache_order,
+		cache_key
+	)
 	if cached and cached.package_manager == package_manager then
 		return state.copy_string_map(cached.commands)
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("package-json", package_json_path, {
+	local zig_lines = detect_backend.parse_project_lines_once("package-json-auto", filepath, {
 		"--package-manager=" .. package_manager,
 	})
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		local commands = common.decode_backend_commands(zig_lines)
-		set_cached_entry(
-			package_json_path,
+		state.set_bounded_cache_entry(
 			state.package_script_cache,
 			state.package_script_cache_order,
 			state.PACKAGE_SCRIPT_CACHE_MAX,
+			cache_key,
 			{
-				mtime_key = state.get_file_mtime_key(package_json_path),
+				mtime_key = "auto",
 				package_manager = package_manager,
 				commands = state.copy_string_map(commands),
 			}
@@ -120,13 +90,13 @@ function M.detect_package_scripts(filepath)
 		return commands
 	end
 
-	set_cached_entry(
-		package_json_path,
+	state.set_bounded_cache_entry(
 		state.package_script_cache,
 		state.package_script_cache_order,
 		state.PACKAGE_SCRIPT_CACHE_MAX,
+		cache_key,
 		{
-			mtime_key = state.get_file_mtime_key(package_json_path),
+			mtime_key = "auto",
 			package_manager = package_manager,
 			commands = {},
 		}
@@ -287,14 +257,11 @@ function M.detect_bazel_project_commands(filepath)
 		return {}
 	end
 
-	local root = systems.resolve_bazel_root(filepath)
-	if not root then
+	if not systems.resolve_bazel_root(filepath) then
 		return {}
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("bazel-workspace", root, {
-		"--match-path=" .. filepath,
-	})
+	local zig_lines = detect_backend.parse_project_lines_once("bazel-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		return common.decode_backend_commands(zig_lines)
 	end
