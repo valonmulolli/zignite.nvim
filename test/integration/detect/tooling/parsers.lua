@@ -178,7 +178,8 @@ local function test_cmake_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig CMake parser should execute via argv")
         assert(cmd[2] == "--project-parse", "CMake parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=cmake", "CMake parser should use the cmake parser kind")
+        assert(cmd[3] == "--kind=cmake-auto", "CMake parser should use the cmake-auto parser kind")
+        assert(cmd[4] == "--path=/tmp/cmakeproj/src/main.cpp", "CMake parser should target the current source path")
         return {
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake --build build --target clean",
@@ -266,7 +267,8 @@ local function test_meson_targets_use_zig_project_parser()
         vim.v.shell_error = 0
         assert(type(cmd) == "table", "Zig Meson parser should execute via argv")
         assert(cmd[2] == "--project-parse", "Meson parser should call the Zig project parser mode")
-        assert(cmd[3] == "--kind=meson", "Meson parser should use the meson parser kind")
+        assert(cmd[3] == "--kind=meson-auto", "Meson parser should use the meson-auto parser kind")
+        assert(cmd[4] == "--path=/tmp/mesonproj/src/main.cpp", "Meson parser should target the current source path")
         return {
             "COMMAND\tmeson-setup\tmeson setup build",
             "COMMAND\tmeson-clean\tmeson compile -C build --clean",

@@ -24,10 +24,12 @@ pub const Kind = enum {
     jvm_auto,
     gradle,
     cmake,
+    cmake_auto,
     bazel,
     bazel_auto,
     bazel_workspace,
     meson,
+    meson_auto,
     cargo,
     cargo_auto,
     pyproject,
@@ -181,10 +183,12 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "jvm-auto")) return .jvm_auto;
     if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
+    if (std.ascii.eqlIgnoreCase(value, "cmake-auto")) return .cmake_auto;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
     if (std.ascii.eqlIgnoreCase(value, "bazel-auto")) return .bazel_auto;
     if (std.ascii.eqlIgnoreCase(value, "bazel-workspace")) return .bazel_workspace;
     if (std.ascii.eqlIgnoreCase(value, "meson")) return .meson;
+    if (std.ascii.eqlIgnoreCase(value, "meson-auto")) return .meson_auto;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "cargo-auto")) return .cargo_auto;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
@@ -253,6 +257,12 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
         return allocator.dupe(u8, "");
     }
     if (kind == .go_auto) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .cmake_auto) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .meson_auto) {
         return allocator.dupe(u8, "");
     }
     if (kind == .make_auto) {
@@ -527,6 +537,19 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
         return;
     }
 
+    if (options.kind == .cmake_auto) {
+        const cmake_path = (try findParentFileAlloc(allocator, options.path, "CMakeLists.txt", 12)) orelse return;
+        defer allocator.free(cmake_path);
+        const cmake_contents = try common.readFileAlloc(allocator, cmake_path);
+        defer allocator.free(cmake_contents);
+        try writeOutput(stdout, allocator, .{
+            .kind = .cmake,
+            .path = cmake_path,
+            .match_path = options.match_path orelse options.path,
+        }, cmake_contents);
+        return;
+    }
+
     if (options.kind == .cmake) {
         const items = try cmake.parseTargets(allocator, contents, options.path, options.match_path);
         defer cmake.freeOwnedTargets(allocator, items);
@@ -617,6 +640,19 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             try stdout.print("COMMAND\trun\t{s}\n", .{preferred_run});
             try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
         }
+        return;
+    }
+
+    if (options.kind == .meson_auto) {
+        const meson_path = (try findParentFileAlloc(allocator, options.path, "meson.build", 12)) orelse return;
+        defer allocator.free(meson_path);
+        const meson_contents = try common.readFileAlloc(allocator, meson_path);
+        defer allocator.free(meson_contents);
+        try writeOutput(stdout, allocator, .{
+            .kind = .meson,
+            .path = meson_path,
+            .match_path = options.match_path orelse options.path,
+        }, meson_contents);
         return;
     }
 
@@ -907,10 +943,12 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .jvm_auto => return error.InvalidProjectParseKind,
         .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
+        .cmake_auto => return error.InvalidProjectParseKind,
         .bazel => return error.InvalidProjectParseKind,
         .bazel_auto => return error.InvalidProjectParseKind,
         .bazel_workspace => return error.InvalidProjectParseKind,
         .meson => return error.InvalidProjectParseKind,
+        .meson_auto => return error.InvalidProjectParseKind,
         .cargo => return error.InvalidProjectParseKind,
         .cargo_auto => return error.InvalidProjectParseKind,
         .pyproject => return error.InvalidProjectParseKind,

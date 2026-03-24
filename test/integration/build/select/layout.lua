@@ -362,8 +362,8 @@ local function test_build_picker_hides_redundant_cmake_aliases()
         end
     end
 
-    with_project_parse_backend("cmake", function(cmd)
-        assert(cmd[4] == "--path=/tmp/picker-cmake/CMakeLists.txt", "Picker should query the CMakeLists path")
+    with_project_parse_backend("cmake-auto", function(cmd)
+        assert(cmd[4] == "--path=/tmp/picker-cmake/src/main.cpp", "Picker should query the current source path")
         return {
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake --build build --target clean",
