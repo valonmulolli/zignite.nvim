@@ -37,9 +37,11 @@ local function test_c_detected_make_targets_in_picker()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make-auto" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             vim.v.shell_error = 0
             return {
+                "SYSTEM\tmake",
+                "ROOT\t/tmp/cdetect",
                 "COMMAND\tbench\tmake bench",
                 "COMMAND\ttest\tmake test",
             }

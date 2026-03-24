@@ -486,6 +486,45 @@ local function build_system_backend_lines(path, query, project_root)
 	return {}
 end
 
+---@param path string
+---@param project_root string|nil
+---@return string[]
+local function build_c_family_auto_lines(path, project_root)
+	local system_lines = build_system_backend_lines(path, "c-family", project_root)
+	local detected_system = nil
+	local detected_root = nil
+	for _, line in ipairs(system_lines) do
+		detected_system = line:match("^SYSTEM\t(.+)$") or detected_system
+		detected_root = line:match("^ROOT\t(.+)$") or detected_root
+	end
+
+	if detected_system == "make" then
+		local lines = vim.deepcopy(system_lines)
+		for _, line in ipairs(M.project_backend_lines["make-auto"] or {}) do
+			lines[#lines + 1] = line
+		end
+		return lines
+	end
+	if detected_system == "cmake" then
+		local root = detected_root or dirname(path)
+		local lines = vim.deepcopy(system_lines)
+		for _, line in ipairs(build_cmake_backend_lines(root)) do
+			lines[#lines + 1] = line
+		end
+		return lines
+	end
+	if detected_system == "meson" then
+		local root = detected_root or dirname(path)
+		local lines = vim.deepcopy(system_lines)
+		for _, line in ipairs(build_meson_backend_lines(root)) do
+			lines[#lines + 1] = line
+		end
+		return lines
+	end
+
+	return system_lines
+end
+
 ---@param cmd string[]|string
 ---@param prefix string
 ---@param default string|boolean|nil
@@ -793,6 +832,7 @@ function M.parse_project_daemon_request(request_text)
 	end
 	local lines = args.kind == "system"
 			and build_system_backend_lines(args.path or "", args.query, args["project-root"])
+		or (args.kind == "c-family-auto" and build_c_family_auto_lines(args.path or "", args["project-root"]))
 		or (args.kind == "cmake" and build_cmake_backend_lines(dirname(args.path or "")))
 		or (args.kind == "meson" and build_meson_backend_lines(dirname(args.path or "")))
 		or (args.kind == "cargo-auto" and (M.project_backend_lines.cargo or {}))

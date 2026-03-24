@@ -17,7 +17,7 @@ local function find_arg(cmd, prefix)
     return nil
 end
 
----@param kind string
+---@param kind string|string[]
 ---@param responder fun(cmd: string[]): string[]|nil
 ---@param fn fun()
 ---@return nil
@@ -35,7 +35,8 @@ local function with_project_parse_backend(kind, responder, fn)
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=" .. kind then
+        local kinds = type(kind) == "table" and kind or { kind }
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and vim.tbl_contains(kinds, (cmd[3] or ""):match("^%-%-kind=(.+)$")) then
             vim.v.shell_error = 0
             return responder(cmd) or {}
         end
@@ -80,9 +81,9 @@ local function test_cpp_make_project_filters_irrelevant_commands()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=make-auto" then
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             vim.v.shell_error = 0
-            return { "COMMAND\tmain\tmake main" }
+            return { "SYSTEM\tmake", "ROOT\t/tmp/makeproj", "COMMAND\tmain\tmake main" }
         end
         if original_systemlist then
             return original_systemlist(cmd)
@@ -162,9 +163,12 @@ local function test_cpp_cmake_project_parses_targets_and_ignores_generated_makef
     end
 
     local commands
-    with_project_parse_backend("cmake-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         assert(cmd[4] == "--path=/tmp/cmakeproj/src/main.cpp", "CMake parser should query the current source path")
         return {
+            "SYSTEM\tcmake",
+            "ROOT\t/tmp/cmakeproj",
+            "BUILD_READY\t1",
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake --build build --target clean",
             "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
@@ -267,12 +271,15 @@ local function test_cpp_cmake_project_bootstraps_missing_build_dir()
     end
 
     local commands
-    with_project_parse_backend("cmake-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         assert(
             cmd[4] == "--path=/tmp/cmakebootstrap/src/main.cpp",
             "CMake parser should query the current source path"
         )
         return {
+            "SYSTEM\tcmake",
+            "ROOT\t/tmp/cmakebootstrap",
+            "BUILD_READY\t0",
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake -E rm -rf build",
             "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
@@ -363,9 +370,12 @@ local function test_cpp_meson_project_parses_targets()
     end
 
     local commands
-    with_project_parse_backend("meson-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         assert(cmd[4] == "--path=/tmp/mesonproj/src/main.cpp", "Meson parser should query the current source path")
         return {
+            "SYSTEM\tmeson",
+            "ROOT\t/tmp/mesonproj",
+            "BUILD_READY\t1",
             "COMMAND\tmeson-setup\tmeson setup build",
             "COMMAND\tmeson-clean\tmeson compile -C build --clean",
             "COMMAND\tmeson-test\tmeson test -C build",
@@ -459,12 +469,15 @@ local function test_cpp_meson_project_bootstraps_missing_build_dir()
     end
 
     local commands
-    with_project_parse_backend("meson-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         assert(
             cmd[4] == "--path=/tmp/mesonbootstrap/src/main.cpp",
             "Meson parser should query the current source path"
         )
         return {
+            "SYSTEM\tmeson",
+            "ROOT\t/tmp/mesonbootstrap",
+            "BUILD_READY\t0",
             "COMMAND\tmeson-setup\tmeson setup build",
             "COMMAND\tmeson-clean\tcmake -E rm -rf build",
             "COMMAND\tmeson-test\tmeson test -C build",
@@ -545,10 +558,13 @@ local function test_cpp_cmake_target_cache_is_file_specific()
 
     local first
     local second
-    with_project_parse_backend("cmake-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         local source_path = find_arg(cmd, "--path=")
         if source_path == "/tmp/cmakecache/hello_c.c" then
             return {
+                "SYSTEM\tcmake",
+                "ROOT\t/tmp/cmakecache",
+                "BUILD_READY\t1",
                 "TARGET\thello_c\t1",
                 "COMMAND\tbuild\tcmake --build build",
                 "COMMAND\trun\tcmake --build build --target hello_c && ./build/hello_c",
@@ -561,6 +577,9 @@ local function test_cpp_cmake_target_cache_is_file_specific()
         end
         if source_path == "/tmp/cmakecache/hello_cpp.cpp" then
             return {
+                "SYSTEM\tcmake",
+                "ROOT\t/tmp/cmakecache",
+                "BUILD_READY\t1",
                 "TARGET\thello_cpp\t1",
                 "COMMAND\tbuild\tcmake --build build",
                 "COMMAND\trun\tcmake --build build --target hello_cpp && ./build/hello_cpp",
@@ -624,10 +643,13 @@ local function test_cpp_meson_target_cache_is_file_specific()
 
     local first
     local second
-    with_project_parse_backend("meson-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         local source_path = find_arg(cmd, "--path=")
         if source_path == "/tmp/mesoncache/hello_c.c" then
             return {
+                "SYSTEM\tmeson",
+                "ROOT\t/tmp/mesoncache",
+                "BUILD_READY\t1",
                 "TARGET\thello_c\t1",
                 "COMMAND\tbuild\tmeson compile -C build",
                 "COMMAND\trun\tmeson compile -C build hello_c && ./build/hello_c",
@@ -640,6 +662,9 @@ local function test_cpp_meson_target_cache_is_file_specific()
         end
         if source_path == "/tmp/mesoncache/hello_cpp.cpp" then
             return {
+                "SYSTEM\tmeson",
+                "ROOT\t/tmp/mesoncache",
+                "BUILD_READY\t1",
                 "TARGET\thello_cpp\t1",
                 "COMMAND\tbuild\tmeson compile -C build",
                 "COMMAND\trun\tmeson compile -C build hello_cpp && ./build/hello_cpp",

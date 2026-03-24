@@ -23,6 +23,7 @@ pub const Kind = enum {
     maven,
     jvm_auto,
     gradle,
+    c_family_auto,
     cmake,
     cmake_auto,
     bazel,
@@ -182,6 +183,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "maven")) return .maven;
     if (std.ascii.eqlIgnoreCase(value, "jvm-auto")) return .jvm_auto;
     if (std.ascii.eqlIgnoreCase(value, "gradle")) return .gradle;
+    if (std.ascii.eqlIgnoreCase(value, "c-family-auto")) return .c_family_auto;
     if (std.ascii.eqlIgnoreCase(value, "cmake")) return .cmake;
     if (std.ascii.eqlIgnoreCase(value, "cmake-auto")) return .cmake_auto;
     if (std.ascii.eqlIgnoreCase(value, "bazel")) return .bazel;
@@ -251,6 +253,9 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
         return allocator.dupe(u8, "");
     }
     if (kind == .jvm_auto) {
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .c_family_auto) {
         return allocator.dupe(u8, "");
     }
     if (kind == .cargo_auto) {
@@ -506,6 +511,52 @@ pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Optio
             return;
         }
 
+        return;
+    }
+
+    if (options.kind == .c_family_auto) {
+        const result = try build_system.detect(allocator, .c_family, options.path, options.project_root);
+        defer build_system.freeOwnedResult(allocator, result);
+
+        if (result.root) |root| {
+            try stdout.print("ROOT\t{s}\n", .{root});
+        }
+        if (result.system) |name| {
+            try stdout.print("SYSTEM\t{s}\n", .{name});
+        }
+        if (result.build_ready) |ready| {
+            try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
+        }
+
+        const system = result.system orelse return;
+        if (std.mem.eql(u8, system, "make")) {
+            const auto_contents = try readProjectFile(allocator, .make_auto, options.path);
+            defer allocator.free(auto_contents);
+            try writeOutput(stdout, allocator, .{
+                .kind = .make_auto,
+                .path = options.path,
+                .project_root = result.root,
+            }, auto_contents);
+            return;
+        }
+        if (std.mem.eql(u8, system, "cmake")) {
+            try writeOutput(stdout, allocator, .{
+                .kind = .cmake_auto,
+                .path = options.path,
+                .match_path = options.match_path,
+                .project_root = result.root,
+            }, "");
+            return;
+        }
+        if (std.mem.eql(u8, system, "meson")) {
+            try writeOutput(stdout, allocator, .{
+                .kind = .meson_auto,
+                .path = options.path,
+                .match_path = options.match_path,
+                .project_root = result.root,
+            }, "");
+            return;
+        }
         return;
     }
 
@@ -941,6 +992,7 @@ fn parseNames(allocator: std.mem.Allocator, kind: Kind, contents: []const u8) ![
         .package_json, .package_json_auto => try package_json.parseScripts(allocator, contents, &names),
         .maven => try maven.parseGoals(allocator, contents, &names),
         .jvm_auto => return error.InvalidProjectParseKind,
+        .c_family_auto => return error.InvalidProjectParseKind,
         .gradle => try gradle.parseTasks(allocator, contents, &names),
         .cmake => return error.InvalidProjectParseKind,
         .cmake_auto => return error.InvalidProjectParseKind,
@@ -1409,4 +1461,35 @@ test "writeOutput emits bazel workspace commands" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbazel-run\tbazel run //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_BUILD\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_RUN\tbazel run //app:main\n") != null);
+}
+
+test "writeOutput emits c-family auto commands for nested cmake source" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src/nested");
+    try tmp.dir.makePath("build");
+    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data =
+        \\project(app)
+        \\add_executable(app src/nested/main.cpp)
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "build/CMakeCache.txt", .data = "" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const match_path = try std.fs.path.join(allocator, &.{ root, "src", "nested", "main.cpp" });
+    defer allocator.free(match_path);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeOutput(out.writer(allocator), allocator, .{
+        .kind = .c_family_auto,
+        .path = match_path,
+    }, "");
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "SYSTEM\tcmake\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "ROOT\t") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tcmake-build-app\tcmake --build build --target app\n") != null);
 }
