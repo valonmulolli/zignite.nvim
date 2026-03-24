@@ -7,10 +7,7 @@ M.DETECT_RUNTIME_DEFAULT_TTL_MS = 15000
 M.DETECT_RUNTIME_FAILED_TTL_MS = 1000
 M.SYSTEM_RUNTIME_DEFAULT_TTL_MS = 15000
 M.PACKAGE_SCRIPT_CACHE_MAX = 128
-M.MAKE_TARGET_CACHE_MAX = 128
 M.C_FAMILY_PROJECT_CACHE_MAX = 128
-M.CMAKE_TARGET_CACHE_MAX = 128
-M.MESON_TARGET_CACHE_MAX = 128
 M.CARGO_TARGET_CACHE_MAX = 128
 M.GO_PROJECT_CACHE_MAX = 128
 M.DETECT_RUNTIME_CACHE_MAX = 256
@@ -23,21 +20,9 @@ M.package_script_cache = {}
 ---@type string[]
 M.package_script_cache_order = {}
 ---@type table<string, table>
-M.make_target_cache = {}
----@type string[]
-M.make_target_cache_order = {}
----@type table<string, table>
 M.c_family_project_cache = {}
 ---@type string[]
 M.c_family_project_cache_order = {}
----@type table<string, table>
-M.cmake_target_cache = {}
----@type string[]
-M.cmake_target_cache_order = {}
----@type table<string, table>
-M.meson_target_cache = {}
----@type string[]
-M.meson_target_cache_order = {}
 ---@type table<string, table>
 M.cargo_target_cache = {}
 ---@type string[]
@@ -147,14 +132,8 @@ function M.reset()
 	clear_table(M.last_build_command_by_filetype)
 	clear_table(M.package_script_cache)
 	clear_table(M.package_script_cache_order)
-	clear_table(M.make_target_cache)
-	clear_table(M.make_target_cache_order)
 	clear_table(M.c_family_project_cache)
 	clear_table(M.c_family_project_cache_order)
-	clear_table(M.cmake_target_cache)
-	clear_table(M.cmake_target_cache_order)
-	clear_table(M.meson_target_cache)
-	clear_table(M.meson_target_cache_order)
 	clear_table(M.cargo_target_cache)
 	clear_table(M.cargo_target_cache_order)
 	clear_table(M.go_project_cache)
