@@ -29,14 +29,7 @@ local C_FAMILY_BUILD_SOURCES = {
 	},
 }
 
-M.detect_cmake_project_commands = cmake.detect_cmake_project_commands
-M.detect_meson_project_commands = meson.detect_meson_project_commands
-M.detect_makefile_targets = project_backend.detect_makefile_targets
 M.detect_package_scripts = project_backend.detect_package_scripts
-M.detect_java_like_project_commands = project_backend.detect_java_like_project_commands
-M.detect_bazel_project_commands = project_backend.detect_bazel_project_commands
-M.detect_cargo_project_commands = project_backend.detect_cargo_project_commands
-M.detect_go_project_commands = project_backend.detect_go_project_commands
 
 ---@param filetype string
 ---@param filepath string
