@@ -350,9 +350,7 @@ function M.detect_cmake_project_commands(filepath)
 		return state.copy_string_map(cached.commands), nil
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("cmake", cmake_lists_path, {
-		"--match-path=" .. filepath,
-	})
+	local zig_lines = detect_backend.parse_project_lines_once("cmake-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		return store_system_cached_result(
 			state.cmake_target_cache,
@@ -410,9 +408,7 @@ function M.detect_meson_project_commands(filepath)
 		return state.copy_string_map(cached.commands), nil
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("meson", meson_build_path, {
-		"--match-path=" .. filepath,
-	})
+	local zig_lines = detect_backend.parse_project_lines_once("meson-auto", filepath)
 	if type(zig_lines) == "table" and #zig_lines > 0 then
 		return store_system_cached_result(
 			state.meson_target_cache,
