@@ -159,7 +159,7 @@ local function test_cmake_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.cmake")
+    local cmake_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -247,7 +247,7 @@ local function test_meson_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.meson")
+    local meson_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -331,7 +331,7 @@ local function test_cmake_targets_use_basic_lua_fallback()
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.cmake")
+    local cmake_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -372,7 +372,7 @@ local function test_meson_targets_use_basic_lua_fallback()
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.meson")
+    local meson_parser = require("zignite.build.project_backend")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile

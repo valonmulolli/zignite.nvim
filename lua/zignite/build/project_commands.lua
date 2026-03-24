@@ -1,6 +1,6 @@
 local config = require("zignite.config")
 local detect = require("zignite.build.detect")
-local parsers = require("zignite.build.project_parsers")
+local backend = require("zignite.build.project_backend")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")
 local utils = require("zignite.utils")
@@ -384,7 +384,7 @@ end
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
 function M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-	return parsers.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
+	return backend.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
 end
 
 ---@param filetype string
@@ -447,7 +447,7 @@ function M.get_configured_build_commands(filetype, filepath)
 	if filetype == "python" then
 		return apply_python_tool_defaults(filepath, configured)
 	end
-	local parser_result = parsers.detect_parser_backed_build_result(filetype, filepath)
+	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
 	if parser_result then
 		local detect_enabled = config_detection_enabled()
 		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
@@ -459,7 +459,7 @@ function M.get_configured_build_commands(filetype, filepath)
 		return configured
 	end
 
-	local c_family_result = parsers.detect_c_family_build_result(filepath)
+	local c_family_result = backend.detect_c_family_build_result(filepath)
 	if not c_family_result or c_family_result.system == nil then
 		return configured
 	end
@@ -545,7 +545,7 @@ function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds,
 		and type(is_detection_enabled) == "function"
 		and is_detection_enabled("js_package_scripts")
 	then
-		local detected_scripts = parsers.detect_package_scripts(filepath)
+		local detected_scripts = backend.detect_package_scripts(filepath)
 		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
 			if type(detected_scripts[candidate]) == "string" then
 				return candidate
