@@ -1,5 +1,5 @@
 local config = require("zignite.config")
-local backend = require("zignite.build.project_backend")
+local backend = require("zignite.build.project_query")
 local commands = require("zignite.build.project_commands")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.systems")

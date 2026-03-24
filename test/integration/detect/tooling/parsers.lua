@@ -100,7 +100,7 @@ local function test_make_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.project_backend")
+    local make_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -167,7 +167,7 @@ local function test_cmake_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.project_backend")
+    local cmake_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -260,7 +260,7 @@ local function test_meson_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.project_backend")
+    local meson_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -349,7 +349,7 @@ local function test_cmake_targets_use_basic_lua_fallback()
         build_commands = {},
     })
 
-    local cmake_parser = require("zignite.build.project_backend")
+    local cmake_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -389,7 +389,7 @@ local function test_meson_targets_use_basic_lua_fallback()
         build_commands = {},
     })
 
-    local meson_parser = require("zignite.build.project_backend")
+    local meson_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -429,7 +429,7 @@ local function test_maven_project_uses_zig_project_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.project_backend")
+    local jvm_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -506,7 +506,7 @@ local function test_gradle_project_uses_zig_project_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.project_backend")
+    local jvm_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -584,7 +584,7 @@ local function test_maven_project_requires_zig_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.project_backend")
+    local jvm_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
 
@@ -622,7 +622,7 @@ local function test_gradle_project_requires_zig_parser()
         build_commands = {},
     })
 
-    local jvm_parser = require("zignite.build.project_backend")
+    local jvm_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
 
@@ -660,7 +660,7 @@ local function test_cargo_targets_use_zig_project_parser()
         build_commands = {},
     })
 
-    local cargo_parser = require("zignite.build.project_backend")
+    local cargo_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -737,7 +737,7 @@ local function test_cargo_targets_require_zig_parser()
         build_commands = {},
     })
 
-    local cargo_parser = require("zignite.build.project_backend")
+    local cargo_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
@@ -846,7 +846,7 @@ local function test_go_project_commands_use_zig_project_parser()
         build_commands = {},
     })
 
-    local go_parser = require("zignite.build.project_backend")
+    local go_parser = require("zignite.build.project_query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
@@ -925,7 +925,7 @@ local function test_make_targets_use_zig_project_daemon()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.project_backend")
+    local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1009,7 +1009,7 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.project_backend")
+    local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1106,7 +1106,7 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.project_backend")
+    local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
@@ -1190,7 +1190,7 @@ local function test_make_targets_use_multiline_project_daemon_response()
         build_commands = {},
     })
 
-    local make_parser = require("zignite.build.project_backend")
+    local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils")
     local detect_backend = require("zignite.build.detect.backend")
     local original_get_project_root = utils_module.get_project_root
