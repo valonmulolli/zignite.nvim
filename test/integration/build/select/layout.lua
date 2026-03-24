@@ -362,9 +362,12 @@ local function test_build_picker_hides_redundant_cmake_aliases()
         end
     end
 
-    with_project_parse_backend("cmake-auto", function(cmd)
+    with_project_parse_backend("c-family-auto", function(cmd)
         assert(cmd[4] == "--path=/tmp/picker-cmake/src/main.cpp", "Picker should query the current source path")
         return {
+            "SYSTEM\tcmake",
+            "ROOT\t/tmp/picker-cmake",
+            "BUILD_READY\t1",
             "COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
             "COMMAND\tcmake-clean\tcmake --build build --target clean",
             "COMMAND\tcmake-debug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
