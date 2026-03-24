@@ -191,7 +191,7 @@ local function test_picker_async_live_merge_refresh()
 		},
 	})
 
-		local commands_module = require("zignite.build.project_commands")
+		local commands_module = require("zignite.build.command_policy")
 		local original_detect_async = commands_module.detect_tool_commands_for_filetype_async
 	vim.bo.filetype = "go"
 	local original_expand = vim.fn.expand
@@ -467,7 +467,7 @@ local function test_cached_zig_system_results_take_precedence()
 		build_commands = {},
 	})
 
-	local systems = require("zignite.build.systems")
+	local systems = require("zignite.build.system_runtime")
 	local utils_module = require("zignite.utils")
 	local original_get_project_root = utils_module.get_project_root
 	local original_filereadable = vim.fn.filereadable
@@ -546,7 +546,7 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 		},
 	})
 
-	local systems = require("zignite.build.systems")
+	local systems = require("zignite.build.system_runtime")
 	local detect_backend = require("zignite.build.detect.backend")
 	local utils_module = require("zignite.utils")
 	local original_get_project_root = utils_module.get_project_root
