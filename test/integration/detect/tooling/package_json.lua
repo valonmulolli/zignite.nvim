@@ -100,7 +100,7 @@ local function test_javascript_package_scripts_use_zig_project_parser()
         assert(cmd[2] == "--project-parse", "Package parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=package-json-auto", "Package parser should use the package-json-auto parser kind")
         assert(cmd[4] == "--path=/tmp/jsapp/src/main.js", "Package parser should target the current source path")
-        assert(cmd[5] == "--package-manager=npm", "Package parser should pass the detected package manager")
+        assert(cmd[5] == nil, "Package parser should resolve package manager inside Zig")
 	        return {
 	            "COMMAND\tinstall\tnpm install",
 	            "COMMAND\tdev\tnpm run dev",
@@ -167,13 +167,13 @@ local function test_javascript_package_scripts_detect_package_manager()
         end
         return 0
     end
-    vim.fn.systemlist = function(cmd)
-	        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
-	            vim.v.shell_error = 0
-	            assert(cmd[5] == "--package-manager=pnpm", "Package parser should pass the detected package manager")
-	            return {
-	                "COMMAND\tinstall\tpnpm install",
-	                "COMMAND\tdev\tpnpm run dev",
+	    vim.fn.systemlist = function(cmd)
+		        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
+		            vim.v.shell_error = 0
+		            assert(cmd[5] == nil, "Package parser should resolve package manager inside Zig")
+		            return {
+		                "COMMAND\tinstall\tpnpm install",
+		                "COMMAND\tdev\tpnpm run dev",
 	                "COMMAND\tlive\tpnpm run dev",
 	                "COMMAND\tlint\tpnpm run lint",
 	            }

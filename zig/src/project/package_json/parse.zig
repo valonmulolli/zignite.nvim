@@ -37,6 +37,34 @@ pub fn formatInstallCommandAlloc(allocator: std.mem.Allocator, package_manager: 
     return allocator.dupe(u8, "npm install");
 }
 
+pub fn detectPackageManager(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    contents: []const u8,
+) ![]const u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, contents, .{}) catch null;
+    defer if (parsed) |value| value.deinit();
+
+    if (parsed) |value| {
+        if (value.value == .object) {
+            if (value.value.object.get("packageManager")) |package_manager| {
+                if (package_manager == .string) {
+                    const manager_name = std.mem.sliceTo(package_manager.string, '@');
+                    if (std.mem.eql(u8, manager_name, "npm")) return "npm";
+                    if (std.mem.eql(u8, manager_name, "pnpm")) return "pnpm";
+                    if (std.mem.eql(u8, manager_name, "yarn")) return "yarn";
+                    if (std.mem.eql(u8, manager_name, "bun")) return "bun";
+                }
+            }
+        }
+    }
+
+    if (pathExists(allocator, root, "bun.lockb") or pathExists(allocator, root, "bun.lock")) return "bun";
+    if (pathExists(allocator, root, "pnpm-lock.yaml")) return "pnpm";
+    if (pathExists(allocator, root, "yarn.lock")) return "yarn";
+    return "npm";
+}
+
 pub fn selectLiveScriptName(names: []const []const u8) ?[]const u8 {
     const priority = [_][]const u8{ "live", "dev", "watch", "serve", "start", "preview" };
     for (priority) |candidate| {
@@ -45,6 +73,12 @@ pub fn selectLiveScriptName(names: []const []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+fn pathExists(allocator: std.mem.Allocator, root: []const u8, filename: []const u8) bool {
+    const path = std.fs.path.join(allocator, &.{ root, filename }) catch return false;
+    defer allocator.free(path);
+    return std.fs.cwd().access(path, .{}) == void{};
 }
 
 pub fn parseScripts(
@@ -124,4 +158,26 @@ test "select live script prefers runtime-oriented scripts" {
 
     const missing = [_][]const u8{ "build", "lint" };
     try std.testing.expect(selectLiveScriptName(&missing) == null);
+}
+
+test "detect package manager prefers packageManager field" {
+    try std.testing.expectEqualStrings(
+        "yarn",
+        try detectPackageManager(
+            std.testing.allocator,
+            "/tmp/unused",
+            \\{"packageManager":"yarn@4.6.0"}
+        ),
+    );
+}
+
+test "detect package manager falls back to lockfiles" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "pnpm-lock.yaml", .data = "lockfileVersion: '9.0'" });
+
+    const root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+
+    try std.testing.expectEqualStrings("pnpm", try detectPackageManager(std.testing.allocator, root, "{}"));
 }

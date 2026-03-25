@@ -181,20 +181,17 @@ function M.detect_package_scripts(filepath)
 		return {}
 	end
 
-	local package_manager = utils.detect_node_package_manager(filepath, config.options.project)
 	local cache_key = normalize_path_text(filepath)
 	local cached = state.get_bounded_cache_entry(
 		state.package_script_cache,
 		state.package_script_cache_order,
 		cache_key
 	)
-	if cached and cached.package_manager == package_manager then
+	if cached then
 		return state.copy_string_map(cached.commands)
 	end
 
-	local commands = parse_backend_command_map("package-json-auto", filepath, {
-		"--package-manager=" .. package_manager,
-	})
+	local commands = parse_backend_command_map("package-json-auto", filepath)
 	store_command_cache_entry(
 		state.package_script_cache,
 		state.package_script_cache_order,
@@ -202,7 +199,6 @@ function M.detect_package_scripts(filepath)
 		cache_key,
 		{
 			mtime_key = "auto",
-			package_manager = package_manager,
 			commands = commands,
 		}
 	)
