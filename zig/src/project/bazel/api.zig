@@ -1,7 +1,7 @@
-const model = @import("bazel/model.zig");
-const infer = @import("bazel/infer.zig");
-const parse = @import("bazel/parse.zig");
-const workspace = @import("bazel/workspace.zig");
+const model = @import("model.zig");
+const infer = @import("infer.zig");
+const parse = @import("parse.zig");
+const workspace = @import("workspace.zig");
 
 pub const Target = model.Target;
 pub const CommandEntry = model.CommandEntry;

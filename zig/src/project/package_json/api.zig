@@ -1,4 +1,4 @@
-const parse = @import("package_json/parse.zig");
+const parse = @import("parse.zig");
 
 pub const formatScriptCommandAlloc = parse.formatScriptCommandAlloc;
 pub const parseScripts = parse.parseScripts;

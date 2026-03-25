@@ -1,8 +1,8 @@
 const std = @import("std");
-const bazel = @import("../../bazel.zig");
+const bazel = @import("../../bazel/api.zig");
 const build_common = @import("../../../build/common.zig");
-const cmake = @import("../../cmake.zig");
-const meson = @import("../../meson.zig");
+const cmake = @import("../../cmake/api.zig");
+const meson = @import("../../meson/api.zig");
 const types = @import("../types.zig");
 
 const Options = types.Options;
