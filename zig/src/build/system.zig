@@ -1,11 +1,13 @@
 const std = @import("std");
 const common = @import("common.zig");
 const make = @import("../project/make/api.zig");
+const package_json = @import("../project/package_json/api.zig");
 
 pub const Query = enum {
     c_family,
     bazel_root,
     jvm_root,
+    node_root,
 };
 
 pub const CommandEntry = struct {
@@ -24,6 +26,7 @@ pub fn parseQuery(value: []const u8) !Query {
     if (std.ascii.eqlIgnoreCase(value, "c-family")) return .c_family;
     if (std.ascii.eqlIgnoreCase(value, "bazel-root")) return .bazel_root;
     if (std.ascii.eqlIgnoreCase(value, "jvm-root")) return .jvm_root;
+    if (std.ascii.eqlIgnoreCase(value, "node-root")) return .node_root;
     return error.InvalidSystemQuery;
 }
 
@@ -47,6 +50,7 @@ pub fn detect(
         .c_family => try detectCFamily(allocator, path, project_root),
         .bazel_root => try detectBazelRoot(allocator, path, project_root),
         .jvm_root => try detectJvmRoot(allocator, path, project_root),
+        .node_root => try detectNodeRoot(allocator, path, project_root),
     };
 }
 
@@ -379,6 +383,27 @@ fn detectJvmRoot(
     return .{};
 }
 
+fn detectNodeRoot(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    project_root: ?[]const u8,
+) !Result {
+    const markers = &.{ "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock" };
+
+    if (project_root) |root| {
+        if (root.len > 0 and rootHasAnyMarker(root, markers)) {
+            return try buildNodeResult(allocator, root);
+        }
+    }
+
+    if (try findRootForFilesAlloc(allocator, path, markers, 12)) |root| {
+        defer allocator.free(root);
+        return try buildNodeResult(allocator, root);
+    }
+
+    return .{};
+}
+
 fn resolveBaseRoot(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -466,6 +491,17 @@ fn buildJvmResult(allocator: std.mem.Allocator, root: []const u8, system: []cons
     return .{ .root = owned_root, .system = system, .commands = commands };
 }
 
+fn buildNodeResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildNodeCommandsAlloc(allocator, root);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "node", .commands = commands };
+}
+
 fn rootHasAnyMarker(root: []const u8, markers: []const []const u8) bool {
     return pathHasAnyMarker(root, markers);
 }
@@ -487,6 +523,37 @@ fn pathHasFile(root: []const u8, name: []const u8) bool {
     }
     std.fs.cwd().access(full_path, .{}) catch return false;
     return true;
+}
+
+fn buildNodeCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const package_json_path = try std.fs.path.join(allocator, &.{ root, "package.json" });
+    defer allocator.free(package_json_path);
+    const contents = if (pathExists(package_json_path))
+        try common.readFileAlloc(allocator, package_json_path)
+    else
+        try allocator.dupe(u8, "{}");
+    defer allocator.free(contents);
+
+    const manager = try package_json.detectPackageManager(allocator, root, contents);
+    const start_command = try package_json.formatScriptCommandAlloc(allocator, manager, "start");
+    const dev_command = try package_json.formatScriptCommandAlloc(allocator, manager, "dev");
+    const build_command = try package_json.formatScriptCommandAlloc(allocator, manager, "build");
+    const test_command = try package_json.formatScriptCommandAlloc(allocator, manager, "test");
+    const install_command = try package_json.formatInstallCommandAlloc(allocator, manager);
+
+    try appendOwnedCommand(&commands, allocator, "start", start_command);
+    try appendOwnedCommand(&commands, allocator, "dev", dev_command);
+    try appendOwnedCommand(&commands, allocator, "build", build_command);
+    try appendOwnedCommand(&commands, allocator, "test", test_command);
+    try appendOwnedCommand(&commands, allocator, "install", install_command);
+
+    return try commands.toOwnedSlice(allocator);
 }
 
 test "detect c family system and build readiness" {
@@ -634,6 +701,28 @@ test "detect jvm root emits baseline gradle commands" {
     try std.testing.expectEqualStrings("gradle", result.system.?);
     try std.testing.expectEqualStrings("./gradlew build", findCommand(result.commands, "build").?);
     try std.testing.expectEqualStrings("./gradlew clean", findCommand(result.commands, "clean").?);
+}
+
+test "detect node root emits package-manager baseline commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "package.json", .data = "{}" });
+    try tmp.dir.writeFile(.{ .sub_path = "pnpm-lock.yaml", .data = "lockfileVersion: '9.0'" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.ts" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .node_root, filepath, root);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings("node", result.system.?);
+    try std.testing.expectEqualStrings("pnpm run build", findCommand(result.commands, "build").?);
+    try std.testing.expectEqualStrings("pnpm install", findCommand(result.commands, "install").?);
 }
 
 test "detect bazel root by walking parents" {

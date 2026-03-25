@@ -10,6 +10,7 @@ M.BAZEL_ROOT_MARKERS = { "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" }
 M.CMAKE_ROOT_MARKERS = { "CMakeLists.txt" }
 M.MESON_ROOT_MARKERS = { "meson.build" }
 local JVM_ROOT_MARKERS = { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }
+local NODE_ROOT_MARKERS = { "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock" }
 local GRADLE_ROOT_MARKERS = { "gradlew", "build.gradle", "build.gradle.kts" }
 local C_FAMILY_ROOT_CHECKS = {
 	{ system = "bazel", markers = M.BAZEL_ROOT_MARKERS },
@@ -530,6 +531,9 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 	then
 		start_query("jvm-root", project_root)
 	end
+	if filetype == "javascript" or filetype == "typescript" then
+		start_query("node-root", project_root)
+	end
 	if
 		is_detection_enabled("bazel_project")
 		and M.supports_bazel_project_commands(filetype)
@@ -569,7 +573,13 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 		}
 		signature = table.concat(signatures, "|")
 	elseif filetype == "javascript" or filetype == "typescript" then
-		signature = "package.json:" .. M.detect_file_signature(vim.fs.joinpath(root, "package.json"))
+		signature = table.concat({
+			"package.json:" .. M.detect_file_signature(vim.fs.joinpath(root, "package.json")),
+			"pnpm-lock.yaml:" .. M.detect_file_signature(vim.fs.joinpath(root, "pnpm-lock.yaml")),
+			"yarn.lock:" .. M.detect_file_signature(vim.fs.joinpath(root, "yarn.lock")),
+			"bun.lockb:" .. M.detect_file_signature(vim.fs.joinpath(root, "bun.lockb")),
+			"bun.lock:" .. M.detect_file_signature(vim.fs.joinpath(root, "bun.lock")),
+		}, "|")
 	elseif filetype == "java" or filetype == "kotlin" then
 		local signatures = {
 			"pom.xml:" .. M.detect_file_signature(vim.fs.joinpath(root, "pom.xml")),
@@ -620,6 +630,14 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 			end
 			return bazel_signature
 		end
+	end
+
+	if filetype == "javascript" or filetype == "typescript" then
+		local node_signature = "node:" .. M.build_marker_signature(root, NODE_ROOT_MARKERS)
+		if signature and signature ~= "" then
+			return signature .. "|" .. node_signature
+		end
+		return node_signature
 	end
 
 	return signature

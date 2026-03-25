@@ -1,6 +1,10 @@
 const std = @import("std");
 const project_common = @import("../project/core/common.zig");
 
+pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return project_common.readFileAlloc(allocator, path);
+}
+
 pub fn hasCmakeBuildTree(root: []const u8) bool {
     return buildJoinedPathExists(std.heap.page_allocator, root, &.{ "build", "CMakeCache.txt" });
 }

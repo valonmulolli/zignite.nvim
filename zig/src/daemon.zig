@@ -168,7 +168,7 @@ fn handleProjectFrame(
     try stdout.print("{s} {d}\n", .{ PROJECT_RES_BEGIN, header.request_id });
     const options = project.parseArgs(request_args.items);
     if (options) |parsed| {
-        const contents = project.readProjectFile(allocator, parsed.path);
+        const contents = project.readProjectFile(allocator, parsed.kind, parsed.path);
         if (contents) |payload| {
             defer allocator.free(payload);
             project.writeOutput(stdout, allocator, parsed, payload) catch |err| {

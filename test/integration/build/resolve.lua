@@ -491,6 +491,9 @@ local function test_cached_zig_system_results_take_precedence()
 		if path:match("^/tmp/cached%-cfamily/") then
 			return "/tmp/cached-cfamily"
 		end
+		if path:match("^/tmp/cached%-node/") then
+			return "/tmp/cached-node"
+		end
 		if path:match("^/tmp/cached%-bazel/") then
 			return "/tmp/cached-bazel/app"
 		end
@@ -504,6 +507,9 @@ local function test_cached_zig_system_results_take_precedence()
 	end
 	vim.fn.filereadable = function(path)
 		if path == "/tmp/cached-cfamily/CMakeLists.txt" then
+			return 1
+		end
+		if path == "/tmp/cached-node/package.json" or path == "/tmp/cached-node/pnpm-lock.yaml" then
 			return 1
 		end
 		if original_filereadable then
@@ -560,6 +566,17 @@ local function test_cached_zig_system_results_take_precedence()
 			clean = "./gradlew clean",
 		},
 	})
+	seed_system_runtime_cache("node-root", "/tmp/cached-node/src/main.ts", "/tmp/cached-node", {
+		root = "/tmp/zig-node",
+		system = "node",
+		commands = {
+			start = "pnpm start",
+			dev = "pnpm run dev",
+			build = "pnpm run build",
+			test = "pnpm test",
+			install = "pnpm install",
+		},
+	})
 
 	local c_family_system, c_family_root = systems.detect_c_family_build_system("/tmp/cached-cfamily/src/main.cpp")
 	assert(c_family_system == "meson", "Cached Zig c-family result should beat local marker fallback")
@@ -606,6 +623,20 @@ local function test_cached_zig_system_results_take_precedence()
 		"Cached Zig Bazel system commands should feed immediate Bazel build lookup"
 	)
 
+	local cached_node_commands = build_module.get_build_commands_for_cached_lookup(
+		"typescript",
+		"/tmp/cached-node/src/main.ts",
+		nil
+	)
+	assert(
+		cached_node_commands.build == "pnpm run build",
+		"Cached Zig node system commands should feed immediate JS/TS build lookup"
+	)
+	assert(
+		cached_node_commands.install == "pnpm install",
+		"Cached Zig node system commands should feed immediate JS/TS install lookup"
+	)
+
 	utils_module.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
 	detect_backend.parse_project_lines_once = original_parse_project_lines_once
@@ -643,6 +674,9 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 		if path:match("^/tmp/warm%-make/") then
 			return "/tmp/warm-make"
 		end
+		if path:match("^/tmp/warm%-node/") then
+			return "/tmp/warm-node"
+		end
 		if path:match("^/tmp/warm%-jvm/") then
 			return "/tmp/warm-jvm"
 		end
@@ -653,6 +687,9 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	end
 	vim.fn.filereadable = function(path)
 		if path == "/tmp/warm-make/Makefile" then
+			return 1
+		end
+		if path == "/tmp/warm-node/package.json" or path == "/tmp/warm-node/pnpm-lock.yaml" then
 			return 1
 		end
 		if path == "/tmp/warm-jvm/gradlew" or path == "/tmp/warm-jvm/build.gradle.kts" then
@@ -682,14 +719,21 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	systems.prime_system_detection_async("cpp", "/tmp/warm-make/src/main.cpp", always_enabled, function()
 		finished = finished + 1
 	end)
+	systems.prime_system_detection_async("typescript", "/tmp/warm-node/src/main.ts", always_enabled, function()
+		finished = finished + 1
+	end)
 	systems.prime_system_detection_async("java", "/tmp/warm-jvm/src/Main.kt", always_enabled, function()
 		finished = finished + 1
 	end)
 
-	assert(finished == 2, "Immediate backend callbacks should complete both prewarm requests")
+	assert(finished == 3, "Immediate backend callbacks should complete all prewarm requests")
 	assert(
 		vim.tbl_contains(queries, "/tmp/warm-make/src/main.cpp::c-family"),
 		"C/C++ prewarm should request the Zig c-family query"
+	)
+	assert(
+		vim.tbl_contains(queries, "/tmp/warm-node/src/main.ts::node-root"),
+		"JS/TS prewarm should request the Zig node-root query"
 	)
 	assert(
 		vim.tbl_contains(queries, "/tmp/warm-jvm/src/Main.kt::jvm-root"),
