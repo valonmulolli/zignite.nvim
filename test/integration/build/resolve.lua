@@ -500,6 +500,9 @@ local function test_cached_zig_system_results_take_precedence()
 		if path:match("^/tmp/cached%-jvm/") then
 			return "/tmp/cached-jvm/src"
 		end
+		if path:match("^/tmp/cached%-python/") then
+			return "/tmp/cached-python"
+		end
 		if original_get_project_root then
 			return original_get_project_root(path)
 		end
@@ -512,13 +515,16 @@ local function test_cached_zig_system_results_take_precedence()
 		if path == "/tmp/cached-node/package.json" or path == "/tmp/cached-node/pnpm-lock.yaml" then
 			return 1
 		end
+		if path == "/tmp/cached-python/pyproject.toml" or path == "/tmp/cached-python/uv.lock" then
+			return 1
+		end
 		if original_filereadable then
 			return original_filereadable(path)
 		end
 		return 0
 	end
 	detect_backend.parse_project_lines_once = function(kind, path, extra_args)
-		if kind == "jvm-auto" or kind == "bazel-auto" then
+		if kind == "jvm-auto" or kind == "bazel-auto" or kind == "python-auto" then
 			error("cached lookup should not sync-parse " .. tostring(kind))
 		end
 		if original_parse_project_lines_once then
@@ -575,6 +581,15 @@ local function test_cached_zig_system_results_take_precedence()
 			build = "pnpm run build",
 			test = "pnpm test",
 			install = "pnpm install",
+		},
+	})
+	seed_system_runtime_cache("python-root", "/tmp/cached-python/src/main.py", "/tmp/cached-python", {
+		root = "/tmp/zig-python",
+		system = "python",
+		commands = {
+			run = "uv run -m main",
+			test = "uv run pytest",
+			install = "uv sync",
 		},
 	})
 
@@ -637,6 +652,20 @@ local function test_cached_zig_system_results_take_precedence()
 		"Cached Zig node system commands should feed immediate JS/TS install lookup"
 	)
 
+	local cached_python_commands = build_module.get_build_commands_for_cached_lookup(
+		"python",
+		"/tmp/cached-python/src/main.py",
+		nil
+	)
+	assert(
+		cached_python_commands.test == "uv run pytest",
+		"Cached Zig python system commands should feed immediate Python build lookup"
+	)
+	assert(
+		cached_python_commands.install == "uv sync",
+		"Cached Zig python system commands should feed immediate Python install lookup"
+	)
+
 	utils_module.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
 	detect_backend.parse_project_lines_once = original_parse_project_lines_once
@@ -680,6 +709,9 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 		if path:match("^/tmp/warm%-jvm/") then
 			return "/tmp/warm-jvm"
 		end
+		if path:match("^/tmp/warm%-python/") then
+			return "/tmp/warm-python"
+		end
 		if original_get_project_root then
 			return original_get_project_root(path)
 		end
@@ -693,6 +725,9 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 			return 1
 		end
 		if path == "/tmp/warm-jvm/gradlew" or path == "/tmp/warm-jvm/build.gradle.kts" then
+			return 1
+		end
+		if path == "/tmp/warm-python/pyproject.toml" or path == "/tmp/warm-python/uv.lock" then
 			return 1
 		end
 		if original_filereadable then
@@ -725,8 +760,11 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	systems.prime_system_detection_async("java", "/tmp/warm-jvm/src/Main.kt", always_enabled, function()
 		finished = finished + 1
 	end)
+	systems.prime_system_detection_async("python", "/tmp/warm-python/src/main.py", always_enabled, function()
+		finished = finished + 1
+	end)
 
-	assert(finished == 3, "Immediate backend callbacks should complete all prewarm requests")
+	assert(finished == 4, "Immediate backend callbacks should complete all prewarm requests")
 	assert(
 		vim.tbl_contains(queries, "/tmp/warm-make/src/main.cpp::c-family"),
 		"C/C++ prewarm should request the Zig c-family query"
@@ -738,6 +776,10 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	assert(
 		vim.tbl_contains(queries, "/tmp/warm-jvm/src/Main.kt::jvm-root"),
 		"JVM prewarm should request the Zig jvm-root query"
+	)
+	assert(
+		vim.tbl_contains(queries, "/tmp/warm-python/src/main.py::python-root"),
+		"Python prewarm should request the Zig python-root query"
 	)
 
 	detect_backend.parse_project_lines_async = original_parse_project_lines_async

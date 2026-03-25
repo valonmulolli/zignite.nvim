@@ -2,12 +2,14 @@ const std = @import("std");
 const common = @import("common.zig");
 const make = @import("../project/make/api.zig");
 const package_json = @import("../project/package_json/api.zig");
+const pyproject = @import("../project/pyproject/api.zig");
 
 pub const Query = enum {
     c_family,
     bazel_root,
     jvm_root,
     node_root,
+    python_root,
 };
 
 pub const CommandEntry = struct {
@@ -27,6 +29,7 @@ pub fn parseQuery(value: []const u8) !Query {
     if (std.ascii.eqlIgnoreCase(value, "bazel-root")) return .bazel_root;
     if (std.ascii.eqlIgnoreCase(value, "jvm-root")) return .jvm_root;
     if (std.ascii.eqlIgnoreCase(value, "node-root")) return .node_root;
+    if (std.ascii.eqlIgnoreCase(value, "python-root")) return .python_root;
     return error.InvalidSystemQuery;
 }
 
@@ -51,6 +54,7 @@ pub fn detect(
         .bazel_root => try detectBazelRoot(allocator, path, project_root),
         .jvm_root => try detectJvmRoot(allocator, path, project_root),
         .node_root => try detectNodeRoot(allocator, path, project_root),
+        .python_root => try detectPythonRoot(allocator, path, project_root),
     };
 }
 
@@ -556,6 +560,65 @@ fn buildNodeCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]Com
     return try commands.toOwnedSlice(allocator);
 }
 
+fn detectPythonRoot(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    project_root: ?[]const u8,
+) !Result {
+    const markers = &.{ "pyproject.toml", "uv.lock" };
+
+    if (project_root) |root| {
+        if (root.len > 0 and rootHasAnyMarker(root, markers)) {
+            return try buildPythonResult(allocator, root);
+        }
+    }
+
+    if (try findRootForFilesAlloc(allocator, path, markers, 12)) |root| {
+        defer allocator.free(root);
+        return try buildPythonResult(allocator, root);
+    }
+
+    return .{};
+}
+
+fn buildPythonResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildPythonCommandsAlloc(allocator, root);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        if (commands.len > 0) allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "python", .commands = commands };
+}
+
+fn buildPythonCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {
+    const pyproject_path = try std.fs.path.join(allocator, &.{ root, "pyproject.toml" });
+    defer allocator.free(pyproject_path);
+
+    const has_uv_lock = pathHasFile(root, "uv.lock");
+    const uses_uv = blk: {
+        if (has_uv_lock) break :blk true;
+        if (!pathExists(pyproject_path)) break :blk false;
+        const contents = try common.readFileAlloc(allocator, pyproject_path);
+        defer allocator.free(contents);
+        break :blk pyproject.hasToolSection(contents, "tool.uv");
+    };
+    if (!uses_uv) return &.{};
+
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    try appendOwnedCommand(&commands, allocator, "run", try allocator.dupe(u8, "uv run -m main"));
+    try appendOwnedCommand(&commands, allocator, "test", try allocator.dupe(u8, "uv run pytest"));
+    try appendOwnedCommand(&commands, allocator, "install", try allocator.dupe(u8, "uv sync"));
+
+    return try commands.toOwnedSlice(allocator);
+}
+
 test "detect c family system and build readiness" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -580,6 +643,34 @@ test "detect c family system and build readiness" {
     try std.testing.expect(result.commands.len > 0);
     try std.testing.expectEqualStrings("cmake --build build", findCommand(result.commands, "cmake-build").?);
     try std.testing.expectEqualStrings("cmake --build build", findCommand(result.commands, "build").?);
+}
+
+test "detect python root emits uv commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{ .sub_path = "pyproject.toml", .data =
+        \\[project]
+        \\name = "demo"
+        \\
+        \\[tool.uv]
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "app", "main.py" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .python_root, filepath, root);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings(root, result.root.?);
+    try std.testing.expectEqualStrings("python", result.system.?);
+    try std.testing.expectEqualStrings("uv run -m main", findCommand(result.commands, "run").?);
+    try std.testing.expectEqualStrings("uv run pytest", findCommand(result.commands, "test").?);
+    try std.testing.expectEqualStrings("uv sync", findCommand(result.commands, "install").?);
 }
 
 test "detect c family by walking parent markers" {

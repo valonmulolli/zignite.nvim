@@ -29,6 +29,10 @@ local JVM_FILETYPES = {
 	kotlin = true,
 }
 
+local PYTHON_FILETYPES = {
+	python = true,
+}
+
 local BAZEL_FILETYPES = {
 	bazel = true,
 	bzl = true,
@@ -73,6 +77,12 @@ end
 
 ---@param filetype string
 ---@return boolean
+local function is_python_filetype(filetype)
+	return PYTHON_FILETYPES[filetype] == true
+end
+
+---@param filetype string
+---@return boolean
 local function is_bazel_filetype(filetype)
 	return BAZEL_FILETYPES[filetype] == true
 end
@@ -80,7 +90,10 @@ end
 ---@param filetype string
 ---@return boolean
 local function uses_cached_detect_async(filetype)
-	return is_c_family(filetype) or is_jvm_filetype(filetype) or is_bazel_filetype(filetype)
+	return is_c_family(filetype)
+		or is_jvm_filetype(filetype)
+		or is_python_filetype(filetype)
+		or is_bazel_filetype(filetype)
 end
 
 ---@param entry table|nil
@@ -200,6 +213,8 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 	local latest_mtime_signature = mtime_signature
 	local pending = 1
 	local detect_async = commands.detect_tool_commands_for_filetype_async
+	local merge_build_commands = uses_cached_detect_async(filetype) and commands.merge_build_commands_cached
+		or commands.merge_build_commands
 
 	local function complete_refresh()
 		pending = pending - 1
@@ -209,7 +224,7 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 
 		local detected_copy = state.copy_string_map(latest_detected)
 		store_detect_runtime_entry(cache_key, detected_copy, latest_status, latest_mtime_signature)
-		local merged_commands = commands.merge_build_commands(filetype, filepath, detected_copy)
+		local merged_commands = merge_build_commands(filetype, filepath, detected_copy)
 		flush_detect_runtime_callbacks(cache_key, merged_commands)
 	end
 
@@ -302,6 +317,9 @@ function M.can_detect_build_commands_for_filetype(filetype)
 		return true
 	end
 	if is_jvm_filetype(filetype) and is_detection_enabled("java_kotlin_project") then
+		return true
+	end
+	if is_python_filetype(filetype) then
 		return true
 	end
 	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then

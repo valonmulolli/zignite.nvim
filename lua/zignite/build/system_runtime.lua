@@ -11,6 +11,7 @@ M.CMAKE_ROOT_MARKERS = { "CMakeLists.txt" }
 M.MESON_ROOT_MARKERS = { "meson.build" }
 local JVM_ROOT_MARKERS = { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }
 local NODE_ROOT_MARKERS = { "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock" }
+local PYTHON_ROOT_MARKERS = { "pyproject.toml", "uv.lock" }
 local C_FAMILY_SIGNATURE_MARKERS = { "Makefile", "CMakeLists.txt", "meson.build" }
 local GRADLE_ROOT_MARKERS = { "gradlew", "build.gradle", "build.gradle.kts" }
 local C_FAMILY_ROOT_CHECKS = {
@@ -558,6 +559,9 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 	then
 		start_query("jvm-root", project_root)
 	end
+	if filetype == "python" then
+		start_query("python-root", project_root)
+	end
 	if filetype == "javascript" or filetype == "typescript" then
 		start_query("node-root", project_root)
 	end
@@ -596,6 +600,8 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 		signature = M.build_marker_signature(root, C_FAMILY_SIGNATURE_MARKERS)
 	elseif filetype == "javascript" or filetype == "typescript" then
 		signature = M.build_marker_signature(root, NODE_ROOT_MARKERS)
+	elseif filetype == "python" then
+		signature = M.build_marker_signature(root, PYTHON_ROOT_MARKERS)
 	elseif filetype == "java" or filetype == "kotlin" then
 		signature = M.build_marker_signature(root, JVM_ROOT_MARKERS)
 	end
