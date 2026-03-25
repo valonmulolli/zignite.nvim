@@ -1,15 +1,13 @@
 const std = @import("std");
-const cargo = @import("../../cargo.zig");
+const cargo = @import("../../cargo/api.zig");
 const common = @import("../common.zig");
-const go = @import("../../go.zig");
-const go_mod = @import("../../go_mod.zig");
-const go_work = @import("../../go_work.zig");
-const gradle = @import("../../gradle.zig");
-const make = @import("../../make.zig");
-const maven = @import("../../maven.zig");
-const package_json = @import("../../package_json.zig");
+const go = @import("../../go/api.zig");
+const gradle = @import("../../gradle/api.zig");
+const make = @import("../../make/api.zig");
+const maven = @import("../../maven/api.zig");
+const package_json = @import("../../package_json/api.zig");
 const project_io = @import("../io.zig");
-const pyproject = @import("../../pyproject.zig");
+const pyproject = @import("../../pyproject/api.zig");
 const types = @import("../types.zig");
 
 const Options = types.Options;
@@ -63,7 +61,7 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             return true;
         },
         .go_mod => {
-            const maybe_name = try go_mod.parseModuleName(allocator, contents);
+            const maybe_name = try go.parseModuleName(allocator, contents);
             defer if (maybe_name) |name| allocator.free(name);
             if (maybe_name) |name| {
                 try stdout.print("MODULE\t{s}\n", .{name});
@@ -71,8 +69,8 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             return true;
         },
         .go_work => {
-            const items = try go_work.parseUses(allocator, contents, options.path, options.match_path);
-            defer go_work.freeOwnedUses(allocator, items);
+            const items = try go.parseUses(allocator, contents, options.path, options.match_path);
+            defer go.freeOwnedUses(allocator, items);
             for (items) |item| {
                 try stdout.print("USE\t{s}\t{d}\n", .{ item.path, if (item.matched) @as(u8, 1) else @as(u8, 0) });
             }

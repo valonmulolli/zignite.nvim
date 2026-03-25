@@ -1,4 +1,4 @@
-const parse = @import("cargo/parse.zig");
+const parse = @import("parse.zig");
 
 pub const Target = parse.Target;
 pub const freeOwnedTargets = parse.freeOwnedTargets;
