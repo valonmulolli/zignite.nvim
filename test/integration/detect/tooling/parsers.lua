@@ -40,15 +40,16 @@ local function test_c_detected_make_targets_in_picker()
         return 0
     end
     vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
-            vim.v.shell_error = 0
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cdetect",
-                "COMMAND\tbench\tmake bench",
-                "COMMAND\ttest\tmake test",
-            }
-        end
+	        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
+	            vim.v.shell_error = 0
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/cdetect",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tbench\tmake bench",
+	                "COMMAND\ttest\tmake test",
+	            }
+	        end
         if original_systemlist then
             return original_systemlist(cmd)
         end
@@ -121,12 +122,13 @@ local function test_make_targets_use_zig_project_parser()
         assert(cmd[2] == "--project-parse", "Make parser should call the Zig project parser mode")
         assert(cmd[3] == "--kind=c-family-auto", "Make parser should use the c-family-auto parser kind")
         assert(cmd[4] == "--path=/tmp/cdetect/main.c", "Make parser should target the current source path")
-        return {
-            "SYSTEM\tmake",
-            "ROOT\t/tmp/cdetect",
-            "COMMAND\tbench\tmake bench",
-            "COMMAND\ttest\tmake test",
-        }
+	        return {
+	            "SYSTEM\tmake",
+	            "ROOT\t/tmp/cdetect",
+	            "COMMAND\tbuild\tmake",
+	            "COMMAND\tbench\tmake bench",
+	            "COMMAND\ttest\tmake test",
+	        }
     end
     vim.fn.filereadable = function(path)
         if path == "/tmp/cdetect/Makefile" then
@@ -950,12 +952,13 @@ local function test_make_targets_use_zig_project_daemon()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             vim.v.shell_error = 0
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cdetect",
-                "COMMAND\tbench\tmake bench",
-                "COMMAND\ttest\tmake test",
-            }
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/cdetect",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tbench\tmake bench",
+	                "COMMAND\ttest\tmake test",
+	            }
         end
         error("Unexpected one-shot project parse path")
     end
@@ -1038,12 +1041,13 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
     vim.fn.systemlist = function(cmd)
         vim.v.shell_error = 0
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cdetect",
-                "COMMAND\tbench\tmake bench",
-                "COMMAND\ttest\tmake test",
-            }
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/cdetect",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tbench\tmake bench",
+	                "COMMAND\ttest\tmake test",
+	            }
         end
         error("Expected one-shot project parse fallback to use systemlist")
     end
@@ -1134,12 +1138,13 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             vim.v.shell_error = 0
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cdetect",
-                "COMMAND\tbench\tmake bench",
-                "COMMAND\ttest\tmake test",
-            }
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/cdetect",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tbench\tmake bench",
+	                "COMMAND\ttest\tmake test",
+	            }
         end
         error("Unexpected one-shot project parse path")
     end
@@ -1218,12 +1223,13 @@ local function test_make_targets_use_multiline_project_daemon_response()
     vim.fn.systemlist = function(cmd)
         if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
             vim.v.shell_error = 0
-            return {
-                "SYSTEM\tmake",
-                "ROOT\t/tmp/cdetect",
-                "COMMAND\tbench\tmake bench",
-                "COMMAND\ttest\tmake test",
-            }
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/cdetect",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tbench\tmake bench",
+	                "COMMAND\ttest\tmake test",
+	            }
         end
         vim.v.shell_error = 0
         return {}

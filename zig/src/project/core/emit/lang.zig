@@ -37,6 +37,7 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             for (names.items) |name| {
                 try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ name, name });
             }
+            try stdout.print("COMMAND\tbuild\tmake\n", .{});
             return true;
         },
         .package_json, .package_json_auto => {
@@ -258,6 +259,7 @@ test "writeLanguageOutput emits make command records" {
     ));
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tall\tmake all\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tmake\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tclean\tmake clean\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbench\tmake bench\n") != null);
 }

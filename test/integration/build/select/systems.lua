@@ -80,11 +80,16 @@ local function test_cpp_make_project_filters_irrelevant_commands()
         end
         return 0
     end
-    vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
-            vim.v.shell_error = 0
-            return { "SYSTEM\tmake", "ROOT\t/tmp/makeproj", "COMMAND\tmain\tmake main" }
-        end
+	    vim.fn.systemlist = function(cmd)
+	        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=c-family-auto" then
+	            vim.v.shell_error = 0
+	            return {
+	                "SYSTEM\tmake",
+	                "ROOT\t/tmp/makeproj",
+	                "COMMAND\tbuild\tmake",
+	                "COMMAND\tmain\tmake main",
+	            }
+	        end
         if original_systemlist then
             return original_systemlist(cmd)
         end

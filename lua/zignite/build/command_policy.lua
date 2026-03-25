@@ -30,44 +30,24 @@ local TOOL_DETECTORS = {
 		async = detect.detect_odin_tool_commands_async,
 	},
 }
-local C_FAMILY_COMMAND_SPECS = {
+local C_FAMILY_FALLBACK_KEYS = {
 	cmake = {
-		selected_keys = {
-			"cmake-config",
-			"cmake-build",
-			"cmake-clean",
-			"cmake-debug",
-			"cmake-release",
-			"cmake-test",
-			"cmake-run",
-			"install",
-		},
-		alias_map = {
-			build = "cmake-build",
-			clean = "cmake-clean",
-			debug = "cmake-debug",
-			release = "cmake-release",
-			test = "cmake-test",
-			config = "cmake-config",
-			run = "cmake-run",
-		},
+		"cmake-config",
+		"cmake-build",
+		"cmake-clean",
+		"cmake-debug",
+		"cmake-release",
+		"cmake-test",
+		"cmake-run",
+		"install",
 	},
 	meson = {
-		selected_keys = {
-			"meson-setup",
-			"meson-build",
-			"meson-clean",
-			"meson-test",
-			"meson-run",
-			"install",
-		},
-		alias_map = {
-			build = "meson-build",
-			clean = "meson-clean",
-			test = "meson-test",
-			setup = "meson-setup",
-			run = "meson-run",
-		},
+		"meson-setup",
+		"meson-build",
+		"meson-clean",
+		"meson-test",
+		"meson-run",
+		"install",
 	},
 }
 
@@ -122,27 +102,42 @@ local function replace_default_commands(updated, default_commands, replacements)
 end
 
 ---@param configured table<string, string>
----@param parser_commands table<string, string>|nil
+---@param default_commands table<string, string>|nil
+---@param available_commands table<string, string>|nil
 ---@return table<string, string>
-local function merge_parser_backed_commands(configured, parser_commands)
-	local updated = copy_commands(configured)
-	M.extend_string_map(updated, parser_commands)
-	return updated
-end
-
----@param target table<string, string>
----@param alias string
----@param source_key string
----@return nil
-local function fill_missing_aliases(target, alias_map)
-	for alias, source_key in pairs(alias_map or {}) do
-		if target[alias] == nil and type(source_key) == "string" and source_key ~= "" then
-			local source_value = target[source_key]
-			if type(source_value) == "string" and source_value ~= "" then
-				target[alias] = source_value
+local function select_configured_command_overrides(configured, default_commands, available_commands)
+	local selected = {}
+	for key, value in pairs(configured or {}) do
+		if type(key) == "string" and type(value) == "string" and available_commands and available_commands[key] ~= nil then
+			local is_default_fallback = default_commands and default_commands[key] ~= nil and value == default_commands[key]
+			if not is_default_fallback or value == available_commands[key] then
+				selected[key] = value
 			end
 		end
 	end
+	return selected
+end
+
+---@param filetype string
+---@param configured table<string, string>
+---@param available_commands table<string, string>|nil
+---@return table<string, string>
+local function select_contextual_overrides(filetype, configured, available_commands)
+	local default_commands = get_default_build_commands(filetype)
+	if vim.tbl_isempty(default_commands) then
+		return select_configured_command_overrides(configured, nil, available_commands)
+	end
+	return select_configured_command_overrides(configured, default_commands, available_commands)
+end
+
+---@param filetype string
+---@param configured table<string, string>
+---@param available_commands table<string, string>|nil
+---@return table<string, string>
+local function merge_contextual_command_map(filetype, configured, available_commands)
+	local merged = state.copy_string_map(available_commands or {})
+	M.extend_string_map(merged, select_contextual_overrides(filetype, configured, available_commands))
+	return merged
 end
 
 ---@return fun(flag: string): boolean
@@ -158,27 +153,30 @@ local function config_detection_enabled()
 end
 
 ---@param configured table<string, string>
----@param parser_commands table<string, string>|nil
----@param selected_keys string[]
----@param alias_map table<string, string>
----@return table<string, string>
-local function build_filtered_system_commands(configured, parser_commands, selected_keys, alias_map)
-	local filtered = copy_selected_commands(configured, selected_keys)
-	M.extend_string_map(filtered, parser_commands)
-	fill_missing_aliases(filtered, alias_map)
-	return filtered
-end
-
----@param configured table<string, string>
 ---@param system string
----@param system_commands table<string, string>
 ---@return table<string, string>
-local function build_c_family_system_commands(configured, system, system_commands)
-	local spec = C_FAMILY_COMMAND_SPECS[system]
-	if type(spec) ~= "table" then
+local function build_c_family_fallback_commands(configured, system)
+	local selected_keys = C_FAMILY_FALLBACK_KEYS[system]
+	if type(selected_keys) ~= "table" then
 		return copy_commands(configured)
 	end
-	return build_filtered_system_commands(configured, system_commands, spec.selected_keys, spec.alias_map)
+	local filtered = copy_selected_commands(configured, selected_keys)
+	if system == "cmake" then
+		filtered.config = filtered["cmake-config"]
+		filtered.build = filtered["cmake-build"]
+		filtered.clean = filtered["cmake-clean"]
+		filtered.debug = filtered["cmake-debug"]
+		filtered.release = filtered["cmake-release"]
+		filtered.test = filtered["cmake-test"]
+		filtered.run = filtered["cmake-run"]
+	elseif system == "meson" then
+		filtered.setup = filtered["meson-setup"]
+		filtered.build = filtered["meson-build"]
+		filtered.clean = filtered["meson-clean"]
+		filtered.test = filtered["meson-test"]
+		filtered.run = filtered["meson-run"]
+	end
+	return filtered
 end
 
 ---@param configured table<string, string>
@@ -332,13 +330,13 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
 		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
 		if next(bazel_commands) ~= nil then
-			return state.copy_string_map(bazel_commands)
+			return merge_contextual_command_map(filetype, configured, bazel_commands)
 		end
 	end
 	if cached and (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
 		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
 		if next(java_commands) ~= nil then
-			return merge_parser_backed_commands(configured, java_commands)
+			return merge_contextual_command_map(filetype, configured, java_commands)
 		end
 	end
 
@@ -347,7 +345,10 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
 			return configured
 		end
-		return merge_parser_backed_commands(configured, parser_result.commands)
+		if next(parser_result.commands or {}) ~= nil then
+			return merge_contextual_command_map(filetype, configured, parser_result.commands)
+		end
+		return configured
 	end
 	if filetype ~= "c" and filetype ~= "cpp" then
 		return configured
@@ -365,11 +366,14 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 	if c_family_result.system == "bazel" then
 		return {}
 	end
+	if next(c_family_result.commands or {}) ~= nil then
+		return merge_contextual_command_map(filetype, configured, c_family_result.commands)
+	end
 	if c_family_result.system == "make" then
 		return filter_make_commands(configured)
 	end
 	if c_family_result.system == "cmake" or c_family_result.system == "meson" then
-		return build_c_family_system_commands(configured, c_family_result.system, c_family_result.commands)
+		return build_c_family_fallback_commands(configured, c_family_result.system)
 	end
 	return configured
 end
