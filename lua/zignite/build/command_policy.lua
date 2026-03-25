@@ -181,6 +181,18 @@ local function build_c_family_system_commands(configured, system, system_command
 	return build_filtered_system_commands(configured, system_commands, spec.selected_keys, spec.alias_map)
 end
 
+---@param configured table<string, string>
+---@return table<string, string>
+local function filter_make_commands(configured)
+	local filtered = {}
+	for _, key in ipairs({ "build", "run", "clean", "test", "install", "debug" }) do
+		if configured[key] then
+			filtered[key] = configured[key]
+		end
+	end
+	return filtered
+end
+
 ---@param filetype string
 ---@param filepath string
 ---@param configured table<string, string>
@@ -242,20 +254,11 @@ function M.extend_string_map(target, source)
 	return target
 end
 
+---@param commands table<string, string>
 ---@param filetype string
----@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
-function M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-	return backend.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
-end
-
----@param filetype string
----@param filepath string
----@param is_detection_enabled fun(flag: string): boolean
----@return table<string, string>
-function M.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
-	local commands = backend.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
+local function append_sync_tool_detector_commands(commands, filetype, is_detection_enabled)
 	local detector = TOOL_DETECTORS[filetype]
 	if detector and is_detection_enabled(detector.flag) then
 		M.extend_string_map(commands, detector.sync())
@@ -263,28 +266,13 @@ function M.collect_sync_detected_commands_cached(filetype, filepath, is_detectio
 	return commands
 end
 
+---@param sync_commands table<string, string>
 ---@param filetype string
----@param filepath string
----@param is_detection_enabled fun(flag: string): boolean
----@return table<string, string>
-function M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
-	local commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-	local detector = TOOL_DETECTORS[filetype]
-	if detector and is_detection_enabled(detector.flag) then
-		M.extend_string_map(commands, detector.sync())
-	end
-	return commands
-end
-
----@param filetype string
----@param filepath string
 ---@param on_done fun(commands: table<string, string>|nil):nil
 ---@param force_refresh boolean|nil
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return nil
-function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, force_refresh, is_detection_enabled)
-	local sync_commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
-
+local function finish_with_async_tool_detector(sync_commands, filetype, on_done, force_refresh, is_detection_enabled)
 	---@param async_commands table<string, string>|nil
 	---@return nil
 	local function finish(async_commands)
@@ -310,6 +298,132 @@ function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, 
 	vim.schedule(function()
 		on_done(state.copy_string_map(sync_commands))
 	end)
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@param cached boolean|nil
+---@return table<string, string>
+local function collect_sync_project_detected_commands(filetype, filepath, is_detection_enabled, cached)
+	local _ = is_detection_enabled
+	local commands
+	if cached then
+		commands = backend.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
+	else
+		commands = backend.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
+	end
+	return commands
+end
+
+---@param filetype string
+---@param filepath string
+---@param cached boolean|nil
+---@return table<string, string>
+local function get_configured_build_commands_internal(filetype, filepath, cached)
+	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
+	local detect_enabled = config_detection_enabled()
+	if filetype == "javascript" or filetype == "typescript" then
+		return apply_node_package_manager_defaults(filetype, filepath, configured)
+	end
+	if filetype == "python" then
+		return apply_python_tool_defaults(filepath, configured)
+	end
+	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
+		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
+		if next(bazel_commands) ~= nil then
+			return state.copy_string_map(bazel_commands)
+		end
+	end
+	if cached and (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
+		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
+		if next(java_commands) ~= nil then
+			return merge_parser_backed_commands(configured, java_commands)
+		end
+	end
+
+	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
+	if parser_result then
+		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
+			return configured
+		end
+		return merge_parser_backed_commands(configured, parser_result.commands)
+	end
+	if filetype ~= "c" and filetype ~= "cpp" then
+		return configured
+	end
+
+	local c_family_result
+	if cached then
+		c_family_result = backend.detect_c_family_build_result_cached(filepath)
+	else
+		c_family_result = backend.detect_c_family_build_result(filepath)
+	end
+	if not c_family_result or c_family_result.system == nil then
+		return configured
+	end
+	if c_family_result.system == "bazel" then
+		return {}
+	end
+	if c_family_result.system == "make" then
+		return filter_make_commands(configured)
+	end
+	if c_family_result.system == "cmake" or c_family_result.system == "meson" then
+		return build_c_family_system_commands(configured, c_family_result.system, c_family_result.commands)
+	end
+	return configured
+end
+
+---@param filetype string
+---@param filepath string
+---@param detected table<string, string>|nil
+---@param cached boolean|nil
+---@return table<string, string>
+local function merge_build_commands_internal(filetype, filepath, detected, cached)
+	local merged = state.copy_string_map(detected)
+	local configured = get_configured_build_commands_internal(filetype, filepath, cached)
+	for key, value in pairs(configured) do
+		if type(key) == "string" and type(value) == "string" then
+			merged[key] = value
+		end
+	end
+	return merged
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
+function M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
+	return collect_sync_project_detected_commands(filetype, filepath, is_detection_enabled, false)
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
+function M.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
+	return collect_sync_project_detected_commands(filetype, filepath, is_detection_enabled, true)
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
+function M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
+	local commands = collect_sync_project_detected_commands(filetype, filepath, is_detection_enabled, false)
+	return append_sync_tool_detector_commands(commands, filetype, is_detection_enabled)
+end
+
+---@param filetype string
+---@param filepath string
+---@param on_done fun(commands: table<string, string>|nil):nil
+---@param force_refresh boolean|nil
+---@param is_detection_enabled fun(flag: string): boolean
+---@return nil
+function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, force_refresh, is_detection_enabled)
+	local sync_commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
+	finish_with_async_tool_detector(sync_commands, filetype, on_done, force_refresh, is_detection_enabled)
 end
 
 ---@param filetype string
@@ -326,142 +440,21 @@ function M.detect_tool_commands_for_filetype_async_cached(
 	is_detection_enabled
 )
 	local sync_commands = M.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
-
-	---@param async_commands table<string, string>|nil
-	---@return nil
-	local function finish(async_commands)
-		if async_commands == nil then
-			if vim.tbl_isempty(sync_commands) then
-				on_done(nil)
-			else
-				on_done(state.copy_string_map(sync_commands))
-			end
-			return
-		end
-
-		local merged = state.copy_string_map(sync_commands)
-		M.extend_string_map(merged, async_commands)
-		on_done(merged)
-	end
-
-	local detector = TOOL_DETECTORS[filetype]
-	if detector and is_detection_enabled(detector.flag) then
-		detector.async(finish, force_refresh)
-		return
-	end
-	vim.schedule(function()
-		on_done(state.copy_string_map(sync_commands))
-	end)
+	finish_with_async_tool_detector(sync_commands, filetype, on_done, force_refresh, is_detection_enabled)
 end
 
 ---@param filetype string
 ---@param filepath string
 ---@return table<string, string>
 function M.get_configured_build_commands(filetype, filepath)
-	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
-	if filetype == "javascript" or filetype == "typescript" then
-		return apply_node_package_manager_defaults(filetype, filepath, configured)
-	end
-	if filetype == "python" then
-		return apply_python_tool_defaults(filepath, configured)
-	end
-	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
-	if parser_result then
-		local detect_enabled = config_detection_enabled()
-		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
-			return configured
-		end
-		return merge_parser_backed_commands(configured, parser_result.commands)
-	end
-	if filetype ~= "c" and filetype ~= "cpp" then
-		return configured
-	end
-
-	local c_family_result = backend.detect_c_family_build_result(filepath)
-	if not c_family_result or c_family_result.system == nil then
-		return configured
-	end
-	if c_family_result.system == "bazel" then
-		return {}
-	end
-
-	---@type table<string, string>
-	local filtered = {}
-	if c_family_result.system == "make" then
-		for _, key in ipairs({ "build", "run", "clean", "test", "install", "debug" }) do
-			if configured[key] then
-				filtered[key] = configured[key]
-			end
-		end
-		return filtered
-	end
-
-	if c_family_result.system == "cmake" then
-		return build_c_family_system_commands(configured, "cmake", c_family_result.commands)
-	end
-
-	if c_family_result.system == "meson" then
-		return build_c_family_system_commands(configured, "meson", c_family_result.commands)
-	end
-
-	return configured
+	return get_configured_build_commands_internal(filetype, filepath, false)
 end
 
 ---@param filetype string
 ---@param filepath string
 ---@return table<string, string>
 function M.get_configured_build_commands_cached(filetype, filepath)
-	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
-	local detect_enabled = config_detection_enabled()
-	if filetype == "javascript" or filetype == "typescript" then
-		return apply_node_package_manager_defaults(filetype, filepath, configured)
-	end
-	if filetype == "python" then
-		return apply_python_tool_defaults(filepath, configured)
-	end
-	if detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
-		if next(bazel_commands) ~= nil then
-			return state.copy_string_map(bazel_commands)
-		end
-	end
-	if (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
-		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
-		if next(java_commands) ~= nil then
-			return merge_parser_backed_commands(configured, java_commands)
-		end
-	end
-	if filetype ~= "c" and filetype ~= "cpp" then
-		return M.get_configured_build_commands(filetype, filepath)
-	end
-
-	local c_family_result = backend.detect_c_family_build_result_cached(filepath)
-	if not c_family_result or c_family_result.system == nil then
-		return configured
-	end
-	if c_family_result.system == "bazel" then
-		return {}
-	end
-
-	if c_family_result.system == "make" then
-		local filtered = {}
-		for _, key in ipairs({ "build", "run", "clean", "test", "install", "debug" }) do
-			if configured[key] then
-				filtered[key] = configured[key]
-			end
-		end
-		return filtered
-	end
-
-	if c_family_result.system == "cmake" then
-		return build_c_family_system_commands(configured, "cmake", c_family_result.commands)
-	end
-
-	if c_family_result.system == "meson" then
-		return build_c_family_system_commands(configured, "meson", c_family_result.commands)
-	end
-
-	return configured
+	return get_configured_build_commands_internal(filetype, filepath, true)
 end
 
 ---@param filetype string
@@ -469,14 +462,7 @@ end
 ---@param detected table<string, string>|nil
 ---@return table<string, string>
 function M.merge_build_commands(filetype, filepath, detected)
-	local merged = state.copy_string_map(detected)
-	local configured = M.get_configured_build_commands(filetype, filepath)
-	for key, value in pairs(configured) do
-		if type(key) == "string" and type(value) == "string" then
-			merged[key] = value
-		end
-	end
-	return merged
+	return merge_build_commands_internal(filetype, filepath, detected, false)
 end
 
 ---@param filetype string
@@ -484,14 +470,7 @@ end
 ---@param detected table<string, string>|nil
 ---@return table<string, string>
 function M.merge_build_commands_cached(filetype, filepath, detected)
-	local merged = state.copy_string_map(detected)
-	local configured = M.get_configured_build_commands_cached(filetype, filepath)
-	for key, value in pairs(configured) do
-		if type(key) == "string" and type(value) == "string" then
-			merged[key] = value
-		end
-	end
-	return merged
+	return merge_build_commands_internal(filetype, filepath, detected, true)
 end
 
 ---@param filetype string
