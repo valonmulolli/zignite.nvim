@@ -58,12 +58,6 @@ local function get_default_build_commands(filetype)
 end
 
 ---@param configured table<string, string>
----@return table<string, string>
-local function copy_commands(configured)
-	return state.copy_string_map(configured or {})
-end
-
----@param configured table<string, string>
 ---@param keys string[]
 ---@return table<string, string>
 local function copy_selected_commands(configured, keys)
@@ -134,7 +128,7 @@ end
 local function build_c_family_fallback_commands(configured, system)
 	local selected_keys = C_FAMILY_FALLBACK_KEYS[system]
 	if type(selected_keys) ~= "table" then
-		return copy_commands(configured)
+		return state.copy_string_map(configured or {})
 	end
 	local filtered = copy_selected_commands(configured, selected_keys)
 	if system == "cmake" then
@@ -241,67 +235,67 @@ local function collect_sync_project_detected_commands(filetype, filepath, is_det
 	return commands
 end
 
+---@param filepath string
+---@param cached boolean|nil
+---@param detect_enabled fun(flag: string): boolean
+---@return table<string, string>|nil
+local function detect_javascript_project_commands(filepath, cached, detect_enabled)
+	if detect_enabled("js_package_scripts") then
+		local package_commands = backend.detect_package_scripts(filepath)
+		if next(package_commands) ~= nil then
+			return package_commands
+		end
+	end
+	local detect_node = cached and backend.detect_node_project_commands_cached or backend.detect_node_project_commands
+	local node_commands = detect_node(filepath)
+	if next(node_commands) ~= nil then
+		return node_commands
+	end
+	return nil
+end
+
+---@param filepath string
+---@return table<string, string>|nil
+local function detect_python_project_commands(filepath)
+	local python_commands = backend.detect_python_project_commands(filepath)
+	if next(python_commands) ~= nil then
+		return python_commands
+	end
+	return nil
+end
+
 ---@param filetype string
 ---@param filepath string
 ---@param cached boolean|nil
----@return table<string, string>
-local function get_configured_build_commands_internal(filetype, filepath, cached)
-	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
-	local detect_enabled = config_detection_enabled()
+---@param detect_enabled fun(flag: string): boolean
+---@return table<string, string>|nil
+local function detect_contextual_project_commands(filetype, filepath, cached, detect_enabled)
 	if filetype == "javascript" or filetype == "typescript" then
-		if detect_enabled("js_package_scripts") then
-			local package_commands = backend.detect_package_scripts(filepath)
-			if next(package_commands) ~= nil then
-				return merge_contextual_command_map(filetype, configured, package_commands)
-			end
-		end
-		local node_commands = cached and backend.detect_node_project_commands_cached(filepath)
-			or backend.detect_node_project_commands(filepath)
-		if next(node_commands) ~= nil then
-			return merge_contextual_command_map(filetype, configured, node_commands)
-		end
-		return configured
+		return detect_javascript_project_commands(filepath, cached, detect_enabled)
 	end
 	if filetype == "python" then
-		local python_commands = backend.detect_python_project_commands(filepath)
-		if next(python_commands) ~= nil then
-			return merge_contextual_command_map(filetype, configured, python_commands)
-		end
-		return configured
+		return detect_python_project_commands(filepath)
 	end
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
 		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
 		if next(bazel_commands) ~= nil then
-			return merge_contextual_command_map(filetype, configured, bazel_commands)
+			return bazel_commands
 		end
 	end
 	if cached and (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
 		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
 		if next(java_commands) ~= nil then
-			return merge_contextual_command_map(filetype, configured, java_commands)
+			return java_commands
 		end
 	end
+	return nil
+end
 
-	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
-	if parser_result then
-		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
-			return configured
-		end
-		if next(parser_result.commands or {}) ~= nil then
-			return merge_contextual_command_map(filetype, configured, parser_result.commands)
-		end
-		return configured
-	end
-	if filetype ~= "c" and filetype ~= "cpp" then
-		return configured
-	end
-
-	local c_family_result
-	if cached then
-		c_family_result = backend.detect_c_family_build_result_cached(filepath)
-	else
-		c_family_result = backend.detect_c_family_build_result(filepath)
-	end
+---@param configured table<string, string>
+---@param filetype string
+---@param c_family_result table|nil
+---@return table<string, string>
+local function resolve_c_family_configured_commands(configured, filetype, c_family_result)
 	if not c_family_result or c_family_result.system == nil then
 		return configured
 	end
@@ -322,17 +316,43 @@ end
 
 ---@param filetype string
 ---@param filepath string
+---@param cached boolean|nil
+---@return table<string, string>
+local function get_configured_build_commands_internal(filetype, filepath, cached)
+	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
+	local detect_enabled = config_detection_enabled()
+	local contextual_commands = detect_contextual_project_commands(filetype, filepath, cached, detect_enabled)
+	if contextual_commands then
+		return merge_contextual_command_map(filetype, configured, contextual_commands)
+	end
+
+	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
+	if parser_result then
+		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
+			return configured
+		end
+		if next(parser_result.commands or {}) ~= nil then
+			return merge_contextual_command_map(filetype, configured, parser_result.commands)
+		end
+		return configured
+	end
+	if filetype ~= "c" and filetype ~= "cpp" then
+		return configured
+	end
+
+	local c_family_result = cached and backend.detect_c_family_build_result_cached(filepath)
+		or backend.detect_c_family_build_result(filepath)
+	return resolve_c_family_configured_commands(configured, filetype, c_family_result)
+end
+
+---@param filetype string
+---@param filepath string
 ---@param detected table<string, string>|nil
 ---@param cached boolean|nil
 ---@return table<string, string>
 local function merge_build_commands_internal(filetype, filepath, detected, cached)
 	local merged = state.copy_string_map(detected)
-	local configured = get_configured_build_commands_internal(filetype, filepath, cached)
-	for key, value in pairs(configured) do
-		if type(key) == "string" and type(value) == "string" then
-			merged[key] = value
-		end
-	end
+	M.extend_string_map(merged, get_configured_build_commands_internal(filetype, filepath, cached))
 	return merged
 end
 
