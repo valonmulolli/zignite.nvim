@@ -39,11 +39,13 @@ M.project_backend_lines = {
 	["package-json"] = {
 		"COMMAND\tinstall\tnpm install",
 		"COMMAND\tdev\tnpm run dev",
+		"COMMAND\tlive\tnpm run dev",
 		"COMMAND\tbuild\tnpm run build",
 	},
 	["package-json-auto"] = {
 		"COMMAND\tinstall\tnpm install",
 		"COMMAND\tdev\tnpm run dev",
+		"COMMAND\tlive\tnpm run dev",
 		"COMMAND\tbuild\tnpm run build",
 	},
 	maven = {
