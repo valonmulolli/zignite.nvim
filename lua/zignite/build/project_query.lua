@@ -9,6 +9,18 @@ local M = {}
 local PARSER_BACKED_BUILD_SOURCES
 local decode_backend_commands
 
+---@param filepath string|nil
+---@return boolean
+local function can_query_backend(filepath)
+	return type(filepath) == "string" and filepath ~= "" and type(vim.fn.filereadable) == "function"
+end
+
+---@param raw_path string|nil
+---@return string
+local function normalize_path(raw_path)
+	return vim.fs.normalize(tostring(raw_path or "")):gsub("\\", "/")
+end
+
 ---@param target table<string, string>
 ---@param source table<string, string>|nil
 ---@return nil
@@ -70,7 +82,7 @@ end
 ---@param fallback fun(string): table<string, string>
 ---@return table<string, string>
 local function detect_warmed_or_backend_commands(query, filepath, fallback)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+	if not can_query_backend(filepath) then
 		return {}
 	end
 
@@ -82,13 +94,43 @@ local function detect_warmed_or_backend_commands(query, filepath, fallback)
 	return fallback(filepath)
 end
 
----@param text string
----@return string
-local function normalize_path_text(text)
-	if type(text) ~= "string" then
-		return ""
+---@param kind string
+---@param filepath string
+---@param extra_args string[]|nil
+---@return table<string, string>
+local function detect_simple_backend_commands(kind, filepath, extra_args)
+	if not can_query_backend(filepath) then
+		return {}
 	end
-	return vim.fs.normalize(text):gsub("\\", "/")
+	return parse_backend_command_map(kind, filepath, extra_args)
+end
+
+---@param opts table
+---@return table<string, string>, table|nil
+local function detect_cached_backend_commands(opts)
+	if not can_query_backend(opts.filepath) then
+		return {}, nil
+	end
+
+	local cached = state.get_bounded_cache_entry(opts.cache, opts.order, opts.cache_key)
+	if cached and opts.is_fresh(cached) then
+		return state.copy_string_map(cached.commands), nil
+	end
+
+	local commands = parse_backend_command_map(opts.kind, opts.filepath, opts.extra_args)
+	local entry = {
+		mtime_key = opts.mtime_key,
+		commands = commands,
+		info = nil,
+	}
+	for field, value in pairs(opts.extra_entry or {}) do
+		entry[field] = value
+	end
+	store_command_cache_entry(opts.cache, opts.order, opts.max_entries, opts.cache_key, entry)
+	if next(commands) ~= nil then
+		return state.copy_string_map(commands), nil
+	end
+	return {}, nil
 end
 
 ---@param lines string[]|nil
@@ -142,7 +184,7 @@ end
 ---@param root string
 ---@return table|nil, string, string
 local function get_c_family_cached_entry(filepath, root)
-	local cache_key = normalize_path_text(filepath)
+	local cache_key = normalize_path(filepath)
 	local mtime_key = c_family_project_mtime_key(root)
 	local cached = state.get_bounded_cache_entry(
 		state.c_family_project_cache,
@@ -177,31 +219,18 @@ end
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_package_scripts(filepath)
-	if not filepath or filepath == "" then
-		return {}
-	end
-
-	local cache_key = normalize_path_text(filepath)
-	local cached = state.get_bounded_cache_entry(
-		state.package_script_cache,
-		state.package_script_cache_order,
-		cache_key
-	)
-	if cached then
-		return state.copy_string_map(cached.commands)
-	end
-
-	local commands = parse_backend_command_map("package-json-auto", filepath)
-	store_command_cache_entry(
-		state.package_script_cache,
-		state.package_script_cache_order,
-		state.PACKAGE_SCRIPT_CACHE_MAX,
-		cache_key,
-		{
-			mtime_key = "auto",
-			commands = commands,
-		}
-	)
+	local commands = detect_cached_backend_commands({
+		kind = "package-json-auto",
+		filepath = filepath,
+		cache = state.package_script_cache,
+		order = state.package_script_cache_order,
+		max_entries = state.PACKAGE_SCRIPT_CACHE_MAX,
+		cache_key = normalize_path(filepath),
+		mtime_key = "auto",
+		is_fresh = function(_)
+			return true
+		end,
+	})
 	if next(commands) ~= nil then
 		return commands
 	end
@@ -211,7 +240,7 @@ end
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_node_project_commands(filepath)
-	return parse_backend_command_map("system", filepath, { "--query=node-root" })
+	return detect_simple_backend_commands("system", filepath, { "--query=node-root" })
 end
 
 ---@param filepath string
@@ -223,60 +252,39 @@ end
 ---@param filepath string
 ---@return table<string, string>, table|nil
 function M.detect_cargo_project_commands(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+	if not can_query_backend(filepath) then
 		return {}, nil
 	end
-
 	local root = utils.get_project_root(filepath, config.options.project)
 	if type(root) ~= "string" or root == "" then
 		return {}, nil
 	end
-	local cargo_toml_path = (type(root) == "string" and root ~= "") and vim.fs.joinpath(root, "Cargo.toml") or nil
-
-	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
-		local mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing"
-		local cached = state.get_bounded_cache_entry(
-			state.cargo_target_cache,
-			state.cargo_target_cache_order,
-			cargo_toml_path
-		)
-		if cached and cached.mtime_key == mtime_key and cached.match_path == filepath then
-			return state.copy_string_map(cached.commands), nil
-		end
+	local cargo_toml_path = vim.fs.joinpath(root, "Cargo.toml")
+	if vim.fn.filereadable(cargo_toml_path) ~= 1 then
+		return {}, nil
 	end
-
-	local commands = parse_backend_command_map("cargo-auto", filepath)
-	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
-		store_command_cache_entry(
-			state.cargo_target_cache,
-			state.cargo_target_cache_order,
-			state.CARGO_TARGET_CACHE_MAX,
-			cargo_toml_path,
-			{
-				mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing",
-				match_path = filepath,
-				commands = commands,
-				info = nil,
-			}
-		)
-	end
-	if next(commands) ~= nil then
-		return commands, nil
-	end
-
-	return {}, nil
-end
-
----@param raw_path string
----@return string
-local function normalize_path(raw_path)
-	return vim.fs.normalize(tostring(raw_path or "")):gsub("\\", "/")
+	local mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing"
+	return detect_cached_backend_commands({
+		kind = "cargo-auto",
+		filepath = filepath,
+		cache = state.cargo_target_cache,
+		order = state.cargo_target_cache_order,
+		max_entries = state.CARGO_TARGET_CACHE_MAX,
+		cache_key = cargo_toml_path,
+		mtime_key = mtime_key,
+		is_fresh = function(cached)
+			return cached.mtime_key == mtime_key and cached.match_path == filepath
+		end,
+		extra_entry = {
+			match_path = filepath,
+		},
+	})
 end
 
 ---@param filepath string
 ---@return table<string, string>, table|nil
 function M.detect_go_project_commands(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+	if not can_query_backend(filepath) then
 		return {}, nil
 	end
 
@@ -294,52 +302,30 @@ function M.detect_go_project_commands(filepath)
 		state.get_file_mtime_key(go_work_path) or "missing",
 		state.get_file_mtime_key(go_mod_path) or "missing"
 	)
-	local cached = state.get_bounded_cache_entry(
-		state.go_project_cache,
-		state.go_project_cache_order,
-		cache_key
-	)
-	if cached and cached.mtime_key == mtime_key then
-		return state.copy_string_map(cached.commands), nil
-	end
-
-	local commands = parse_backend_command_map("go-auto", filepath)
-	store_command_cache_entry(
-		state.go_project_cache,
-		state.go_project_cache_order,
-		state.GO_PROJECT_CACHE_MAX,
-		cache_key,
-		{
-			mtime_key = mtime_key,
-			commands = commands,
-			info = nil,
-		}
-	)
-	if next(commands) ~= nil then
-		return state.copy_string_map(commands), nil
-	end
-
-	return {}, nil
+	return detect_cached_backend_commands({
+		kind = "go-auto",
+		filepath = filepath,
+		cache = state.go_project_cache,
+		order = state.go_project_cache_order,
+		max_entries = state.GO_PROJECT_CACHE_MAX,
+		cache_key = cache_key,
+		mtime_key = mtime_key,
+		is_fresh = function(cached)
+			return cached.mtime_key == mtime_key
+		end,
+	})
 end
 
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_java_like_project_commands(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
-
-	return parse_backend_command_map("jvm-auto", filepath)
+	return detect_simple_backend_commands("jvm-auto", filepath)
 end
 
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_python_project_commands(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
-
-	return parse_backend_command_map("python-auto", filepath)
+	return detect_simple_backend_commands("python-auto", filepath)
 end
 
 ---@param filepath string
@@ -351,7 +337,7 @@ end
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_bazel_project_commands(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+	if not can_query_backend(filepath) then
 		return {}
 	end
 
@@ -555,13 +541,17 @@ end
 ---@param filetype string
 ---@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
+---@param cached boolean
 ---@return table<string, string>
-function M.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
+local function collect_project_commands(filetype, filepath, is_detection_enabled, cached)
 	---@type table<string, string>
 	local commands = {}
+	local c_family_detect = cached and M.detect_c_family_build_result_cached or M.detect_c_family_build_result
+	local jvm_detect = cached and M.detect_java_like_project_commands_cached or M.detect_java_like_project_commands
+	local bazel_detect = cached and M.detect_bazel_project_commands_cached or M.detect_bazel_project_commands
 
 	if filetype == "c" or filetype == "cpp" then
-		local result = M.detect_c_family_build_result(filepath)
+		local result = c_family_detect(filepath)
 		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
 			extend_command_map(commands, result.commands)
 		end
@@ -570,10 +560,10 @@ function M.collect_sync_project_commands(filetype, filepath, is_detection_enable
 		extend_command_map(commands, M.detect_package_scripts(filepath))
 	end
 	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		extend_command_map(commands, M.detect_java_like_project_commands(filepath))
+		extend_command_map(commands, jvm_detect(filepath))
 	end
 	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		extend_command_map(commands, M.detect_bazel_project_commands(filepath))
+		extend_command_map(commands, bazel_detect(filepath))
 	end
 
 	return commands
@@ -583,27 +573,16 @@ end
 ---@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
+function M.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
+	return collect_project_commands(filetype, filepath, is_detection_enabled, false)
+end
+
+---@param filetype string
+---@param filepath string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
 function M.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
-	---@type table<string, string>
-	local commands = {}
-
-	if filetype == "c" or filetype == "cpp" then
-		local result = M.detect_c_family_build_result_cached(filepath)
-		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
-			extend_command_map(commands, result.commands)
-		end
-	end
-	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
-		extend_command_map(commands, M.detect_package_scripts(filepath))
-	end
-	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		extend_command_map(commands, M.detect_java_like_project_commands_cached(filepath))
-	end
-	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		extend_command_map(commands, M.detect_bazel_project_commands_cached(filepath))
-	end
-
-	return commands
+	return collect_project_commands(filetype, filepath, is_detection_enabled, true)
 end
 
 return M
