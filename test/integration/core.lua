@@ -205,6 +205,69 @@ local function test_uv_python_runner_uses_uv()
     print("✓ uv Python RunFile test passed")
 end
 
+-- Test Python RunFile prefers a warmed Zig python-root cache before falling back to local pyproject reads.
+local function test_uv_python_runner_uses_warmed_system_cache()
+	config.setup({ mode = "float" })
+
+	local build = require("zignite.build")
+	local build_state = require("zignite.build.state")
+	local utils_module = require("zignite.utils")
+	build.reset()
+
+	build_state.set_bounded_cache_entry(
+		build_state.system_runtime_cache,
+		build_state.system_runtime_cache_order,
+		build_state.SYSTEM_RUNTIME_CACHE_MAX,
+		table.concat({ "python-root", "/tmp/warmpy", vim.fs.normalize("/tmp/warmpy/main.py") }, "::"),
+		{
+			result = {
+				root = "/tmp/warmpy",
+				system = "python",
+				commands = {
+					run = "uv run -m main",
+					test = "uv run pytest",
+					install = "uv sync",
+				},
+			},
+			updated_at_ms = build_state.now_ms(),
+		}
+	)
+
+	reset_job_results()
+	with_file_context("python", "/tmp/warmpy/main.py", {
+		{
+			tbl = utils_module,
+			key = "get_project_root",
+			value = function(path)
+				if path == "/tmp/warmpy/main.py" then
+					return "/tmp/warmpy"
+				end
+				return nil
+			end,
+		},
+		{
+			tbl = vim.fn,
+			key = "readfile",
+			value = function(path)
+				error("RunFile should not hit local pyproject reads when python-root cache is warm: " .. tostring(path))
+			end,
+		},
+	}, function()
+		init.run_code(0, "float")
+	end)
+
+	local command = assert_last_job_matches(
+		"warmed Zig Python cache should start a job",
+		"uv",
+		"warmed Zig python-root cache should drive uv Python runner selection"
+	)
+	assert(command:match("%-%-argv"), "warmed Zig Python runner should stay in argv mode")
+	build.reset()
+	reset_job_results()
+
+	print("✓ uv Python warmed system cache test passed")
+end
+
 -- Test filetype runners do not eagerly trigger build-project resolution.
 local function test_get_command_avoids_eager_project_resolution_for_filetype_runner()
     config.setup({ mode = "float" })
@@ -511,6 +574,7 @@ test_interpreted_runner_uses_argv_mode()
 test_visual_run_code_preserves_extension()
 test_timeout_uses_zig_wrapper()
 test_uv_python_runner_uses_uv()
+test_uv_python_runner_uses_warmed_system_cache()
 test_uv_python_runner_uses_fast_pyproject_scan()
 test_get_command_avoids_eager_project_resolution_for_filetype_runner()
 test_language_detected_from_extension()
