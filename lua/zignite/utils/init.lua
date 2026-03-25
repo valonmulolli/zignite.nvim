@@ -9,10 +9,6 @@ M.clear_project_cache = project.clear_project_cache
 M.detect_project = project.detect_project
 M.get_project_root = project.get_project_root
 
-M.format_package_script_command = package_utils.format_package_script_command
-M.format_package_install_command = package_utils.format_package_install_command
-M.detect_node_package_manager_root = package_utils.detect_node_package_manager_root
-M.detect_node_package_manager = package_utils.detect_node_package_manager
 M.is_uv_project_root = package_utils.is_uv_project_root
 M.is_uv_project_root_fast = package_utils.is_uv_project_root_fast
 M.detect_python_project_tool = package_utils.detect_python_project_tool
