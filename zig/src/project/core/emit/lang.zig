@@ -53,6 +53,13 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
                 defer allocator.free(command);
                 try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
             }
+            if (package_json.selectLiveScriptName(names.items)) |name| {
+                if (!std.mem.eql(u8, name, "live")) {
+                    const live_command = try package_json.formatScriptCommandAlloc(allocator, manager, name);
+                    defer allocator.free(live_command);
+                    try stdout.print("COMMAND\tlive\t{s}\n", .{live_command});
+                }
+            }
             return true;
         },
         .pyproject => {
@@ -301,6 +308,7 @@ test "writeLanguageOutput emits package script command records with package mana
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tinstall\tpnpm install\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tdev\tpnpm run dev\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tpnpm run build\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tlive\tpnpm run dev\n") != null);
 }
 
 test "writeLanguageOutput emits python auto commands for uv projects" {

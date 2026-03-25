@@ -37,6 +37,16 @@ pub fn formatInstallCommandAlloc(allocator: std.mem.Allocator, package_manager: 
     return allocator.dupe(u8, "npm install");
 }
 
+pub fn selectLiveScriptName(names: []const []const u8) ?[]const u8 {
+    const priority = [_][]const u8{ "live", "dev", "watch", "serve", "start", "preview" };
+    for (priority) |candidate| {
+        for (names) |name| {
+            if (std.mem.eql(u8, name, candidate)) return candidate;
+        }
+    }
+    return null;
+}
+
 pub fn parseScripts(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -103,4 +113,15 @@ test "format install command respects package manager" {
     const yarn = try formatInstallCommandAlloc(allocator, "yarn");
     defer allocator.free(yarn);
     try std.testing.expectEqualStrings("yarn install", yarn);
+}
+
+test "select live script prefers runtime-oriented scripts" {
+    const names = [_][]const u8{ "build", "start", "dev" };
+    try std.testing.expectEqualStrings("dev", selectLiveScriptName(&names).?);
+
+    const explicit_live = [_][]const u8{ "start", "live" };
+    try std.testing.expectEqualStrings("live", selectLiveScriptName(&explicit_live).?);
+
+    const missing = [_][]const u8{ "build", "lint" };
+    try std.testing.expect(selectLiveScriptName(&missing) == null);
 }

@@ -204,7 +204,62 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
     print("✓ RunLive JavaScript missing-script test passed")
 end
 
+local function test_run_live_javascript_uses_detected_live_alias()
+    init.setup({
+        build_commands = {},
+    })
+
+    vim.bo.filetype = "javascript"
+    local original_expand = vim.fn.expand
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/jsliveok/src/main.js" end
+        return original_expand(expr)
+    end
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
+            return 1
+        end
+        if original_executable then
+            return original_executable(path)
+        end
+        return 0
+    end
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
+            vim.v.shell_error = 0
+            return {
+                "COMMAND\tinstall\tnpm install",
+                "COMMAND\tdev\tnpm run dev",
+                "COMMAND\tlive\tnpm run dev",
+                "COMMAND\tbuild\tnpm run build",
+            }
+        end
+        if original_systemlist then
+            return original_systemlist(cmd)
+        end
+        return {}
+    end
+
+    reset_job_results()
+    init.run_live("float")
+    assert(#job_results > 0, "RunLive should start a job when Zig emits a live alias")
+    local command = command_to_string(job_results[#job_results].cmd)
+    assert(command:match("npm run dev"), "RunLive should execute the Zig live alias command")
+
+    vim.fn.expand = original_expand
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
+    reset_job_results()
+
+    print("✓ RunLive JavaScript live-alias test passed")
+end
+
 test_run_build_last_behavior()
 test_run_live_priority_selection()
 test_run_live_missing_command()
 test_run_live_javascript_ignores_missing_default_scripts()
+test_run_live_javascript_uses_detected_live_alias()

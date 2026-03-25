@@ -39,6 +39,7 @@ local function test_javascript_package_scripts_detection()
 						return {
 							"COMMAND\tinstall\tnpm install",
 							"COMMAND\tdev\tnpm run dev",
+							"COMMAND\tlive\tnpm run dev",
 							"COMMAND\tlint\tnpm run lint",
 						}
 				end
@@ -103,6 +104,7 @@ local function test_javascript_package_scripts_use_zig_project_parser()
 	        return {
 	            "COMMAND\tinstall\tnpm install",
 	            "COMMAND\tdev\tnpm run dev",
+	            "COMMAND\tlive\tnpm run dev",
 	            "COMMAND\tlint\tnpm run lint",
 	        }
     end
@@ -128,6 +130,7 @@ local function test_javascript_package_scripts_use_zig_project_parser()
 	    local commands = package_parser.detect_package_scripts("/tmp/jsapp/src/main.js")
 	    assert(commands.install == "npm install", "Zig package parser should return npm install")
 	    assert(commands.dev == "npm run dev", "Zig package parser should return npm run dev")
+	    assert(commands.live == "npm run dev", "Zig package parser should return a live alias")
 	    assert(commands.lint == "npm run lint", "Zig package parser should return npm run lint")
 
     vim.fn.executable = original_executable
@@ -171,6 +174,7 @@ local function test_javascript_package_scripts_detect_package_manager()
 	            return {
 	                "COMMAND\tinstall\tpnpm install",
 	                "COMMAND\tdev\tpnpm run dev",
+	                "COMMAND\tlive\tpnpm run dev",
 	                "COMMAND\tlint\tpnpm run lint",
 	            }
         end
