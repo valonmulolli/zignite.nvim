@@ -563,11 +563,24 @@ end
 ---@return table<string, string>
 function M.get_configured_build_commands_cached(filetype, filepath)
 	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
+	local detect_enabled = config_detection_enabled()
 	if filetype == "javascript" or filetype == "typescript" then
 		return apply_node_package_manager_defaults(filetype, filepath, configured)
 	end
 	if filetype == "python" then
 		return apply_python_tool_defaults(filepath, configured)
+	end
+	if detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
+		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
+		if next(bazel_commands) ~= nil then
+			return state.copy_string_map(bazel_commands)
+		end
+	end
+	if (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
+		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
+		if next(java_commands) ~= nil then
+			return merge_parser_backed_commands(configured, java_commands)
+		end
 	end
 	if filetype ~= "c" and filetype ~= "cpp" then
 		return M.get_configured_build_commands(filetype, filepath)

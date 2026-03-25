@@ -299,6 +299,25 @@ end
 
 ---@param filepath string
 ---@return table<string, string>
+function M.detect_java_like_project_commands_cached(filepath)
+	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+		return {}
+	end
+
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local warmed_system = systems.get_cached_system_query_result("jvm-root", filepath, project_root)
+	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
+		local commands = state.copy_string_map(warmed_system.commands)
+		if next(commands) ~= nil then
+			return commands
+		end
+	end
+
+	return M.detect_java_like_project_commands(filepath)
+end
+
+---@param filepath string
+---@return table<string, string>
 function M.detect_bazel_project_commands(filepath)
 	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
 		return {}
@@ -313,6 +332,25 @@ function M.detect_bazel_project_commands(filepath)
 		return decode_backend_commands(zig_lines)
 	end
 	return {}
+end
+
+---@param filepath string
+---@return table<string, string>
+function M.detect_bazel_project_commands_cached(filepath)
+	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+		return {}
+	end
+
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local warmed_system = systems.get_cached_system_query_result("bazel-root", filepath, project_root)
+	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
+		local commands = state.copy_string_map(warmed_system.commands)
+		if next(commands) ~= nil then
+			return commands
+		end
+	end
+
+	return M.detect_bazel_project_commands(filepath)
 end
 
 PARSER_BACKED_BUILD_SOURCES = {
@@ -525,14 +563,14 @@ function M.collect_sync_project_commands(filetype, filepath, is_detection_enable
 		end
 	end
 	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		for key, value in pairs(M.detect_java_like_project_commands(filepath)) do
+		for key, value in pairs(M.detect_java_like_project_commands_cached(filepath)) do
 			if type(key) == "string" and type(value) == "string" then
 				commands[key] = value
 			end
 		end
 	end
 	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		for key, value in pairs(M.detect_bazel_project_commands(filepath)) do
+		for key, value in pairs(M.detect_bazel_project_commands_cached(filepath)) do
 			if type(key) == "string" and type(value) == "string" then
 				commands[key] = value
 			end
