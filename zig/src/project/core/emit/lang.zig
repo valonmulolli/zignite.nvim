@@ -45,6 +45,9 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             defer common.freeOwnedNameList(allocator, names.items);
             try package_json.parseScripts(allocator, contents, &names);
             const manager = options.package_manager orelse "npm";
+            const install_command = try package_json.formatInstallCommandAlloc(allocator, manager);
+            defer allocator.free(install_command);
+            try stdout.print("COMMAND\tinstall\t{s}\n", .{install_command});
             for (names.items) |name| {
                 const command = try package_json.formatScriptCommandAlloc(allocator, manager, name);
                 defer allocator.free(command);
@@ -277,6 +280,7 @@ test "writeLanguageOutput emits package script command records with package mana
         \\{ "scripts": { "dev": "vite", "build": "vite build" } }
     ));
 
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tinstall\tpnpm install\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tdev\tpnpm run dev\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tpnpm run build\n") != null);
 }
