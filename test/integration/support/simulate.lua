@@ -27,18 +27,22 @@ M.detect_backend_tool_commands = {
 
 M.project_backend_lines = {
 	make = {
+		"COMMAND\tbuild\tmake",
 		"COMMAND\tbench\tmake bench",
 		"COMMAND\ttest\tmake test",
 	},
 	["make-auto"] = {
+		"COMMAND\tbuild\tmake",
 		"COMMAND\tbench\tmake bench",
 		"COMMAND\ttest\tmake test",
 	},
 	["package-json"] = {
+		"COMMAND\tinstall\tnpm install",
 		"COMMAND\tdev\tnpm run dev",
 		"COMMAND\tbuild\tnpm run build",
 	},
 	["package-json-auto"] = {
+		"COMMAND\tinstall\tnpm install",
 		"COMMAND\tdev\tnpm run dev",
 		"COMMAND\tbuild\tnpm run build",
 	},
