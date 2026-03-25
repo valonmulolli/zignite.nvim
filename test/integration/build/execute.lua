@@ -139,9 +139,8 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
 
     vim.bo.filetype = "javascript"
     local original_expand = vim.fn.expand
-    local original_filereadable = vim.fn.filereadable
-    local original_readfile = vim.fn.readfile
-    local original_vim_json = vim.json
+    local original_executable = vim.fn.executable
+    local original_systemlist = vim.fn.systemlist
     local original_buf_set_lines = vim.api.nvim_buf_set_lines
     local output_messages = {}
 
@@ -149,33 +148,28 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
         if expr == "%:p" then return "/tmp/jslive/src/main.js" end
         return original_expand(expr)
     end
-    vim.fn.filereadable = function(path)
-        if path == "/tmp/jslive/package.json" then
+    vim.fn.executable = function(path)
+        if tostring(path):match("zignite$") then
             return 1
         end
-        if original_filereadable then
-            return original_filereadable(path)
+        if original_executable then
+            return original_executable(path)
         end
         return 0
     end
-    vim.fn.readfile = function(path, _, _)
-        if path == "/tmp/jslive/package.json" then
-            return { '{"scripts":{"build":"vite build"}}' }
+    vim.fn.systemlist = function(cmd)
+        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
+            vim.v.shell_error = 0
+            return {
+                "COMMAND\tinstall\tnpm install",
+                "COMMAND\tbuild\tnpm run build",
+            }
         end
-        if original_readfile then
-            return original_readfile(path)
+        if original_systemlist then
+            return original_systemlist(cmd)
         end
         return {}
     end
-    vim.json = {
-        decode = function(_)
-            return {
-                scripts = {
-                    build = "vite build",
-                },
-            }
-        end,
-    }
     vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
         if type(lines) == "table" and #lines > 0 then
             table.insert(output_messages, table.concat(lines, "\n"))
@@ -187,7 +181,14 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
 
     reset_job_results()
     init.run_live("float")
-    assert(#job_results == 0, "RunLive should not use shipped JS defaults when package.json lacks live scripts")
+    local execution_jobs = 0
+    for _, job in ipairs(job_results) do
+        local command = command_to_string(job.cmd)
+        if not command:match("%-%-daemon") and not command:match("%-%-project%-parse") then
+            execution_jobs = execution_jobs + 1
+        end
+    end
+    assert(execution_jobs == 0, "RunLive should not use shipped JS defaults when package.json lacks live scripts")
     assert(#output_messages > 0, "RunLive should show guidance when no real JS live script exists")
     assert(
         output_messages[#output_messages]:match("No live/watch command found"),
@@ -195,9 +196,9 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
     )
 
     vim.fn.expand = original_expand
-    vim.fn.filereadable = original_filereadable
-    vim.fn.readfile = original_readfile
-    vim.json = original_vim_json
+    vim.fn.executable = original_executable
+    vim.fn.systemlist = original_systemlist
+    vim.v.shell_error = 0
     vim.api.nvim_buf_set_lines = original_buf_set_lines
     reset_job_results()
 

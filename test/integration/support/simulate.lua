@@ -526,6 +526,51 @@ local function build_system_backend_lines(path, query, project_root)
 		return {}
 	end
 
+	if query == "node-root" then
+		local markers = { "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock" }
+		local found = has_any_marker(root, markers) and root or find_root_for_markers(path, markers, 12)
+		if not found then
+			return {}
+		end
+		local manager = "npm"
+		if filereadable(vim.fs.joinpath(found, "bun.lockb")) or filereadable(vim.fs.joinpath(found, "bun.lock")) then
+			manager = "bun"
+		elseif filereadable(vim.fs.joinpath(found, "pnpm-lock.yaml")) then
+			manager = "pnpm"
+		elseif filereadable(vim.fs.joinpath(found, "yarn.lock")) then
+			manager = "yarn"
+		end
+		local start_command = manager == "bun" and "bun run start"
+			or manager == "yarn" and "yarn start"
+			or manager == "pnpm" and "pnpm start"
+			or "npm start"
+		local dev_command = manager == "bun" and "bun run dev"
+			or manager == "yarn" and "yarn dev"
+			or manager == "pnpm" and "pnpm run dev"
+			or "npm run dev"
+		local build_command = manager == "bun" and "bun run build"
+			or manager == "yarn" and "yarn build"
+			or manager == "pnpm" and "pnpm run build"
+			or "npm run build"
+		local test_command = manager == "bun" and "bun run test"
+			or manager == "yarn" and "yarn test"
+			or manager == "pnpm" and "pnpm test"
+			or "npm test"
+		local install_command = manager == "bun" and "bun install"
+			or manager == "yarn" and "yarn install"
+			or manager == "pnpm" and "pnpm install"
+			or "npm install"
+		return {
+			"ROOT\t" .. found,
+			"SYSTEM\tnode",
+			"COMMAND\tstart\t" .. start_command,
+			"COMMAND\tdev\t" .. dev_command,
+			"COMMAND\tbuild\t" .. build_command,
+			"COMMAND\ttest\t" .. test_command,
+			"COMMAND\tinstall\t" .. install_command,
+		}
+	end
+
 	if query == "jvm-root" then
 		if filereadable(vim.fs.joinpath(root, "pom.xml")) then
 			return {

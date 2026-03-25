@@ -78,7 +78,8 @@ pub fn selectLiveScriptName(names: []const []const u8) ?[]const u8 {
 fn pathExists(allocator: std.mem.Allocator, root: []const u8, filename: []const u8) bool {
     const path = std.fs.path.join(allocator, &.{ root, filename }) catch return false;
     defer allocator.free(path);
-    return std.fs.cwd().access(path, .{}) == void{};
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
 }
 
 pub fn parseScripts(

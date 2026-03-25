@@ -77,30 +77,6 @@ local function copy_selected_commands(configured, keys)
 	return selected
 end
 
----@param updated table<string, string>
----@param default_commands table<string, string>
----@param key string
----@param value string|nil
----@return nil
-local function replace_default_command(updated, default_commands, key, value)
-	if type(value) ~= "string" or value == "" then
-		return
-	end
-	if updated[key] ~= nil and updated[key] == default_commands[key] then
-		updated[key] = value
-	end
-end
-
----@param updated table<string, string>
----@param default_commands table<string, string>
----@param replacements table<string, string|nil>
----@return nil
-local function replace_default_commands(updated, default_commands, replacements)
-	for key, value in pairs(replacements or {}) do
-		replace_default_command(updated, default_commands, key, value)
-	end
-end
-
 ---@param configured table<string, string>
 ---@param default_commands table<string, string>|nil
 ---@param available_commands table<string, string>|nil
@@ -191,34 +167,6 @@ local function filter_make_commands(configured)
 	return filtered
 end
 
----@param filetype string
----@param filepath string
----@param configured table<string, string>
----@return table<string, string>
-local function apply_node_package_manager_defaults(filetype, filepath, configured)
-	if filetype ~= "javascript" and filetype ~= "typescript" then
-		return configured
-	end
-
-	local package_manager = utils.detect_node_package_manager(filepath, config.options.project)
-	if package_manager == "npm" then
-		return configured
-	end
-
-	local default_commands = get_default_build_commands(filetype)
-	local updated = copy_commands(configured)
-
-	replace_default_commands(updated, default_commands, {
-		start = utils.format_package_script_command(package_manager, "start"),
-		dev = utils.format_package_script_command(package_manager, "dev"),
-		build = utils.format_package_script_command(package_manager, "build"),
-		test = utils.format_package_script_command(package_manager, "test"),
-		install = utils.format_package_install_command(package_manager),
-	})
-
-	return updated
-end
-
 function M.extend_string_map(target, source)
 	if type(source) ~= "table" then
 		return target
@@ -307,7 +255,12 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 				return merge_contextual_command_map(filetype, configured, package_commands)
 			end
 		end
-		return apply_node_package_manager_defaults(filetype, filepath, configured)
+		local node_commands = cached and backend.detect_node_project_commands_cached(filepath)
+			or backend.detect_node_project_commands(filepath)
+		if next(node_commands) ~= nil then
+			return merge_contextual_command_map(filetype, configured, node_commands)
+		end
+		return configured
 	end
 	if filetype == "python" then
 		local python_commands = backend.detect_python_project_commands(filepath)
@@ -508,22 +461,7 @@ function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds,
 		and type(is_detection_enabled) == "function"
 		and is_detection_enabled("js_package_scripts")
 	then
-		if type(build_cmds.live) == "string" then
-			return "live"
-		end
-
-		local default_commands = get_default_build_commands(filetype)
-		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
-			if candidate == "live" then
-				goto continue
-			end
-			local command = build_cmds[candidate]
-			if type(command) == "string" and command ~= default_commands[candidate] then
-				return candidate
-			end
-			::continue::
-		end
-		return nil
+		return type(build_cmds.live) == "string" and "live" or nil
 	end
 
 	return M.select_live_command_name(build_cmds)
