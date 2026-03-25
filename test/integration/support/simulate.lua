@@ -436,11 +436,50 @@ local function build_system_backend_lines(path, query, project_root)
 		if has_any_marker(root, { "meson.build" }) then
 			local ready = filereadable(vim.fs.joinpath(root, "build", "build.ninja"))
 				or filereadable(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat"))
-			return { "ROOT\t" .. root, "SYSTEM\tmeson", "BUILD_READY\t" .. (ready and "1" or "0") }
+			local build_command = ready and "meson compile -C build" or "meson setup build && meson compile -C build"
+			local clean_command = ready and "meson compile -C build --clean" or "cmake -E rm -rf build"
+			return {
+				"ROOT\t" .. root,
+				"SYSTEM\tmeson",
+				"BUILD_READY\t" .. (ready and "1" or "0"),
+				"COMMAND\tmeson-setup\tmeson setup build",
+				"COMMAND\tmeson-build\t" .. build_command,
+				"COMMAND\tmeson-clean\t" .. clean_command,
+				"COMMAND\tmeson-test\tmeson test -C build",
+				"COMMAND\tinstall\tmeson install -C build",
+				"COMMAND\tsetup\tmeson setup build",
+				"COMMAND\tbuild\t" .. build_command,
+				"COMMAND\tclean\t" .. clean_command,
+				"COMMAND\ttest\tmeson test -C build",
+			}
 		end
 		if has_any_marker(root, { "CMakeLists.txt" }) then
 			local ready = filereadable(vim.fs.joinpath(root, "build", "CMakeCache.txt"))
-			return { "ROOT\t" .. root, "SYSTEM\tcmake", "BUILD_READY\t" .. (ready and "1" or "0") }
+			local build_command = ready and "cmake --build build"
+				or "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build"
+			local clean_command = ready and "cmake --build build --target clean" or "cmake -E rm -rf build"
+			local debug_command = "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1"
+				.. " && cmake --build build"
+			local release_command = "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1"
+				.. " && cmake --build build"
+			return {
+				"ROOT\t" .. root,
+				"SYSTEM\tcmake",
+				"BUILD_READY\t" .. (ready and "1" or "0"),
+				"COMMAND\tcmake-config\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+				"COMMAND\tcmake-build\t" .. build_command,
+				"COMMAND\tcmake-clean\t" .. clean_command,
+				"COMMAND\tcmake-debug\t" .. debug_command,
+				"COMMAND\tcmake-release\t" .. release_command,
+				"COMMAND\tcmake-test\tctest --test-dir build",
+				"COMMAND\tinstall\tcmake --build build --target install",
+				"COMMAND\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
+				"COMMAND\tbuild\t" .. build_command,
+				"COMMAND\tclean\t" .. clean_command,
+				"COMMAND\tdebug\t" .. debug_command,
+				"COMMAND\trelease\t" .. release_command,
+				"COMMAND\ttest\tctest --test-dir build",
+			}
 		end
 		if filereadable(vim.fs.joinpath(root, "Makefile")) then
 			return { "ROOT\t" .. root, "SYSTEM\tmake" }
