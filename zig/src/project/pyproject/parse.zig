@@ -24,6 +24,17 @@ pub fn parseTools(
     }
 }
 
+pub fn hasToolSection(contents: []const u8, tool_section: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw_line| {
+        const line = common.trimSpaces(stripHashComment(common.stripTrailingCR(raw_line)));
+        if (line.len < 3 or line[0] != '[' or line[line.len - 1] != ']') continue;
+        const section = line[1 .. line.len - 1];
+        if (std.mem.eql(u8, section, tool_section)) return true;
+    }
+    return false;
+}
+
 fn stripHashComment(line: []const u8) []const u8 {
     const hash_idx = std.mem.indexOfScalar(u8, line, '#') orelse return line;
     return line[0..hash_idx];
@@ -53,4 +64,21 @@ test "parse pyproject tool sections" {
     try std.testing.expectEqualStrings("uv", names.items[0]);
     try std.testing.expectEqualStrings("poetry", names.items[1]);
     try std.testing.expectEqualStrings("hatch", names.items[2]);
+}
+
+test "detect specific tool section" {
+    try std.testing.expect(hasToolSection(
+        \\[project]
+        \\name = "demo"
+        \\
+        \\[tool.uv]
+        \\dev-dependencies = []
+    , "tool.uv"));
+    try std.testing.expect(!hasToolSection(
+        \\[project]
+        \\name = "demo"
+        \\
+        \\[tool.poetry]
+        \\name = "demo"
+    , "tool.uv"));
 }

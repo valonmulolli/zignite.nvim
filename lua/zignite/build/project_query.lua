@@ -330,6 +330,12 @@ end
 
 ---@param filepath string
 ---@return table<string, string>
+function M.detect_python_project_commands_cached(filepath)
+	return detect_warmed_or_backend_commands("python-root", filepath, M.detect_python_project_commands)
+end
+
+---@param filepath string
+---@return table<string, string>
 function M.detect_java_like_project_commands_cached(filepath)
 	return detect_warmed_or_backend_commands("jvm-root", filepath, M.detect_java_like_project_commands)
 end
@@ -548,6 +554,7 @@ local function collect_project_commands(filetype, filepath, is_detection_enabled
 	local commands = {}
 	local c_family_detect = cached and M.detect_c_family_build_result_cached or M.detect_c_family_build_result
 	local jvm_detect = cached and M.detect_java_like_project_commands_cached or M.detect_java_like_project_commands
+	local python_detect = cached and M.detect_python_project_commands_cached or M.detect_python_project_commands
 	local bazel_detect = cached and M.detect_bazel_project_commands_cached or M.detect_bazel_project_commands
 
 	if filetype == "c" or filetype == "cpp" then
@@ -558,6 +565,9 @@ local function collect_project_commands(filetype, filepath, is_detection_enabled
 	end
 	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
 		extend_command_map(commands, M.detect_package_scripts(filepath))
+	end
+	if filetype == "python" then
+		extend_command_map(commands, python_detect(filepath))
 	end
 	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
 		extend_command_map(commands, jvm_detect(filepath))
