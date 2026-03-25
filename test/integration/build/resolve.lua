@@ -477,8 +477,10 @@ local function test_cached_zig_system_results_take_precedence()
 
 	local systems = require("zignite.build.system_runtime")
 	local utils_module = require("zignite.utils")
+	local detect_backend = require("zignite.build.detect.backend")
 	local original_get_project_root = utils_module.get_project_root
 	local original_filereadable = vim.fn.filereadable
+	local original_parse_project_lines_once = detect_backend.parse_project_lines_once
 
 	build_module.reset()
 
@@ -508,6 +510,15 @@ local function test_cached_zig_system_results_take_precedence()
 			return original_filereadable(path)
 		end
 		return 0
+	end
+	detect_backend.parse_project_lines_once = function(kind, path, extra_args)
+		if kind == "jvm-auto" or kind == "bazel-auto" then
+			error("cached lookup should not sync-parse " .. tostring(kind))
+		end
+		if original_parse_project_lines_once then
+			return original_parse_project_lines_once(kind, path, extra_args)
+		end
+		return {}
 	end
 
 	seed_system_runtime_cache("c-family", "/tmp/cached-cfamily/src/main.cpp", "/tmp/cached-cfamily", {
@@ -597,6 +608,7 @@ local function test_cached_zig_system_results_take_precedence()
 
 	utils_module.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
+	detect_backend.parse_project_lines_once = original_parse_project_lines_once
 	build_module.reset()
 
 	print("✓ Cached Zig system precedence test passed")
