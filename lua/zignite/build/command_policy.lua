@@ -322,6 +322,12 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
 	local detect_enabled = config_detection_enabled()
 	if filetype == "javascript" or filetype == "typescript" then
+		if detect_enabled("js_package_scripts") then
+			local package_commands = backend.detect_package_scripts(filepath)
+			if next(package_commands) ~= nil then
+				return merge_contextual_command_map(filetype, configured, package_commands)
+			end
+		end
 		return apply_node_package_manager_defaults(filetype, filepath, configured)
 	end
 	if filetype == "python" then

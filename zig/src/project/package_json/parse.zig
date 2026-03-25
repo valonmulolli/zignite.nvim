@@ -24,6 +24,19 @@ pub fn formatScriptCommandAlloc(
     return std.fmt.allocPrint(allocator, "npm run {s}", .{script_name});
 }
 
+pub fn formatInstallCommandAlloc(allocator: std.mem.Allocator, package_manager: []const u8) ![]u8 {
+    if (std.mem.eql(u8, package_manager, "bun")) {
+        return allocator.dupe(u8, "bun install");
+    }
+    if (std.mem.eql(u8, package_manager, "yarn")) {
+        return allocator.dupe(u8, "yarn install");
+    }
+    if (std.mem.eql(u8, package_manager, "pnpm")) {
+        return allocator.dupe(u8, "pnpm install");
+    }
+    return allocator.dupe(u8, "npm install");
+}
+
 pub fn parseScripts(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -74,4 +87,20 @@ test "format package script command respects package manager" {
     const yarn = try formatScriptCommandAlloc(allocator, "yarn", "dev");
     defer allocator.free(yarn);
     try std.testing.expectEqualStrings("yarn dev", yarn);
+}
+
+test "format install command respects package manager" {
+    const allocator = std.testing.allocator;
+
+    const npm = try formatInstallCommandAlloc(allocator, "npm");
+    defer allocator.free(npm);
+    try std.testing.expectEqualStrings("npm install", npm);
+
+    const pnpm = try formatInstallCommandAlloc(allocator, "pnpm");
+    defer allocator.free(pnpm);
+    try std.testing.expectEqualStrings("pnpm install", pnpm);
+
+    const yarn = try formatInstallCommandAlloc(allocator, "yarn");
+    defer allocator.free(yarn);
+    try std.testing.expectEqualStrings("yarn install", yarn);
 }
