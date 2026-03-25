@@ -11,6 +11,7 @@ M.CMAKE_ROOT_MARKERS = { "CMakeLists.txt" }
 M.MESON_ROOT_MARKERS = { "meson.build" }
 local JVM_ROOT_MARKERS = { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }
 local NODE_ROOT_MARKERS = { "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock" }
+local C_FAMILY_SIGNATURE_MARKERS = { "Makefile", "CMakeLists.txt", "meson.build" }
 local GRADLE_ROOT_MARKERS = { "gradlew", "build.gradle", "build.gradle.kts" }
 local C_FAMILY_ROOT_CHECKS = {
 	{ system = "bazel", markers = M.BAZEL_ROOT_MARKERS },
@@ -37,9 +38,6 @@ M.BAZEL_PROJECT_FILETYPES = {
 	zig = true,
 }
 
----@param filepath string
----@param query string
----@param project_root string|nil
 ---@param lines string[]|nil
 ---@return table|nil
 local function decode_system_backend_lines(lines)
@@ -214,6 +212,32 @@ local function get_cached_root_query_result(query, root, expected_system)
 		return nil
 	end
 	return backend
+end
+
+---@param root string|nil
+---@param candidates table[]
+---@return table|nil
+local function find_cached_root_query_result(root, candidates)
+	for _, candidate in ipairs(candidates or {}) do
+		local cached = get_cached_root_query_result(candidate.query, root, candidate.system)
+		if cached then
+			return cached
+		end
+	end
+	return nil
+end
+
+---@param base string|nil
+---@param segment string|nil
+---@return string|nil
+local function append_signature(base, segment)
+	if type(segment) ~= "string" or segment == "" then
+		return base
+	end
+	if type(base) == "string" and base ~= "" then
+		return base .. "|" .. segment
+	end
+	return segment
 end
 
 ---@param filepath string
@@ -408,13 +432,12 @@ function M.resolve_bazel_root(filepath)
 
 	local root = resolve_bazel_root_local(filepath)
 	if root and root ~= "" then
-		local cached = get_cached_root_query_result("bazel-root", root, "bazel")
+		local cached = find_cached_root_query_result(root, {
+			{ query = "bazel-root", system = "bazel" },
+			{ query = "c-family", system = "bazel" },
+		})
 		if cached and cached.root then
 			return cached.root
-		end
-		local c_family_cached = get_cached_root_query_result("c-family", root, "bazel")
-		if c_family_cached and c_family_cached.root then
-			return c_family_cached.root
 		end
 		return root
 	end
@@ -432,7 +455,9 @@ function M.resolve_jvm_root(filepath)
 
 	local found_root, found_system = resolve_jvm_root_local(filepath)
 	if found_root and found_system then
-		local cached = get_cached_root_query_result("jvm-root", found_root, found_system)
+		local cached = find_cached_root_query_result(found_root, {
+			{ query = "jvm-root", system = found_system },
+		})
 		if cached then
 			return cached.root, cached.system
 		end
@@ -468,7 +493,9 @@ function M.detect_c_family_build_system(filepath)
 
 	local system, root = detect_c_family_build_system_local(filepath)
 	if root and root ~= "" then
-		local cached = get_cached_root_query_result("c-family", root)
+		local cached = find_cached_root_query_result(root, {
+			{ query = "c-family" },
+		})
 		if cached and type(cached.system) == "string" and cached.system ~= "" then
 			return cached.system, cached.root
 		end
@@ -566,28 +593,11 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 	local signature = nil
 
 	if filetype == "c" or filetype == "cpp" then
-		local signatures = {
-			"Makefile:" .. M.detect_file_signature(vim.fs.joinpath(root, "Makefile")),
-			"CMakeLists.txt:" .. M.detect_file_signature(vim.fs.joinpath(root, "CMakeLists.txt")),
-			"meson.build:" .. M.detect_file_signature(vim.fs.joinpath(root, "meson.build")),
-		}
-		signature = table.concat(signatures, "|")
+		signature = M.build_marker_signature(root, C_FAMILY_SIGNATURE_MARKERS)
 	elseif filetype == "javascript" or filetype == "typescript" then
-		signature = table.concat({
-			"package.json:" .. M.detect_file_signature(vim.fs.joinpath(root, "package.json")),
-			"pnpm-lock.yaml:" .. M.detect_file_signature(vim.fs.joinpath(root, "pnpm-lock.yaml")),
-			"yarn.lock:" .. M.detect_file_signature(vim.fs.joinpath(root, "yarn.lock")),
-			"bun.lockb:" .. M.detect_file_signature(vim.fs.joinpath(root, "bun.lockb")),
-			"bun.lock:" .. M.detect_file_signature(vim.fs.joinpath(root, "bun.lock")),
-		}, "|")
+		signature = M.build_marker_signature(root, NODE_ROOT_MARKERS)
 	elseif filetype == "java" or filetype == "kotlin" then
-		local signatures = {
-			"pom.xml:" .. M.detect_file_signature(vim.fs.joinpath(root, "pom.xml")),
-			"gradlew:" .. M.detect_file_signature(vim.fs.joinpath(root, "gradlew")),
-			"build.gradle:" .. M.detect_file_signature(vim.fs.joinpath(root, "build.gradle")),
-			"build.gradle.kts:" .. M.detect_file_signature(vim.fs.joinpath(root, "build.gradle.kts")),
-		}
-		signature = table.concat(signatures, "|")
+		signature = M.build_marker_signature(root, JVM_ROOT_MARKERS)
 	end
 
 	local tool_name = nil
@@ -624,20 +634,12 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 	if is_detection_enabled("bazel_project") and M.supports_bazel_project_commands(filetype) then
 		local bazel_root = M.resolve_bazel_root(filepath)
 		if bazel_root then
-			local bazel_signature = "bazel:" .. M.build_marker_signature(bazel_root, M.BAZEL_ROOT_MARKERS)
-			if signature and signature ~= "" then
-				return signature .. "|" .. bazel_signature
-			end
-			return bazel_signature
+			return append_signature(signature, "bazel:" .. M.build_marker_signature(bazel_root, M.BAZEL_ROOT_MARKERS))
 		end
 	end
 
 	if filetype == "javascript" or filetype == "typescript" then
-		local node_signature = "node:" .. M.build_marker_signature(root, NODE_ROOT_MARKERS)
-		if signature and signature ~= "" then
-			return signature .. "|" .. node_signature
-		end
-		return node_signature
+		return append_signature(signature, "node:" .. M.build_marker_signature(root, NODE_ROOT_MARKERS))
 	end
 
 	return signature
