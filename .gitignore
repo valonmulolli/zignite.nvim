@@ -1,6 +1,8 @@
 # Zig build artifacts
 /zig/zig-cache/
 /zig/.zig-cache/
+.zig-cache/
+zig-cache/
 /zig/zig-out/
 
 # Neovim plugin development
