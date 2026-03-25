@@ -36,6 +36,18 @@ The backend and CI are currently tested against Zig `0.15.2`. Newer Zig
 versions may work, but `0.15.2` is the version we use for local development,
 CI, and benchmark numbers in this repo.
 
+## Architecture
+
+The current architecture is intentionally split:
+
+- Lua owns the Neovim runtime layer: UI, config merge, cached lookup, async refresh, and command dispatch
+- Zig owns the backend layer: parsing, command inference, system queries, detection, quickfix processing, and execution support
+
+For contributors:
+
+- architecture overview: `docs/architecture.md`
+- contribution guide: `CONTRIBUTING.md`
+
 
 ## Installation
 
