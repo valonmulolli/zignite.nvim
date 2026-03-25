@@ -158,6 +158,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "cargo-auto")) return .cargo_auto;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
+    if (std.ascii.eqlIgnoreCase(value, "python-auto")) return .python_auto;
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "go-auto")) return .go_auto;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;

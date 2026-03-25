@@ -149,6 +149,17 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
             }, go_mod_contents);
             return true;
         },
+        .python_auto => {
+            const pyproject_path = (try project_io.findParentFileAlloc(allocator, options.path, "pyproject.toml", 12)) orelse return true;
+            defer allocator.free(pyproject_path);
+            const pyproject_contents = try common.readFileAlloc(allocator, pyproject_path);
+            defer allocator.free(pyproject_contents);
+            try emit.writeDirectOutput(stdout, allocator, .{
+                .kind = .python_auto,
+                .path = pyproject_path,
+            }, pyproject_contents);
+            return true;
+        },
         .cmake_auto => {
             const cmake_path = (try project_io.findParentFileAlloc(allocator, options.path, "CMakeLists.txt", 12)) orelse return true;
             defer allocator.free(cmake_path);
@@ -246,6 +257,37 @@ test "writeAutoOutput emits go-auto records preferring go.work" {
     try std.testing.expect(std.mem.indexOf(u8, out.items, "MODULE\tgithub.com/example/api\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "PRIMARY_SELECTOR\t./services/api/cmd/api\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tgo run ./services/api/cmd/api\n") != null);
+}
+
+test "writeAutoOutput emits python-auto uv commands from source path" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{ .sub_path = "pyproject.toml", .data =
+        \\[project]
+        \\name = "demo"
+        \\
+        \\[tool.uv]
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "app", "main.py" });
+    defer allocator.free(filepath);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try std.testing.expect(try writeAutoOutput(out.writer(allocator), allocator, .{
+        .kind = .python_auto,
+        .path = filepath,
+    }));
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tuv run -m main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tuv run pytest\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tinstall\tuv sync\n") != null);
 }
 
 test "writeAutoOutput emits jvm-auto records for Gradle projects" {
