@@ -410,6 +410,7 @@ function M.detect_c_family_build_result_cached(filepath)
 	if not filepath or filepath == "" then
 		return nil
 	end
+	local project_root = utils.get_project_root(filepath, config.options.project)
 	local local_system, local_root = systems.detect_c_family_build_system(filepath)
 	if not local_system then
 		return nil
@@ -424,13 +425,33 @@ function M.detect_c_family_build_result_cached(filepath)
 	end
 
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
-	local cached, _, mtime_key = get_c_family_cached_entry(filepath, root)
+	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
 	if cached and cached.mtime_key == mtime_key and type(cached.system) == "string" and cached.system ~= "" then
 		return {
 			system = cached.system,
 			root = cached.root,
 			detect_flag = cached.detect_flag,
 			commands = state.copy_string_map(cached.commands),
+			info = nil,
+		}
+	end
+
+	local warmed_system = systems.get_cached_system_query_result("c-family", filepath, project_root)
+	if
+		type(warmed_system) == "table"
+		and type(warmed_system.system) == "string"
+		and warmed_system.system ~= ""
+		and type(warmed_system.commands) == "table"
+		and next(warmed_system.commands) ~= nil
+	then
+		local warmed_root = warmed_system.root or root
+		local warmed_commands = state.copy_string_map(warmed_system.commands)
+		store_c_family_cached_entry(cache_key, mtime_key, warmed_system.system, warmed_root, warmed_commands)
+		return {
+			system = warmed_system.system,
+			root = warmed_root,
+			detect_flag = warmed_system.system == "make" and "c_cpp_make" or nil,
+			commands = warmed_commands,
 			info = nil,
 		}
 	end
