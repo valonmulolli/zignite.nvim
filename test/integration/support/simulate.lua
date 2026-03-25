@@ -571,6 +571,29 @@ local function build_system_backend_lines(path, query, project_root)
 		}
 	end
 
+	if query == "python-root" then
+		local markers = { "pyproject.toml", "uv.lock" }
+		local found = has_any_marker(root, markers) and root or find_root_for_markers(path, markers, 12)
+		if not found then
+			return {}
+		end
+		local pyproject_payload = type(vim.fn.readfile) == "function"
+			and vim.fn.readfile(vim.fs.joinpath(found, "pyproject.toml"))
+			or nil
+		local uses_uv = filereadable(vim.fs.joinpath(found, "uv.lock"))
+			or (type(pyproject_payload) == "table" and vim.tbl_contains(pyproject_payload, "[tool.uv]"))
+		local lines = {
+			"ROOT\t" .. found,
+			"SYSTEM\tpython",
+		}
+		if uses_uv then
+			lines[#lines + 1] = "COMMAND\trun\tuv run -m main"
+			lines[#lines + 1] = "COMMAND\ttest\tuv run pytest"
+			lines[#lines + 1] = "COMMAND\tinstall\tuv sync"
+		end
+		return lines
+	end
+
 	if query == "jvm-root" then
 		if filereadable(vim.fs.joinpath(root, "pom.xml")) then
 			return {

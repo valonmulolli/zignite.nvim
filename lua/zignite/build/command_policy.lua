@@ -255,9 +255,13 @@ local function detect_javascript_project_commands(filepath, cached, detect_enabl
 end
 
 ---@param filepath string
+---@param cached boolean|nil
 ---@return table<string, string>|nil
-local function detect_python_project_commands(filepath)
-	local python_commands = backend.detect_python_project_commands(filepath)
+local function detect_python_project_commands(filepath, cached)
+	local detect_python = cached
+			and backend.detect_python_project_commands_cached
+		or backend.detect_python_project_commands
+	local python_commands = detect_python(filepath)
 	if next(python_commands) ~= nil then
 		return python_commands
 	end
@@ -274,7 +278,7 @@ local function detect_contextual_project_commands(filetype, filepath, cached, de
 		return detect_javascript_project_commands(filepath, cached, detect_enabled)
 	end
 	if filetype == "python" then
-		return detect_python_project_commands(filepath)
+		return detect_python_project_commands(filepath, cached)
 	end
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
 		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
