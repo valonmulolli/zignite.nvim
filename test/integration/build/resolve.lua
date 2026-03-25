@@ -528,10 +528,26 @@ local function test_cached_zig_system_results_take_precedence()
 	seed_system_runtime_cache("bazel-root", "/tmp/cached-bazel/app/main.cc", "/tmp/cached-bazel/app", {
 		root = "/tmp/zig-bazel",
 		system = "bazel",
+		commands = {
+			["bazel-query"] = "bazel query $zignite_args",
+			["bazel-clean"] = "bazel clean",
+			["bazel-build-all"] = "bazel build //...",
+			["bazel-test-all"] = "bazel test //...",
+			build = "bazel build //...",
+			test = "bazel test //...",
+		},
 	})
 	seed_system_runtime_cache("jvm-root", "/tmp/cached-jvm/src/Main.kt", "/tmp/cached-jvm/src", {
 		root = "/tmp/zig-jvm",
 		system = "gradle",
+		commands = {
+			["gradle-build"] = "./gradlew build",
+			["gradle-test"] = "./gradlew test",
+			["gradle-clean"] = "./gradlew clean",
+			build = "./gradlew build",
+			test = "./gradlew test",
+			clean = "./gradlew clean",
+		},
 	})
 
 	local c_family_system, c_family_root = systems.detect_c_family_build_system("/tmp/cached-cfamily/src/main.cpp")
@@ -557,6 +573,26 @@ local function test_cached_zig_system_results_take_precedence()
 	assert(
 		cached_build_commands.build == "meson compile -C build",
 		"Cached Zig c-family generic aliases should feed immediate build lookup"
+	)
+
+	local cached_java_commands = build_module.get_build_commands_for_cached_lookup(
+		"java",
+		"/tmp/cached-jvm/src/Main.kt",
+		nil
+	)
+	assert(
+		cached_java_commands["gradle-build"] == "./gradlew build",
+		"Cached Zig JVM system commands should feed immediate Java build lookup"
+	)
+
+	local cached_bazel_commands = build_module.get_build_commands_for_cached_lookup(
+		"cpp",
+		"/tmp/cached-bazel/app/main.cc",
+		nil
+	)
+	assert(
+		cached_bazel_commands["bazel-build-all"] == "bazel build //...",
+		"Cached Zig Bazel system commands should feed immediate Bazel build lookup"
 	)
 
 	utils_module.get_project_root = original_get_project_root

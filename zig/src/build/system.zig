@@ -189,6 +189,73 @@ fn buildMesonCommandsAlloc(
     return try commands.toOwnedSlice(allocator);
 }
 
+fn buildBazelCommandsAlloc(allocator: std.mem.Allocator) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const query_command = try allocator.dupe(u8, "bazel query $zignite_args");
+    const clean_command = try allocator.dupe(u8, "bazel clean");
+    const build_command = try allocator.dupe(u8, "bazel build //...");
+    const test_command = try allocator.dupe(u8, "bazel test //...");
+
+    try appendOwnedCommand(&commands, allocator, "bazel-query", query_command);
+    try appendOwnedCommand(&commands, allocator, "bazel-clean", clean_command);
+    try appendOwnedCommand(&commands, allocator, "bazel-build-all", build_command);
+    try appendOwnedCommand(&commands, allocator, "bazel-test-all", test_command);
+    try appendDupedCommand(&commands, allocator, "build", build_command);
+    try appendDupedCommand(&commands, allocator, "test", test_command);
+
+    return try commands.toOwnedSlice(allocator);
+}
+
+fn buildMavenCommandsAlloc(allocator: std.mem.Allocator) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const build_command = try allocator.dupe(u8, "mvn compile");
+    const test_command = try allocator.dupe(u8, "mvn test");
+    const package_command = try allocator.dupe(u8, "mvn package");
+
+    try appendOwnedCommand(&commands, allocator, "mvn-build", build_command);
+    try appendOwnedCommand(&commands, allocator, "mvn-test", test_command);
+    try appendOwnedCommand(&commands, allocator, "mvn-package", package_command);
+    try appendDupedCommand(&commands, allocator, "build", build_command);
+    try appendDupedCommand(&commands, allocator, "test", test_command);
+
+    return try commands.toOwnedSlice(allocator);
+}
+
+fn buildGradleCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
+    defer allocator.free(wrapper_path);
+    const prefix: []const u8 = if (pathExists(wrapper_path)) "./gradlew" else "gradle";
+
+    const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
+    const test_command = try std.fmt.allocPrint(allocator, "{s} test", .{prefix});
+    const clean_command = try std.fmt.allocPrint(allocator, "{s} clean", .{prefix});
+
+    try appendOwnedCommand(&commands, allocator, "gradle-build", build_command);
+    try appendOwnedCommand(&commands, allocator, "gradle-test", test_command);
+    try appendOwnedCommand(&commands, allocator, "gradle-clean", clean_command);
+    try appendDupedCommand(&commands, allocator, "build", build_command);
+    try appendDupedCommand(&commands, allocator, "test", test_command);
+    try appendDupedCommand(&commands, allocator, "clean", clean_command);
+
+    return try commands.toOwnedSlice(allocator);
+}
+
 fn appendOwnedCommand(
     commands: *std.ArrayList(CommandEntry),
     allocator: std.mem.Allocator,
@@ -210,6 +277,15 @@ fn appendDupedCommand(
     });
 }
 
+fn pathExists(path: []const u8) bool {
+    if (std.fs.path.isAbsolute(path)) {
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
+    }
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
 fn detectBazelRoot(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -217,12 +293,13 @@ fn detectBazelRoot(
 ) !Result {
     if (project_root) |root| {
         if (root.len > 0 and rootHasAnyMarker(root, &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" })) {
-            return .{ .root = try allocator.dupe(u8, root), .system = "bazel" };
+            return try buildBazelResult(allocator, root);
         }
     }
 
     if (try findRootForFilesAlloc(allocator, path, &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" }, 12)) |root| {
-        return .{ .root = root, .system = "bazel" };
+        defer allocator.free(root);
+        return try buildBazelResult(allocator, root);
     }
 
     return .{};
@@ -236,10 +313,10 @@ fn detectJvmRoot(
     if (project_root) |root| {
         if (root.len > 0) {
             if (pathHasFile(root, "pom.xml")) {
-                return .{ .root = try allocator.dupe(u8, root), .system = "maven" };
+                return try buildJvmResult(allocator, root, "maven");
             }
             if (pathHasAnyMarker(root, &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" })) {
-                return .{ .root = try allocator.dupe(u8, root), .system = "gradle" };
+                return try buildJvmResult(allocator, root, "gradle");
             }
         }
     }
@@ -297,10 +374,10 @@ fn findJvmRootAlloc(
     var steps: usize = 0;
     while (steps < max_up) : (steps += 1) {
         if (pathHasFile(current, "pom.xml")) {
-            return .{ .root = try allocator.dupe(u8, current), .system = "maven" };
+            return try buildJvmResult(allocator, current, "maven");
         }
         if (pathHasAnyMarker(current, &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" })) {
-            return .{ .root = try allocator.dupe(u8, current), .system = "gradle" };
+            return try buildJvmResult(allocator, current, "gradle");
         }
 
         const parent = std.fs.path.dirname(current) orelse break;
@@ -311,6 +388,31 @@ fn findJvmRootAlloc(
         current = next;
     }
     return null;
+}
+
+fn buildBazelResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildBazelCommandsAlloc(allocator);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "bazel", .commands = commands };
+}
+
+fn buildJvmResult(allocator: std.mem.Allocator, root: []const u8, system: []const u8) !Result {
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = if (std.mem.eql(u8, system, "maven"))
+        try buildMavenCommandsAlloc(allocator)
+    else
+        try buildGradleCommandsAlloc(allocator, root);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = system, .commands = commands };
 }
 
 fn rootHasAnyMarker(root: []const u8, markers: []const []const u8) bool {
@@ -416,6 +518,49 @@ fn findCommand(commands: []const CommandEntry, name: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, entry.name, name)) return entry.command;
     }
     return null;
+}
+
+test "detect bazel root emits baseline commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{ .sub_path = "WORKSPACE", .data = "" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "app", "main.cc" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .bazel_root, filepath, null);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings(root, result.root.?);
+    try std.testing.expectEqualStrings("bazel", result.system.?);
+    try std.testing.expectEqualStrings("bazel build //...", findCommand(result.commands, "build").?);
+}
+
+test "detect jvm root emits baseline gradle commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src/main/kotlin");
+    try tmp.dir.writeFile(.{ .sub_path = "build.gradle.kts", .data = "plugins { kotlin(\"jvm\") }\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "gradlew", .data = "" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main", "kotlin", "App.kt" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .jvm_root, filepath, root);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings("gradle", result.system.?);
+    try std.testing.expectEqualStrings("./gradlew build", findCommand(result.commands, "build").?);
+    try std.testing.expectEqualStrings("./gradlew clean", findCommand(result.commands, "clean").?);
 }
 
 test "detect bazel root by walking parents" {
