@@ -502,31 +502,26 @@ end
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return string|nil
 function M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
+	local _ = filepath
 	if
 		(filetype == "javascript" or filetype == "typescript")
 		and type(is_detection_enabled) == "function"
 		and is_detection_enabled("js_package_scripts")
 	then
-		local detected_scripts = backend.detect_package_scripts(filepath)
-		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
-			if type(detected_scripts[candidate]) == "string" then
-				return candidate
-			end
+		if type(build_cmds.live) == "string" then
+			return "live"
 		end
 
-		local configured = M.get_configured_build_commands(filetype, filepath)
 		local default_commands = get_default_build_commands(filetype)
 		for _, candidate in ipairs(LIVE_COMMAND_PRIORITY) do
-			local command = build_cmds[candidate]
-			if type(command) == "string" then
-				local configured_command = configured[candidate]
-				local is_default_fallback = configured_command ~= nil
-					and command == configured_command
-					and configured_command == default_commands[candidate]
-				if not is_default_fallback then
-					return candidate
-				end
+			if candidate == "live" then
+				goto continue
 			end
+			local command = build_cmds[candidate]
+			if type(command) == "string" and command ~= default_commands[candidate] then
+				return candidate
+			end
+			::continue::
 		end
 		return nil
 	end
