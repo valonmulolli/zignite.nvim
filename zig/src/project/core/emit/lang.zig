@@ -44,7 +44,15 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             var names: std.ArrayList([]u8) = .empty;
             defer common.freeOwnedNameList(allocator, names.items);
             try package_json.parseScripts(allocator, contents, &names);
-            const manager = options.package_manager orelse "npm";
+            const manager = options.package_manager orelse blk: {
+                const package_json_path = if (options.kind == .package_json_auto)
+                    (try project_io.findParentFileAlloc(allocator, options.path, "package.json", 12))
+                else
+                    try allocator.dupe(u8, options.path);
+                defer if (package_json_path) |path| allocator.free(path);
+                const root = if (package_json_path) |path| std.fs.path.dirname(path) orelse "" else "";
+                break :blk try package_json.detectPackageManager(allocator, root, contents);
+            };
             const install_command = try package_json.formatInstallCommandAlloc(allocator, manager);
             defer allocator.free(install_command);
             try stdout.print("COMMAND\tinstall\t{s}\n", .{install_command});
