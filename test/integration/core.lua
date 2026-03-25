@@ -381,31 +381,36 @@ local function test_uv_python_build_defaults()
         },
     })
 
-    reset_job_results()
-    with_file_context("python", "/tmp/uvbuild/main.py", {
-        {
-            tbl = vim.fn,
-            key = "filereadable",
-            value = make_filereadable_override({
-                "/tmp/uvbuild/pyproject.toml",
-                "/tmp/uvbuild/uv.lock",
-            }),
-        },
-        {
-            tbl = vim.fn,
-            key = "readfile",
-            value = make_readfile_override({
-                ["/tmp/uvbuild/pyproject.toml"] = {
-                    "[project]",
-                    'name = "uvbuild"',
-                    "",
-                    "[tool.uv]",
-                },
-            }),
-        },
-    }, function()
-        init.run_build_command("test", "float")
-    end)
+	reset_job_results()
+	with_file_context("python", "/tmp/uvbuild/main.py", {
+		{
+			tbl = vim.fn,
+			key = "executable",
+			value = function(path)
+				if tostring(path):match("zignite$") then
+					return 1
+				end
+				return 0
+			end,
+		},
+		{
+			tbl = vim.fn,
+			key = "systemlist",
+			value = function(cmd)
+				if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=python-auto" then
+					vim.v.shell_error = 0
+					return {
+						"COMMAND\trun\tuv run -m main",
+						"COMMAND\ttest\tuv run pytest",
+						"COMMAND\tinstall\tuv sync",
+					}
+				end
+				return {}
+			end,
+		},
+	}, function()
+		init.run_build_command("test", "float")
+	end)
 
     assert_last_job_matches(
         "uv-managed Python build command should start a job",
