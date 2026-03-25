@@ -7,10 +7,16 @@ pub const Query = enum {
     jvm_root,
 };
 
+pub const CommandEntry = struct {
+    name: []const u8,
+    command: []u8,
+};
+
 pub const Result = struct {
     root: ?[]u8 = null,
     system: ?[]const u8 = null,
     build_ready: ?bool = null,
+    commands: []CommandEntry = &.{},
 };
 
 pub fn parseQuery(value: []const u8) !Query {
@@ -22,6 +28,12 @@ pub fn parseQuery(value: []const u8) !Query {
 
 pub fn freeOwnedResult(allocator: std.mem.Allocator, result: Result) void {
     if (result.root) |root| allocator.free(root);
+    for (result.commands) |entry| {
+        allocator.free(entry.command);
+    }
+    if (result.commands.len > 0) {
+        allocator.free(result.commands);
+    }
 }
 
 pub fn detect(
@@ -48,18 +60,10 @@ fn detectCFamily(
                 return .{ .root = try allocator.dupe(u8, root), .system = "bazel" };
             }
             if (rootHasAnyMarker(root, &.{"meson.build"})) {
-                return .{
-                    .root = try allocator.dupe(u8, root),
-                    .system = "meson",
-                    .build_ready = common.hasMesonBuildTree(root),
-                };
+                return try buildMesonResult(allocator, root);
             }
             if (rootHasAnyMarker(root, &.{"CMakeLists.txt"})) {
-                return .{
-                    .root = try allocator.dupe(u8, root),
-                    .system = "cmake",
-                    .build_ready = common.hasCmakeBuildTree(root),
-                };
+                return try buildCmakeResult(allocator, root);
             }
             if (pathHasFile(root, "Makefile")) {
                 return .{ .root = try allocator.dupe(u8, root), .system = "make" };
@@ -71,10 +75,12 @@ fn detectCFamily(
         return .{ .root = root, .system = "bazel" };
     }
     if (try findRootForFilesAlloc(allocator, path, &.{"meson.build"}, 12)) |root| {
-        return .{ .root = root, .system = "meson", .build_ready = common.hasMesonBuildTree(root) };
+        defer allocator.free(root);
+        return try buildMesonResult(allocator, root);
     }
     if (try findRootForFilesAlloc(allocator, path, &.{"CMakeLists.txt"}, 12)) |root| {
-        return .{ .root = root, .system = "cmake", .build_ready = common.hasCmakeBuildTree(root) };
+        defer allocator.free(root);
+        return try buildCmakeResult(allocator, root);
     }
     if (try findRootForFilesAlloc(allocator, path, &.{"Makefile"}, 12)) |root| {
         return .{ .root = root, .system = "make" };
@@ -82,6 +88,126 @@ fn detectCFamily(
 
     const root = try resolveBaseRoot(allocator, path, project_root);
     return .{ .root = root };
+}
+
+fn buildCmakeResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const build_ready = common.hasCmakeBuildTree(root);
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildCmakeCommandsAlloc(allocator, root, build_ready);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "cmake", .build_ready = build_ready, .commands = commands };
+}
+
+fn buildMesonResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const build_ready = common.hasMesonBuildTree(root);
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildMesonCommandsAlloc(allocator, root, build_ready);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "meson", .build_ready = build_ready, .commands = commands };
+}
+
+fn buildCmakeCommandsAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    build_ready: bool,
+) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const config_command = try allocator.dupe(u8, "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1");
+    const build_command = try common.cmakeBuildCommandAlloc(allocator, root, null);
+    const clean_command = try allocator.dupe(u8, if (build_ready) "cmake --build build --target clean" else "cmake -E rm -rf build");
+    const debug_command = try allocator.dupe(
+        u8,
+        "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+    );
+    const release_command = try allocator.dupe(
+        u8,
+        "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
+    );
+    const test_command = try allocator.dupe(u8, "ctest --test-dir build");
+    const install_command = try allocator.dupe(u8, "cmake --build build --target install");
+
+    try appendOwnedCommand(&commands, allocator, "cmake-config", config_command);
+    try appendOwnedCommand(&commands, allocator, "cmake-build", build_command);
+    try appendOwnedCommand(&commands, allocator, "cmake-clean", clean_command);
+    try appendOwnedCommand(&commands, allocator, "cmake-debug", debug_command);
+    try appendOwnedCommand(&commands, allocator, "cmake-release", release_command);
+    try appendOwnedCommand(&commands, allocator, "cmake-test", test_command);
+    try appendOwnedCommand(&commands, allocator, "install", install_command);
+    try appendDupedCommand(&commands, allocator, "config", config_command);
+    try appendDupedCommand(&commands, allocator, "build", build_command);
+    try appendDupedCommand(&commands, allocator, "clean", clean_command);
+    try appendDupedCommand(&commands, allocator, "debug", debug_command);
+    try appendDupedCommand(&commands, allocator, "release", release_command);
+    try appendDupedCommand(&commands, allocator, "test", test_command);
+
+    return try commands.toOwnedSlice(allocator);
+}
+
+fn buildMesonCommandsAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    build_ready: bool,
+) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const setup_command = try allocator.dupe(u8, "meson setup build");
+    const build_command = try common.mesonBuildCommandAlloc(allocator, root, null);
+    const clean_command = try allocator.dupe(
+        u8,
+        if (build_ready) "meson compile -C build --clean" else "cmake -E rm -rf build",
+    );
+    const test_command = try allocator.dupe(u8, "meson test -C build");
+    const install_command = try allocator.dupe(u8, "meson install -C build");
+
+    try appendOwnedCommand(&commands, allocator, "meson-setup", setup_command);
+    try appendOwnedCommand(&commands, allocator, "meson-build", build_command);
+    try appendOwnedCommand(&commands, allocator, "meson-clean", clean_command);
+    try appendOwnedCommand(&commands, allocator, "meson-test", test_command);
+    try appendOwnedCommand(&commands, allocator, "install", install_command);
+    try appendDupedCommand(&commands, allocator, "setup", setup_command);
+    try appendDupedCommand(&commands, allocator, "build", build_command);
+    try appendDupedCommand(&commands, allocator, "clean", clean_command);
+    try appendDupedCommand(&commands, allocator, "test", test_command);
+
+    return try commands.toOwnedSlice(allocator);
+}
+
+fn appendOwnedCommand(
+    commands: *std.ArrayList(CommandEntry),
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    command: []u8,
+) !void {
+    try commands.append(allocator, .{ .name = name, .command = command });
+}
+
+fn appendDupedCommand(
+    commands: *std.ArrayList(CommandEntry),
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    source_command: []const u8,
+) !void {
+    try commands.append(allocator, .{
+        .name = name,
+        .command = try allocator.dupe(u8, source_command),
+    });
 }
 
 fn detectBazelRoot(
@@ -231,6 +357,9 @@ test "detect c family system and build readiness" {
     try std.testing.expectEqualStrings(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
     try std.testing.expect(result.build_ready.?);
+    try std.testing.expect(result.commands.len > 0);
+    try std.testing.expectEqualStrings("cmake --build build", findCommand(result.commands, "cmake-build").?);
+    try std.testing.expectEqualStrings("cmake --build build", findCommand(result.commands, "build").?);
 }
 
 test "detect c family by walking parent markers" {
@@ -252,6 +381,41 @@ test "detect c family by walking parent markers" {
     try std.testing.expect(result.root != null);
     try std.testing.expectEqualStrings(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
+}
+
+test "detect c family meson emits setup-prefixed build commands when build tree is missing" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "meson.build", .data = "project('demo')\n" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .c_family, filepath, root);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings("meson", result.system.?);
+    try std.testing.expectEqual(false, result.build_ready.?);
+    try std.testing.expectEqualStrings(
+        "meson setup build && meson compile -C build",
+        findCommand(result.commands, "meson-build").?,
+    );
+    try std.testing.expectEqualStrings(
+        "meson setup build && meson compile -C build",
+        findCommand(result.commands, "build").?,
+    );
+}
+
+fn findCommand(commands: []const CommandEntry, name: []const u8) ?[]const u8 {
+    for (commands) |entry| {
+        if (std.mem.eql(u8, entry.name, name)) return entry.command;
+    }
+    return null;
 }
 
 test "detect bazel root by walking parents" {

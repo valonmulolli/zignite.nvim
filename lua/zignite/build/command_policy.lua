@@ -231,6 +231,14 @@ local function build_cmake_commands(configured, root, cmake_commands)
 			"cmake-release",
 			"cmake-test",
 			"cmake-run",
+			"config",
+			"build",
+			"clean",
+			"debug",
+			"release",
+			"test",
+			"run",
+			"install",
 		})
 	end
 
@@ -285,6 +293,12 @@ local function build_meson_commands(configured, root, meson_commands)
 			"meson-clean",
 			"meson-test",
 			"meson-run",
+			"setup",
+			"build",
+			"clean",
+			"test",
+			"run",
+			"install",
 		})
 	end
 

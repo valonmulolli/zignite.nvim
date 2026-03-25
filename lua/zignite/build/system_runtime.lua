@@ -83,13 +83,20 @@ local function decode_system_backend_lines(lines)
 	end
 	local result = {}
 	for _, raw_line in ipairs(lines or {}) do
-		local kind, value = tostring(raw_line or ""):match("^([^\t]+)\t(.+)$")
-		if kind == "ROOT" and value ~= "" then
-			result.root = value
-		elseif kind == "SYSTEM" and value ~= "" then
-			result.system = value
-		elseif kind == "BUILD_READY" then
-			result.build_ready = value == "1"
+		local line = tostring(raw_line or "")
+		local kind, name, command = line:match("^([^\t]+)\t([^\t]+)\t(.+)$")
+		if kind == "COMMAND" and name ~= "" and command ~= "" then
+			result.commands = result.commands or {}
+			result.commands[name] = command
+		else
+			local single_kind, value = line:match("^([^\t]+)\t(.+)$")
+			if single_kind == "ROOT" and value ~= "" then
+				result.root = value
+			elseif single_kind == "SYSTEM" and value ~= "" then
+				result.system = value
+			elseif single_kind == "BUILD_READY" then
+				result.build_ready = value == "1"
+			end
 		end
 	end
 	return next(result) ~= nil and result or nil
@@ -106,7 +113,15 @@ local function copy_system_result(result)
 	end
 	local copied = {}
 	for key, value in pairs(result) do
-		copied[key] = value
+		if type(value) == "table" then
+			local nested = {}
+			for nested_key, nested_value in pairs(value) do
+				nested[nested_key] = nested_value
+			end
+			copied[key] = nested
+		else
+			copied[key] = value
+		end
 	end
 	return copied
 end
@@ -150,6 +165,14 @@ local function get_cached_system_result(query, filepath, project_root)
 		return nil
 	end
 	return copy_system_result(entry.result)
+end
+
+---@param query string
+---@param filepath string
+---@param project_root string|nil
+---@return table|nil
+function M.get_cached_system_query_result(query, filepath, project_root)
+	return get_cached_system_result(query, filepath, project_root)
 end
 
 ---@param query string
@@ -254,7 +277,7 @@ local function prime_system_query_async(filepath, query, project_root, on_done)
 	local cached = get_cached_system_result(query, filepath, project_root)
 	if cached then
 		vim.schedule(function()
-			on_done(vim.deepcopy(cached))
+			on_done(copy_system_result(cached))
 		end)
 		return true
 	end

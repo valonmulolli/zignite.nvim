@@ -17,6 +17,9 @@ fn writeSystemResult(stdout: anytype, result: build_system.Result) !void {
     if (result.build_ready) |ready| {
         try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
     }
+    for (result.commands) |entry| {
+        try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+    }
 }
 
 pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
@@ -193,7 +196,7 @@ test "writeAutoOutput emits cargo-auto records from source path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makePath("src/bin");
-    try tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data =
+    try tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = 
         \\[package]
         \\name = "demo"
     });
@@ -218,12 +221,12 @@ test "writeAutoOutput emits go-auto records preferring go.work" {
     defer tmp.cleanup();
 
     try tmp.dir.makePath("services/api/cmd/api");
-    try tmp.dir.writeFile(.{ .sub_path = "go.work", .data =
+    try tmp.dir.writeFile(.{ .sub_path = "go.work", .data = 
         \\go 1.23.0
         \\
         \\use ./services/api
     });
-    try tmp.dir.writeFile(.{ .sub_path = "services/api/go.mod", .data =
+    try tmp.dir.writeFile(.{ .sub_path = "services/api/go.mod", .data = 
         \\module github.com/example/api
     });
 
@@ -251,7 +254,7 @@ test "writeAutoOutput emits jvm-auto records for Gradle projects" {
     defer tmp.cleanup();
 
     try tmp.dir.makePath("src/main/java/com/example");
-    try tmp.dir.writeFile(.{ .sub_path = "build.gradle.kts", .data =
+    try tmp.dir.writeFile(.{ .sub_path = "build.gradle.kts", .data = 
         \\plugins {
         \\    application
         \\}
@@ -282,7 +285,7 @@ test "writeAutoOutput emits c-family auto commands for nested cmake source" {
 
     try tmp.dir.makePath("src/nested");
     try tmp.dir.makePath("build");
-    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data =
+    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data = 
         \\project(app)
         \\add_executable(app src/nested/main.cpp)
     });

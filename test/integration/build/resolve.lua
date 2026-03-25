@@ -12,7 +12,15 @@ local runtime_module = require("zignite.runtime")
 local function shallow_copy(tbl)
 	local copied = {}
 	for key, value in pairs(tbl or {}) do
-		copied[key] = value
+		if type(value) == "table" then
+			local nested = {}
+			for nested_key, nested_value in pairs(value) do
+				nested[nested_key] = nested_value
+			end
+			copied[key] = nested
+		else
+			copied[key] = value
+		end
 	end
 	return copied
 end
@@ -506,6 +514,16 @@ local function test_cached_zig_system_results_take_precedence()
 		root = "/tmp/zig-cfamily",
 		system = "meson",
 		build_ready = true,
+		commands = {
+			["meson-setup"] = "meson setup build",
+			["meson-build"] = "meson compile -C build",
+			["meson-clean"] = "meson compile -C build --clean",
+			["meson-test"] = "meson test -C build",
+			setup = "meson setup build",
+			build = "meson compile -C build",
+			clean = "meson compile -C build --clean",
+			test = "meson test -C build",
+		},
 	})
 	seed_system_runtime_cache("bazel-root", "/tmp/cached-bazel/app/main.cc", "/tmp/cached-bazel/app", {
 		root = "/tmp/zig-bazel",
@@ -526,6 +544,20 @@ local function test_cached_zig_system_results_take_precedence()
 	local jvm_root, jvm_system = systems.resolve_jvm_root("/tmp/cached-jvm/src/Main.kt")
 	assert(jvm_root == "/tmp/zig-jvm", "Cached Zig JVM root should beat local fallback")
 	assert(jvm_system == "gradle", "Cached Zig JVM system should beat local fallback")
+
+	local cached_build_commands = build_module.get_build_commands_for_cached_lookup(
+		"cpp",
+		"/tmp/cached-cfamily/src/main.cpp",
+		nil
+	)
+	assert(
+		cached_build_commands["meson-build"] == "meson compile -C build",
+		"Cached Zig c-family system commands should feed immediate build lookup"
+	)
+	assert(
+		cached_build_commands.build == "meson compile -C build",
+		"Cached Zig c-family generic aliases should feed immediate build lookup"
+	)
 
 	utils_module.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
