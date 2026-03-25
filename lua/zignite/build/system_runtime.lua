@@ -9,6 +9,14 @@ local M = {}
 M.BAZEL_ROOT_MARKERS = { "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" }
 M.CMAKE_ROOT_MARKERS = { "CMakeLists.txt" }
 M.MESON_ROOT_MARKERS = { "meson.build" }
+local JVM_ROOT_MARKERS = { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }
+local GRADLE_ROOT_MARKERS = { "gradlew", "build.gradle", "build.gradle.kts" }
+local C_FAMILY_ROOT_CHECKS = {
+	{ system = "bazel", markers = M.BAZEL_ROOT_MARKERS },
+	{ system = "meson", markers = M.MESON_ROOT_MARKERS },
+	{ system = "cmake", markers = M.CMAKE_ROOT_MARKERS },
+	{ system = "make", marker = "Makefile" },
+}
 M.BAZEL_PROJECT_FILETYPES = {
 	bazel = true,
 	bzl = true,
@@ -321,30 +329,49 @@ function M.build_marker_signature(root, markers)
 end
 
 ---@param filepath string
+---@param markers string[]
+---@param max_up integer|nil
 ---@return string|nil
-local function resolve_bazel_root_local(filepath)
+local function resolve_root_with_markers(filepath, markers, max_up)
 	local root = utils.get_project_root(filepath, config.options.project)
-	if root and M.root_has_any_marker(root, M.BAZEL_ROOT_MARKERS) then
+	if root and root ~= "" and M.root_has_any_marker(root, markers) then
 		return root
 	end
-	return M.find_root_for_files(filepath, M.BAZEL_ROOT_MARKERS, 12)
+	return M.find_root_for_files(filepath, markers, max_up or 12)
+end
+
+---@param root string
+---@return string|nil
+local function detect_c_family_system_for_root(root)
+	for _, check in ipairs(C_FAMILY_ROOT_CHECKS) do
+		if check.markers then
+			if M.root_has_any_marker(root, check.markers) then
+				return check.system
+			end
+		elseif check.marker and M.root_has_marker(root, check.marker) then
+			return check.system
+		end
+	end
+	return nil
+end
+
+---@param filepath string
+---@return string|nil
+local function resolve_bazel_root_local(filepath)
+	return resolve_root_with_markers(filepath, M.BAZEL_ROOT_MARKERS, 12)
 end
 
 ---@param filepath string
 ---@return string|nil, string|nil
 local function resolve_jvm_root_local(filepath)
-	local root = utils.get_project_root(filepath, config.options.project)
-	local found_root = root
-	if not found_root or found_root == "" then
-		found_root = M.find_root_for_files(filepath, { "pom.xml", "gradlew", "build.gradle", "build.gradle.kts" }, 12)
-	end
+	local found_root = resolve_root_with_markers(filepath, JVM_ROOT_MARKERS, 12)
 	if not found_root or found_root == "" then
 		return nil, nil
 	end
 	if M.root_has_marker(found_root, "pom.xml") then
 		return found_root, "maven"
 	end
-	if M.root_has_any_marker(found_root, { "gradlew", "build.gradle", "build.gradle.kts" }) then
+	if M.root_has_any_marker(found_root, GRADLE_ROOT_MARKERS) then
 		return found_root, "gradle"
 	end
 	return found_root, nil
@@ -362,17 +389,9 @@ local function detect_c_family_build_system_local(filepath)
 		return nil, nil
 	end
 
-	if M.root_has_any_marker(root, M.BAZEL_ROOT_MARKERS) then
-		return "bazel", root
-	end
-	if M.root_has_any_marker(root, M.MESON_ROOT_MARKERS) then
-		return "meson", root
-	end
-	if M.root_has_any_marker(root, M.CMAKE_ROOT_MARKERS) then
-		return "cmake", root
-	end
-	if M.root_has_marker(root, "Makefile") then
-		return "make", root
+	local system = detect_c_family_system_for_root(root)
+	if system then
+		return system, root
 	end
 	return nil, root
 end
