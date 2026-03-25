@@ -30,6 +30,46 @@ local TOOL_DETECTORS = {
 		async = detect.detect_odin_tool_commands_async,
 	},
 }
+local C_FAMILY_COMMAND_SPECS = {
+	cmake = {
+		selected_keys = {
+			"cmake-config",
+			"cmake-build",
+			"cmake-clean",
+			"cmake-debug",
+			"cmake-release",
+			"cmake-test",
+			"cmake-run",
+			"install",
+		},
+		alias_map = {
+			build = "cmake-build",
+			clean = "cmake-clean",
+			debug = "cmake-debug",
+			release = "cmake-release",
+			test = "cmake-test",
+			config = "cmake-config",
+			run = "cmake-run",
+		},
+	},
+	meson = {
+		selected_keys = {
+			"meson-setup",
+			"meson-build",
+			"meson-clean",
+			"meson-test",
+			"meson-run",
+			"install",
+		},
+		alias_map = {
+			build = "meson-build",
+			clean = "meson-clean",
+			test = "meson-test",
+			setup = "meson-setup",
+			run = "meson-run",
+		},
+	},
+}
 
 ---@param filetype string
 ---@return table<string, string>
@@ -130,61 +170,15 @@ local function build_filtered_system_commands(configured, parser_commands, selec
 end
 
 ---@param configured table<string, string>
----@param root string
----@param cmake_commands table<string, string>
+---@param system string
+---@param system_commands table<string, string>
 ---@return table<string, string>
-local function build_cmake_commands(configured, root, cmake_commands)
-	local _ = root
-	return build_filtered_system_commands(
-		configured,
-		cmake_commands,
-		{
-			"cmake-config",
-			"cmake-build",
-			"cmake-clean",
-			"cmake-debug",
-			"cmake-release",
-			"cmake-test",
-			"cmake-run",
-			"install",
-		},
-		{
-			build = "cmake-build",
-			clean = "cmake-clean",
-			debug = "cmake-debug",
-			release = "cmake-release",
-			test = "cmake-test",
-			config = "cmake-config",
-			run = "cmake-run",
-		}
-	)
-end
-
----@param configured table<string, string>
----@param root string
----@param meson_commands table<string, string>
----@return table<string, string>
-local function build_meson_commands(configured, root, meson_commands)
-	local _ = root
-	return build_filtered_system_commands(
-		configured,
-		meson_commands,
-		{
-			"meson-setup",
-			"meson-build",
-			"meson-clean",
-			"meson-test",
-			"meson-run",
-			"install",
-		},
-		{
-			build = "meson-build",
-			clean = "meson-clean",
-			test = "meson-test",
-			setup = "meson-setup",
-			run = "meson-run",
-		}
-	)
+local function build_c_family_system_commands(configured, system, system_commands)
+	local spec = C_FAMILY_COMMAND_SPECS[system]
+	if type(spec) ~= "table" then
+		return copy_commands(configured)
+	end
+	return build_filtered_system_commands(configured, system_commands, spec.selected_keys, spec.alias_map)
 end
 
 ---@param filetype string
@@ -403,12 +397,12 @@ function M.get_configured_build_commands(filetype, filepath)
 	end
 
 	if c_family_result.system == "cmake" then
-			return build_cmake_commands(configured, c_family_result.root, c_family_result.commands)
-		end
+		return build_c_family_system_commands(configured, "cmake", c_family_result.commands)
+	end
 
-		if c_family_result.system == "meson" then
-			return build_meson_commands(configured, c_family_result.root, c_family_result.commands)
-		end
+	if c_family_result.system == "meson" then
+		return build_c_family_system_commands(configured, "meson", c_family_result.commands)
+	end
 
 	return configured
 end
@@ -460,11 +454,11 @@ function M.get_configured_build_commands_cached(filetype, filepath)
 	end
 
 	if c_family_result.system == "cmake" then
-		return build_cmake_commands(configured, c_family_result.root, c_family_result.commands)
+		return build_c_family_system_commands(configured, "cmake", c_family_result.commands)
 	end
 
 	if c_family_result.system == "meson" then
-		return build_meson_commands(configured, c_family_result.root, c_family_result.commands)
+		return build_c_family_system_commands(configured, "meson", c_family_result.commands)
 	end
 
 	return configured
