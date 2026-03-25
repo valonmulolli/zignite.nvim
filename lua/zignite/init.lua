@@ -17,6 +17,8 @@ local ERRORS = {
 	RESERVED_ARGV = "Error: '--argv' is reserved for Zignite internals. Remove it from your runner/build command.",
 }
 
+local LIVE_COMMAND_NAMES = { "live", "dev", "watch", "serve", "start", "preview" }
+
 local table_unpack = unpack
 if table_unpack == nil and type(table) == "table" then
 	table_unpack = rawget(table, "unpack")
@@ -125,13 +127,82 @@ local function get_visual_selection()
 end
 
 ---@param filetype string
+---@param mode string
+---@return nil
+local function show_no_build_commands(filetype, mode)
+	ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+end
+
+---@param filetype string
+---@param mode string
+---@return nil
+local function show_missing_live_command(filetype, mode)
+	ui.show_output(
+		string.format(
+			"No live/watch command found for %s. Add one of: %s",
+			filetype,
+			table.concat(LIVE_COMMAND_NAMES, ", ")
+		),
+		mode
+	)
+end
+
+---@param execution_path string
+---@param code_to_run string
+---@return boolean, string|nil
+local function write_temp_execution_file(execution_path, code_to_run)
+	local file = io.open(execution_path, "w")
+	if not file then
+		return false, ERRORS.TEMP_WRITE_FAIL
+	end
+
+	local success, err = file:write(code_to_run)
+	file:close()
+	if not success then
+		return false, ERRORS.TEMP_WRITE_FAIL .. ": " .. err
+	end
+
+	return true, nil
+end
+
+---@param range integer
+---@param buffer_path string
+---@param filetype string
+---@param mode string
+---@return string|nil
+local function resolve_execution_path(range, buffer_path, filetype, mode)
+	if range <= 0 then
+		if buffer_path == "" then
+			ui.show_output(ERRORS.NO_FILE, mode)
+			return nil
+		end
+		return buffer_path
+	end
+
+	local code_to_run = get_visual_selection()
+	if code_to_run == "" then
+		ui.show_output(ERRORS.VISUAL_EMPTY, mode)
+		return nil
+	end
+
+	local execution_path = runtime.build_temp_execution_path(buffer_path, filetype)
+	local wrote_file, err = write_temp_execution_file(execution_path, code_to_run)
+	if not wrote_file then
+		ui.show_output(err or ERRORS.TEMP_WRITE_FAIL, mode)
+		return nil
+	end
+
+	return execution_path
+end
+
+---@param filetype string
 ---@param command_name string
 ---@param build_cmds table<string, string>
 ---@param mode string
 ---@return nil
 local function show_build_command_missing(filetype, command_name, build_cmds, mode)
 	if vim.tbl_isempty(build_cmds) then
-		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+		show_no_build_commands(filetype, mode)
 		return
 	end
 
@@ -293,34 +364,9 @@ function M.run_code(range, mode)
 	ensure_config()
 
 	local buffer_path, filetype = resolve_current_source_context()
-	local execution_path
-	local code_to_run
-
-	if range > 0 then
-		code_to_run = get_visual_selection()
-		if code_to_run == "" then
-			ui.show_output(ERRORS.VISUAL_EMPTY, mode)
-			return
-		end
-		execution_path = runtime.build_temp_execution_path(buffer_path, filetype)
-		local file = io.open(execution_path, "w")
-		if file then
-			local success, err = file:write(code_to_run)
-			file:close()
-			if not success then
-				ui.show_output(ERRORS.TEMP_WRITE_FAIL .. ": " .. err, mode)
-				return
-			end
-		else
-			ui.show_output(ERRORS.TEMP_WRITE_FAIL, mode)
-			return
-		end
-	else
-		execution_path = buffer_path
-		if execution_path == "" then
-			ui.show_output(ERRORS.NO_FILE, mode)
-			return
-		end
+	local execution_path = resolve_execution_path(range, buffer_path, filetype, mode)
+	if not execution_path then
+		return
 	end
 
 	local runner, source = M.get_command(buffer_path, vim.bo.filetype)
@@ -434,18 +480,6 @@ function M.run_live(mode)
 
 	local filepath, filetype = resolve_current_source_context()
 
-	---@return nil
-	local function show_missing_live()
-		ui.show_output(
-			string.format(
-				"No live/watch command found for %s. Add one of: %s",
-				filetype,
-				table.concat({ "live", "dev", "watch", "serve", "start", "preview" }, ", ")
-			),
-			mode
-		)
-	end
-
 	---@param build_cmds table<string, string>
 	---@return boolean
 	local function try_run_live(build_cmds)
@@ -462,10 +496,10 @@ function M.run_live(mode)
 
 	consume_cached_build_commands(filetype, filepath, try_run_live, function(build_cmds, refreshed)
 		if not refreshed and vim.tbl_isempty(build_cmds) then
-			ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+			show_no_build_commands(filetype, mode)
 			return
 		end
-		show_missing_live()
+		show_missing_live_command(filetype, mode)
 	end)
 end
 
