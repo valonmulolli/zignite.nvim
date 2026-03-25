@@ -1,5 +1,6 @@
 local build = require("zignite.build")
 local build_picker = require("zignite.build.picker")
+local build_systems = require("zignite.build.system_runtime")
 local config = require("zignite.config")
 local runtime = require("zignite.runtime")
 local ui = require("zignite.ui")
@@ -56,6 +57,17 @@ local function has_build_zig(root)
 	return type(root) == "string" and root ~= "" and vim.fn.filereadable(vim.fs.joinpath(root, "build.zig")) == 1
 end
 
+---@param filepath string
+---@return boolean
+local function uses_warmed_uv_python(filepath)
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local cached = build_systems.get_cached_system_query_result("python-root", filepath, project_root)
+	return type(cached) == "table"
+		and type(cached.commands) == "table"
+		and type(cached.commands.run) == "string"
+		and cached.commands.run:match("^uv run ") ~= nil
+end
+
 ---@param filetype string
 ---@param filepath string
 ---@param runner string|string[]|table|nil
@@ -70,7 +82,9 @@ local function apply_smart_runner_defaults(filetype, filepath, runner)
 		if runner ~= default_runner then
 			return runner
 		end
-		if utils.detect_python_project_tool_fast(filepath, config.options.project) == "uv" then
+		local uses_uv = uses_warmed_uv_python(filepath)
+			or utils.detect_python_project_tool_fast(filepath, config.options.project) == "uv"
+		if uses_uv then
 			return "uv run python -u $file"
 		end
 		return runner
