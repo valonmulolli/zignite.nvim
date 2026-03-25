@@ -481,9 +481,13 @@ local function build_system_backend_lines(path, query, project_root)
 				"COMMAND\ttest\tctest --test-dir build",
 			}
 		end
-		if filereadable(vim.fs.joinpath(root, "Makefile")) then
-			return { "ROOT\t" .. root, "SYSTEM\tmake" }
-		end
+			if filereadable(vim.fs.joinpath(root, "Makefile")) then
+				return {
+					"ROOT\t" .. root,
+					"SYSTEM\tmake",
+					"COMMAND\tbuild\tmake",
+				}
+			end
 		return { "ROOT\t" .. root }
 	end
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const common = @import("common.zig");
+const make = @import("../project/make/api.zig");
 
 pub const Query = enum {
     c_family,
@@ -66,7 +67,7 @@ fn detectCFamily(
                 return try buildCmakeResult(allocator, root);
             }
             if (pathHasFile(root, "Makefile")) {
-                return .{ .root = try allocator.dupe(u8, root), .system = "make" };
+                return try buildMakeResult(allocator, root);
             }
         }
     }
@@ -83,11 +84,23 @@ fn detectCFamily(
         return try buildCmakeResult(allocator, root);
     }
     if (try findRootForFilesAlloc(allocator, path, &.{"Makefile"}, 12)) |root| {
-        return .{ .root = root, .system = "make" };
+        defer allocator.free(root);
+        return try buildMakeResult(allocator, root);
     }
 
     const root = try resolveBaseRoot(allocator, path, project_root);
     return .{ .root = root };
+}
+
+fn buildMakeResult(allocator: std.mem.Allocator, root: []const u8) !Result {
+    const owned_root = try allocator.dupe(u8, root);
+    errdefer allocator.free(owned_root);
+    const commands = try buildMakeCommandsAlloc(allocator, root);
+    errdefer {
+        for (commands) |entry| allocator.free(entry.command);
+        allocator.free(commands);
+    }
+    return .{ .root = owned_root, .system = "make", .commands = commands };
 }
 
 fn buildCmakeResult(allocator: std.mem.Allocator, root: []const u8) !Result {
@@ -189,6 +202,37 @@ fn buildMesonCommandsAlloc(
     return try commands.toOwnedSlice(allocator);
 }
 
+fn buildMakeCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {
+    var commands: std.ArrayList(CommandEntry) = .empty;
+    errdefer {
+        for (commands.items) |entry| allocator.free(entry.command);
+        commands.deinit(allocator);
+    }
+
+    const makefile_path = try std.fs.path.join(allocator, &.{ root, "Makefile" });
+    defer allocator.free(makefile_path);
+    const contents = try common.readFileAlloc(allocator, makefile_path);
+    defer allocator.free(contents);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |name| allocator.free(name);
+        names.deinit(allocator);
+    }
+    try make.parseTargets(allocator, contents, &names);
+
+    try appendOwnedCommand(&commands, allocator, "build", try allocator.dupe(u8, "make"));
+
+    const default_targets = [_][]const u8{ "run", "clean", "test", "install", "debug" };
+    for (default_targets) |target| {
+        if (!nameListContains(names.items, target)) continue;
+        const command = try std.fmt.allocPrint(allocator, "make {s}", .{target});
+        try appendOwnedCommand(&commands, allocator, target, command);
+    }
+
+    return try commands.toOwnedSlice(allocator);
+}
+
 fn buildBazelCommandsAlloc(allocator: std.mem.Allocator) ![]CommandEntry {
     var commands: std.ArrayList(CommandEntry) = .empty;
     errdefer {
@@ -275,6 +319,13 @@ fn appendDupedCommand(
         .name = name,
         .command = try allocator.dupe(u8, source_command),
     });
+}
+
+fn nameListContains(names: []const []u8, needle: []const u8) bool {
+    for (names) |name| {
+        if (std.mem.eql(u8, name, needle)) return true;
+    }
+    return false;
 }
 
 fn pathExists(path: []const u8) bool {
@@ -483,6 +534,28 @@ test "detect c family by walking parent markers" {
     try std.testing.expect(result.root != null);
     try std.testing.expectEqualStrings(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
+}
+
+test "detect c family make emits baseline aliases from Makefile targets" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "Makefile", .data = "run:\n\t@echo run\nclean:\n\t@echo clean\n" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    const result = try detect(allocator, .c_family, filepath, root);
+    defer freeOwnedResult(allocator, result);
+
+    try std.testing.expectEqualStrings("make", result.system.?);
+    try std.testing.expectEqualStrings("make", findCommand(result.commands, "build").?);
+    try std.testing.expectEqualStrings("make run", findCommand(result.commands, "run").?);
+    try std.testing.expectEqualStrings("make clean", findCommand(result.commands, "clean").?);
 }
 
 test "detect c family meson emits setup-prefixed build commands when build tree is missing" {

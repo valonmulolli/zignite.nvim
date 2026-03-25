@@ -307,15 +307,16 @@ local function test_run_build_command_with_detected_cpp_make_target()
 					})
 					return true
 				end
-				if kind == "c-family-auto" then
-					assert(path == "/tmp/cppdetect/main.cpp", "C/C++ refresh should query the current source path")
-					on_done({
-						"SYSTEM\tmake",
-						"ROOT\t/tmp/cppdetect",
-						"COMMAND\tcustom-target\tmake custom-target",
-					})
-					return true
-				end
+					if kind == "c-family-auto" then
+						assert(path == "/tmp/cppdetect/main.cpp", "C/C++ refresh should query the current source path")
+						on_done({
+							"SYSTEM\tmake",
+							"ROOT\t/tmp/cppdetect",
+							"COMMAND\tbuild\tmake",
+							"COMMAND\tcustom-target\tmake custom-target",
+						})
+						return true
+					end
 				return false
 			end,
 		},
