@@ -154,6 +154,52 @@ end
 
 ---@param filetype string
 ---@param filepath string
+---@param on_commands fun(build_cmds: table<string, string>): boolean
+---@param on_missing fun(build_cmds: table<string, string>, refreshed: boolean): nil
+---@return boolean
+local function consume_cached_build_commands(filetype, filepath, on_commands, on_missing)
+	local settled = false
+
+	---@param build_cmds table<string, string>
+	---@return boolean
+	local function try_handle(build_cmds)
+		if settled then
+			return true
+		end
+		if on_commands(build_cmds) then
+			settled = true
+			return true
+		end
+		return false
+	end
+
+	local build_cmds, refresh_started = build.get_build_commands_for_cached_lookup(
+		filetype,
+		filepath,
+		function(updated_commands)
+			if try_handle(updated_commands) or settled then
+				return
+			end
+			settled = true
+			on_missing(updated_commands, true)
+		end
+	)
+
+	if try_handle(build_cmds) then
+		return true
+	end
+	if refresh_started then
+		return false
+	end
+	if not settled then
+		settled = true
+		on_missing(build_cmds, false)
+	end
+	return false
+end
+
+---@param filetype string
+---@param filepath string
 ---@param command_name string
 ---@param command_template string
 ---@param mode string
@@ -364,45 +410,21 @@ function M.run_build_command(command_name, mode, provided_args)
 	ensure_config()
 
 	local filepath, filetype = resolve_current_source_context()
-	local settled = false
 
 	---@param build_cmds table<string, string>
 	---@return boolean
 	local function try_run(build_cmds)
-		if settled then
-			return true
-		end
 		local command_template = build_cmds[command_name]
 		if not command_template then
 			return false
 		end
-		settled = true
 		execute_build_command(filetype, filepath, command_name, command_template, mode, provided_args)
 		return true
 	end
 
-	local build_cmds, refresh_started = build.get_build_commands_for_cached_lookup(
-		filetype,
-		filepath,
-		function(updated_commands)
-			if try_run(updated_commands) then
-				return
-			end
-			if settled then
-				return
-			end
-			settled = true
-			show_build_command_missing(filetype, command_name, updated_commands, mode)
-		end
-	)
-
-	if try_run(build_cmds) then
-		return
-	end
-	if refresh_started then
-		return
-	end
-	show_build_command_missing(filetype, command_name, build_cmds, mode)
+	consume_cached_build_commands(filetype, filepath, try_run, function(build_cmds)
+		show_build_command_missing(filetype, command_name, build_cmds, mode)
+	end)
 end
 
 ---@param mode string
@@ -411,7 +433,6 @@ function M.run_live(mode)
 	ensure_config()
 
 	local filepath, filetype = resolve_current_source_context()
-	local settled = false
 
 	---@return nil
 	local function show_missing_live()
@@ -428,9 +449,6 @@ function M.run_live(mode)
 	---@param build_cmds table<string, string>
 	---@return boolean
 	local function try_run_live(build_cmds)
-		if settled then
-			return true
-		end
 		if vim.tbl_isempty(build_cmds) then
 			return false
 		end
@@ -438,37 +456,17 @@ function M.run_live(mode)
 		if not command_name then
 			return false
 		end
-		settled = true
 		M.run_build_command(command_name, mode)
 		return true
 	end
 
-	local build_cmds, refresh_started = build.get_build_commands_for_cached_lookup(
-		filetype,
-		filepath,
-		function(updated_commands)
-			if try_run_live(updated_commands) then
-				return
-			end
-			if settled then
-				return
-			end
-			settled = true
-			show_missing_live()
+	consume_cached_build_commands(filetype, filepath, try_run_live, function(build_cmds, refreshed)
+		if not refreshed and vim.tbl_isempty(build_cmds) then
+			ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+			return
 		end
-	)
-
-	if try_run_live(build_cmds) then
-		return
-	end
-	if refresh_started then
-		return
-	end
-	if vim.tbl_isempty(build_cmds) then
-		ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
-		return
-	end
-	show_missing_live()
+		show_missing_live()
+	end)
 end
 
 ---@param mode string
