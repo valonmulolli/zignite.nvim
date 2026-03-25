@@ -64,6 +64,17 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
             }
             return true;
         },
+        .python_auto => {
+            var names: std.ArrayList([]u8) = .empty;
+            defer common.freeOwnedNameList(allocator, names.items);
+            try pyproject.parseTools(allocator, contents, &names);
+            if (containsName(names.items, "uv")) {
+                try stdout.print("COMMAND\trun\tuv run -m main\n", .{});
+                try stdout.print("COMMAND\ttest\tuv run pytest\n", .{});
+                try stdout.print("COMMAND\tinstall\tuv sync\n", .{});
+            }
+            return true;
+        },
         .go_mod => {
             const maybe_name = try go.parseModuleName(allocator, contents);
             defer if (maybe_name) |name| allocator.free(name);
@@ -82,6 +93,13 @@ pub fn writeLanguageOutput(stdout: anytype, allocator: std.mem.Allocator, option
         },
         else => return false,
     }
+}
+
+fn containsName(names: []const []u8, needle: []const u8) bool {
+    for (names) |name| {
+        if (std.mem.eql(u8, name, needle)) return true;
+    }
+    return false;
 }
 
 fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents: []const u8) !void {
@@ -283,6 +301,26 @@ test "writeLanguageOutput emits package script command records with package mana
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tinstall\tpnpm install\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tdev\tpnpm run dev\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tpnpm run build\n") != null);
+}
+
+test "writeLanguageOutput emits python auto commands for uv projects" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try std.testing.expect(try writeLanguageOutput(out.writer(allocator), allocator, .{
+        .kind = .python_auto,
+        .path = "/tmp/pyproject.toml",
+    },
+        \\[project]
+        \\name = "demo"
+        \\
+        \\[tool.uv]
+    ));
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\trun\tuv run -m main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\ttest\tuv run pytest\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tinstall\tuv sync\n") != null);
 }
 
 test "writeLanguageOutput emits go primary command metadata" {

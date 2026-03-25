@@ -19,6 +19,7 @@ pub const Kind = enum {
     cargo,
     cargo_auto,
     pyproject,
+    python_auto,
     go,
     go_auto,
     go_mod,

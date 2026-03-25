@@ -331,6 +331,10 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 		return apply_node_package_manager_defaults(filetype, filepath, configured)
 	end
 	if filetype == "python" then
+		local python_commands = backend.detect_python_project_commands(filepath)
+		if next(python_commands) ~= nil then
+			return merge_contextual_command_map(filetype, configured, python_commands)
+		end
 		return apply_python_tool_defaults(filepath, configured)
 	end
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then

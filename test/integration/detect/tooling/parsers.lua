@@ -1296,6 +1296,63 @@ test_gradle_project_requires_zig_parser()
 test_cargo_targets_use_zig_project_parser()
 test_cargo_targets_require_zig_parser()
 test_pyproject_tools_use_zig_project_parser()
+
+-- Test Python build commands can use the Zig python-auto parser path.
+local function test_python_build_commands_use_zig_project_parser()
+	init.setup({
+		build_commands = {},
+	})
+
+	local query = require("zignite.build.project_query")
+	local original_executable = vim.fn.executable
+	local original_systemlist = vim.fn.systemlist
+	local original_filereadable = vim.fn.filereadable
+
+	vim.fn.executable = function(path)
+		if tostring(path):match("zignite$") then
+			return 1
+		end
+		if original_executable then
+			return original_executable(path)
+		end
+		return 0
+	end
+	vim.fn.systemlist = function(cmd)
+		vim.v.shell_error = 0
+		assert(type(cmd) == "table", "Zig python parser should execute via argv")
+		assert(cmd[2] == "--project-parse", "Python parser should call the Zig project parser mode")
+		assert(cmd[3] == "--kind=python-auto", "Python parser should use the python-auto parser kind")
+		assert(cmd[4] == "--path=/tmp/pyproj/main.py", "Python parser should target the current source path")
+		return {
+			"COMMAND\trun\tuv run -m main",
+			"COMMAND\ttest\tuv run pytest",
+			"COMMAND\tinstall\tuv sync",
+		}
+	end
+	vim.fn.filereadable = function(path)
+		if path == "/tmp/pyproj/pyproject.toml" or path == "/tmp/pyproj/uv.lock" then
+			return 1
+		end
+		if original_filereadable then
+			return original_filereadable(path)
+		end
+		return 0
+	end
+
+	local commands = query.detect_python_project_commands("/tmp/pyproj/main.py")
+	assert(commands.run == "uv run -m main", "Zig python parser should return uv run command")
+	assert(commands.test == "uv run pytest", "Zig python parser should return uv test command")
+	assert(commands.install == "uv sync", "Zig python parser should return uv install command")
+
+	vim.fn.executable = original_executable
+	vim.fn.systemlist = original_systemlist
+	vim.fn.filereadable = original_filereadable
+	vim.v.shell_error = 0
+
+	print("✓ Zig python parser test passed")
+end
+
+test_python_build_commands_use_zig_project_parser()
 test_go_project_commands_use_zig_project_parser()
 test_make_targets_use_zig_project_daemon()
 test_make_targets_fall_back_after_project_daemon_timeout()
