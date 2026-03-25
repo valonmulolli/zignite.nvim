@@ -209,6 +209,18 @@ function M.detect_package_scripts(filepath)
 end
 
 ---@param filepath string
+---@return table<string, string>
+function M.detect_node_project_commands(filepath)
+	return parse_backend_command_map("system", filepath, { "--query=node-root" })
+end
+
+---@param filepath string
+---@return table<string, string>
+function M.detect_node_project_commands_cached(filepath)
+	return detect_warmed_or_backend_commands("node-root", filepath, M.detect_node_project_commands)
+end
+
+---@param filepath string
 ---@return table<string, string>, table|nil
 function M.detect_cargo_project_commands(filepath)
 	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
