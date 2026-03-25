@@ -164,6 +164,8 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		end) then
 			pending = pending - 1
 		end
+	elseif filetype == "java" or filetype == "kotlin" or filetype == "bazel" or filetype == "bzl" then
+		detect_async = commands.detect_tool_commands_for_filetype_async_cached
 	end
 
 	detect_async(

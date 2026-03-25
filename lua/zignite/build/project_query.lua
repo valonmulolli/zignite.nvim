@@ -8,6 +8,32 @@ local utils = require("zignite.utils")
 local M = {}
 local PARSER_BACKED_BUILD_SOURCES
 
+---@param target table<string, string>
+---@param source table<string, string>|nil
+---@return nil
+local function extend_command_map(target, source)
+	for key, value in pairs(source or {}) do
+		if type(key) == "string" and type(value) == "string" then
+			target[key] = value
+		end
+	end
+end
+
+---@param query string
+---@param filepath string
+---@return table<string, string>|nil
+local function get_warmed_system_commands(query, filepath)
+	local project_root = utils.get_project_root(filepath, config.options.project)
+	local warmed_system = systems.get_cached_system_query_result(query, filepath, project_root)
+	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
+		local commands = state.copy_string_map(warmed_system.commands)
+		if next(commands) ~= nil then
+			return commands
+		end
+	end
+	return nil
+end
+
 ---@param text string
 ---@return string
 local function normalize_path_text(text)
@@ -304,13 +330,9 @@ function M.detect_java_like_project_commands_cached(filepath)
 		return {}
 	end
 
-	local project_root = utils.get_project_root(filepath, config.options.project)
-	local warmed_system = systems.get_cached_system_query_result("jvm-root", filepath, project_root)
-	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
-		local commands = state.copy_string_map(warmed_system.commands)
-		if next(commands) ~= nil then
-			return commands
-		end
+	local commands = get_warmed_system_commands("jvm-root", filepath)
+	if commands then
+		return commands
 	end
 
 	return M.detect_java_like_project_commands(filepath)
@@ -341,13 +363,9 @@ function M.detect_bazel_project_commands_cached(filepath)
 		return {}
 	end
 
-	local project_root = utils.get_project_root(filepath, config.options.project)
-	local warmed_system = systems.get_cached_system_query_result("bazel-root", filepath, project_root)
-	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
-		local commands = state.copy_string_map(warmed_system.commands)
-		if next(commands) ~= nil then
-			return commands
-		end
+	local commands = get_warmed_system_commands("bazel-root", filepath)
+	if commands then
+		return commands
 	end
 
 	return M.detect_bazel_project_commands(filepath)
@@ -548,33 +566,17 @@ function M.collect_sync_project_commands(filetype, filepath, is_detection_enable
 	if filetype == "c" or filetype == "cpp" then
 		local result = M.detect_c_family_build_result(filepath)
 		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
-			for key, value in pairs(result.commands or {}) do
-				if type(key) == "string" and type(value) == "string" then
-					commands[key] = value
-				end
-			end
+			extend_command_map(commands, result.commands)
 		end
 	end
 	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
-		for key, value in pairs(M.detect_package_scripts(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_package_scripts(filepath))
 	end
 	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		for key, value in pairs(M.detect_java_like_project_commands_cached(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_java_like_project_commands(filepath))
 	end
 	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		for key, value in pairs(M.detect_bazel_project_commands_cached(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_bazel_project_commands(filepath))
 	end
 
 	return commands
@@ -591,33 +593,17 @@ function M.collect_sync_project_commands_cached(filetype, filepath, is_detection
 	if filetype == "c" or filetype == "cpp" then
 		local result = M.detect_c_family_build_result_cached(filepath)
 		if result and (not result.detect_flag or is_detection_enabled(result.detect_flag)) then
-			for key, value in pairs(result.commands or {}) do
-				if type(key) == "string" and type(value) == "string" then
-					commands[key] = value
-				end
-			end
+			extend_command_map(commands, result.commands)
 		end
 	end
 	if (filetype == "javascript" or filetype == "typescript") and is_detection_enabled("js_package_scripts") then
-		for key, value in pairs(M.detect_package_scripts(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_package_scripts(filepath))
 	end
 	if (filetype == "java" or filetype == "kotlin") and is_detection_enabled("java_kotlin_project") then
-		for key, value in pairs(M.detect_java_like_project_commands(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_java_like_project_commands_cached(filepath))
 	end
 	if is_detection_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		for key, value in pairs(M.detect_bazel_project_commands(filepath)) do
-			if type(key) == "string" and type(value) == "string" then
-				commands[key] = value
-			end
-		end
+		extend_command_map(commands, M.detect_bazel_project_commands_cached(filepath))
 	end
 
 	return commands
