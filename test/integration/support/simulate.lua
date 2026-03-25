@@ -489,21 +489,57 @@ local function build_system_backend_lines(path, query, project_root)
 
 	if query == "bazel-root" then
 		if has_any_marker(root, bazel_markers) then
-			return { "ROOT\t" .. root, "SYSTEM\tbazel" }
+			return {
+				"ROOT\t" .. root,
+				"SYSTEM\tbazel",
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
+				"COMMAND\tbuild\tbazel build //...",
+				"COMMAND\ttest\tbazel test //...",
+			}
 		end
 		local found = find_root_for_markers(path, bazel_markers, 12)
 		if found then
-			return { "ROOT\t" .. found, "SYSTEM\tbazel" }
+			return {
+				"ROOT\t" .. found,
+				"SYSTEM\tbazel",
+				"COMMAND\tbazel-query\tbazel query $zignite_args",
+				"COMMAND\tbazel-clean\tbazel clean",
+				"COMMAND\tbazel-build-all\tbazel build //...",
+				"COMMAND\tbazel-test-all\tbazel test //...",
+				"COMMAND\tbuild\tbazel build //...",
+				"COMMAND\ttest\tbazel test //...",
+			}
 		end
 		return {}
 	end
 
 	if query == "jvm-root" then
 		if filereadable(vim.fs.joinpath(root, "pom.xml")) then
-			return { "ROOT\t" .. root, "SYSTEM\tmaven" }
+			return {
+				"ROOT\t" .. root,
+				"SYSTEM\tmaven",
+				"COMMAND\tmvn-build\tmvn compile",
+				"COMMAND\tmvn-test\tmvn test",
+				"COMMAND\tmvn-package\tmvn package",
+				"COMMAND\tbuild\tmvn compile",
+				"COMMAND\ttest\tmvn test",
+			}
 		end
 		if has_any_marker(root, gradle_markers) then
-			return { "ROOT\t" .. root, "SYSTEM\tgradle" }
+			local gradle_prefix = filereadable(vim.fs.joinpath(root, "gradlew")) and "./gradlew" or "gradle"
+			return {
+				"ROOT\t" .. root,
+				"SYSTEM\tgradle",
+				"COMMAND\tgradle-build\t" .. gradle_prefix .. " build",
+				"COMMAND\tgradle-test\t" .. gradle_prefix .. " test",
+				"COMMAND\tgradle-clean\t" .. gradle_prefix .. " clean",
+				"COMMAND\tbuild\t" .. gradle_prefix .. " build",
+				"COMMAND\ttest\t" .. gradle_prefix .. " test",
+				"COMMAND\tclean\t" .. gradle_prefix .. " clean",
+			}
 		end
 		local jvm_markers = {
 			"pom.xml",
@@ -516,9 +552,27 @@ local function build_system_backend_lines(path, query, project_root)
 		local found = find_root_for_markers(path, jvm_markers, 12)
 		if found then
 			if filereadable(vim.fs.joinpath(found, "pom.xml")) then
-				return { "ROOT\t" .. found, "SYSTEM\tmaven" }
+				return {
+					"ROOT\t" .. found,
+					"SYSTEM\tmaven",
+					"COMMAND\tmvn-build\tmvn compile",
+					"COMMAND\tmvn-test\tmvn test",
+					"COMMAND\tmvn-package\tmvn package",
+					"COMMAND\tbuild\tmvn compile",
+					"COMMAND\ttest\tmvn test",
+				}
 			end
-			return { "ROOT\t" .. found, "SYSTEM\tgradle" }
+			local gradle_prefix = filereadable(vim.fs.joinpath(found, "gradlew")) and "./gradlew" or "gradle"
+			return {
+				"ROOT\t" .. found,
+				"SYSTEM\tgradle",
+				"COMMAND\tgradle-build\t" .. gradle_prefix .. " build",
+				"COMMAND\tgradle-test\t" .. gradle_prefix .. " test",
+				"COMMAND\tgradle-clean\t" .. gradle_prefix .. " clean",
+				"COMMAND\tbuild\t" .. gradle_prefix .. " build",
+				"COMMAND\ttest\t" .. gradle_prefix .. " test",
+				"COMMAND\tclean\t" .. gradle_prefix .. " clean",
+			}
 		end
 	end
 
