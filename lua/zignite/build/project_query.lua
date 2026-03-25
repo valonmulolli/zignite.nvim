@@ -7,6 +7,7 @@ local utils = require("zignite.utils")
 ---@type table
 local M = {}
 local PARSER_BACKED_BUILD_SOURCES
+local decode_backend_commands
 
 ---@param target table<string, string>
 ---@param source table<string, string>|nil
@@ -17,6 +18,36 @@ local function extend_command_map(target, source)
 			target[key] = value
 		end
 	end
+end
+
+---@param kind string
+---@param filepath string
+---@param extra_args string[]|nil
+---@return table<string, string>
+local function parse_backend_command_map(kind, filepath, extra_args)
+	local lines = detect_backend.parse_project_lines_once(kind, filepath, extra_args)
+	if type(lines) == "table" and #lines > 0 then
+		return decode_backend_commands(lines)
+	end
+	return {}
+end
+
+---@param cache table
+---@param order string[]
+---@param max_entries integer
+---@param key string
+---@param entry table
+---@return nil
+local function store_command_cache_entry(cache, order, max_entries, key, entry)
+	local stored = {}
+	for field, value in pairs(entry or {}) do
+		if field == "commands" then
+			stored.commands = state.copy_string_map(value or {})
+		else
+			stored[field] = value
+		end
+	end
+	state.set_bounded_cache_entry(cache, order, max_entries, key, stored)
 end
 
 ---@param query string
@@ -34,6 +65,23 @@ local function get_warmed_system_commands(query, filepath)
 	return nil
 end
 
+---@param query string
+---@param filepath string
+---@param fallback fun(string): table<string, string>
+---@return table<string, string>
+local function detect_warmed_or_backend_commands(query, filepath, fallback)
+	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
+		return {}
+	end
+
+	local commands = get_warmed_system_commands(query, filepath)
+	if commands then
+		return commands
+	end
+
+	return fallback(filepath)
+end
+
 ---@param text string
 ---@return string
 local function normalize_path_text(text)
@@ -45,7 +93,7 @@ end
 
 ---@param lines string[]|nil
 ---@return table<string, string>
-local function decode_backend_commands(lines)
+decode_backend_commands = function(lines)
 	---@type table<string, string>
 	local commands = {}
 	for _, raw_line in ipairs(lines or {}) do
@@ -144,26 +192,10 @@ function M.detect_package_scripts(filepath)
 		return state.copy_string_map(cached.commands)
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("package-json-auto", filepath, {
+	local commands = parse_backend_command_map("package-json-auto", filepath, {
 		"--package-manager=" .. package_manager,
 	})
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands = decode_backend_commands(zig_lines)
-		state.set_bounded_cache_entry(
-			state.package_script_cache,
-			state.package_script_cache_order,
-			state.PACKAGE_SCRIPT_CACHE_MAX,
-			cache_key,
-			{
-				mtime_key = "auto",
-				package_manager = package_manager,
-				commands = state.copy_string_map(commands),
-			}
-		)
-		return commands
-	end
-
-	state.set_bounded_cache_entry(
+	store_command_cache_entry(
 		state.package_script_cache,
 		state.package_script_cache_order,
 		state.PACKAGE_SCRIPT_CACHE_MAX,
@@ -171,9 +203,12 @@ function M.detect_package_scripts(filepath)
 		{
 			mtime_key = "auto",
 			package_manager = package_manager,
-			commands = {},
+			commands = commands,
 		}
 	)
+	if next(commands) ~= nil then
+		return commands
+	end
 	return {}
 end
 
@@ -202,28 +237,9 @@ function M.detect_cargo_project_commands(filepath)
 		end
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("cargo-auto", filepath)
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands = decode_backend_commands(zig_lines)
-		if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
-			state.set_bounded_cache_entry(
-				state.cargo_target_cache,
-				state.cargo_target_cache_order,
-				state.CARGO_TARGET_CACHE_MAX,
-				cargo_toml_path,
-				{
-					mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing",
-					match_path = filepath,
-					commands = state.copy_string_map(commands),
-					info = nil,
-				}
-			)
-		end
-		return commands, nil
-	end
-
+	local commands = parse_backend_command_map("cargo-auto", filepath)
 	if cargo_toml_path and vim.fn.filereadable(cargo_toml_path) == 1 then
-		state.set_bounded_cache_entry(
+		store_command_cache_entry(
 			state.cargo_target_cache,
 			state.cargo_target_cache_order,
 			state.CARGO_TARGET_CACHE_MAX,
@@ -231,11 +247,15 @@ function M.detect_cargo_project_commands(filepath)
 			{
 				mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing",
 				match_path = filepath,
-				commands = {},
+				commands = commands,
 				info = nil,
 			}
 		)
 	end
+	if next(commands) ~= nil then
+		return commands, nil
+	end
+
 	return {}, nil
 end
 
@@ -275,40 +295,25 @@ function M.detect_go_project_commands(filepath)
 		return state.copy_string_map(cached.commands), nil
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("go-auto", filepath)
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		local commands = decode_backend_commands(zig_lines)
-		state.set_bounded_cache_entry(
-			state.go_project_cache,
-			state.go_project_cache_order,
-			state.GO_PROJECT_CACHE_MAX,
-			cache_key,
-			{
-				mtime_key = mtime_key,
-				commands = state.copy_string_map(commands),
-				info = nil,
-			}
-		)
-		return state.copy_string_map(commands), nil
-	end
-
-	state.set_bounded_cache_entry(
+	local commands = parse_backend_command_map("go-auto", filepath)
+	store_command_cache_entry(
 		state.go_project_cache,
 		state.go_project_cache_order,
 		state.GO_PROJECT_CACHE_MAX,
 		cache_key,
 		{
 			mtime_key = mtime_key,
-			commands = {},
+			commands = commands,
 			info = nil,
 		}
 	)
+	if next(commands) ~= nil then
+		return state.copy_string_map(commands), nil
+	end
 
 	return {}, nil
 end
 
----@param lines string[]|nil
----@return table<string, string>
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_java_like_project_commands(filepath)
@@ -316,26 +321,13 @@ function M.detect_java_like_project_commands(filepath)
 		return {}
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("jvm-auto", filepath)
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		return decode_backend_commands(zig_lines)
-	end
-	return {}
+	return parse_backend_command_map("jvm-auto", filepath)
 end
 
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_java_like_project_commands_cached(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
-
-	local commands = get_warmed_system_commands("jvm-root", filepath)
-	if commands then
-		return commands
-	end
-
-	return M.detect_java_like_project_commands(filepath)
+	return detect_warmed_or_backend_commands("jvm-root", filepath, M.detect_java_like_project_commands)
 end
 
 ---@param filepath string
@@ -349,26 +341,13 @@ function M.detect_bazel_project_commands(filepath)
 		return {}
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("bazel-auto", filepath)
-	if type(zig_lines) == "table" and #zig_lines > 0 then
-		return decode_backend_commands(zig_lines)
-	end
-	return {}
+	return parse_backend_command_map("bazel-auto", filepath)
 end
 
 ---@param filepath string
 ---@return table<string, string>
 function M.detect_bazel_project_commands_cached(filepath)
-	if not filepath or filepath == "" or type(vim.fn.filereadable) ~= "function" then
-		return {}
-	end
-
-	local commands = get_warmed_system_commands("bazel-root", filepath)
-	if commands then
-		return commands
-	end
-
-	return M.detect_bazel_project_commands(filepath)
+	return detect_warmed_or_backend_commands("bazel-root", filepath, M.detect_bazel_project_commands)
 end
 
 PARSER_BACKED_BUILD_SOURCES = {
