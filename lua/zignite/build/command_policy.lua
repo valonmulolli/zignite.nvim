@@ -219,27 +219,6 @@ local function apply_node_package_manager_defaults(filetype, filepath, configure
 	return updated
 end
 
----@param filepath string
----@param configured table<string, string>
----@return table<string, string>
-local function apply_python_tool_defaults(filepath, configured)
-	local python_tool = utils.detect_python_project_tool(filepath, config.options.project)
-	if python_tool ~= "uv" then
-		return configured
-	end
-
-	local default_commands = get_default_build_commands("python")
-	local updated = copy_commands(configured)
-
-	replace_default_commands(updated, default_commands, {
-		run = "uv run -m main",
-		test = "uv run pytest",
-		install = "uv sync",
-	})
-
-	return updated
-end
-
 function M.extend_string_map(target, source)
 	if type(source) ~= "table" then
 		return target
@@ -335,7 +314,7 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 		if next(python_commands) ~= nil then
 			return merge_contextual_command_map(filetype, configured, python_commands)
 		end
-		return apply_python_tool_defaults(filepath, configured)
+		return configured
 	end
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
 		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
