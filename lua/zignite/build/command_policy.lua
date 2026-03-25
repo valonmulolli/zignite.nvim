@@ -94,36 +94,15 @@ end
 ---@param alias string
 ---@param source_key string
 ---@return nil
-local function mirror_command(target, alias, source_key)
-	if target[source_key] then
-		target[alias] = target[source_key]
-	end
-end
-
----@param target table<string, string>
----@param alias_map table<string, string>
----@return nil
-local function mirror_commands(target, alias_map)
+local function fill_missing_aliases(target, alias_map)
 	for alias, source_key in pairs(alias_map or {}) do
-		mirror_command(target, alias, source_key)
-	end
-end
-
----@param target table<string, string>
----@param candidates table<string, string|nil>
----@return nil
-local function fill_missing_commands(target, candidates)
-	for key, value in pairs(candidates or {}) do
-		if target[key] == nil and type(value) == "string" and value ~= "" then
-			target[key] = value
+		if target[alias] == nil and type(source_key) == "string" and source_key ~= "" then
+			local source_value = target[source_key]
+			if type(source_value) == "string" and source_value ~= "" then
+				target[alias] = source_value
+			end
 		end
 	end
-end
-
----@param commands table<string, string>|nil
----@return boolean
-local function has_commands(commands)
-	return type(commands) == "table" and next(commands) ~= nil
 end
 
 ---@return fun(flag: string): boolean
@@ -138,111 +117,25 @@ local function config_detection_enabled()
 	end
 end
 
----@param filtered table<string, string>
 ---@param configured table<string, string>
----@param command_key string
----@param configured_key string
----@param primary_run string|nil
----@param fallback_build_command string|nil
----@return nil
-local function set_system_run_command(
-	filtered,
-	configured,
-	command_key,
-	configured_key,
-	primary_run,
-	fallback_build_command
-)
-	if type(primary_run) == "string" and primary_run ~= "" then
-		filtered[command_key] = primary_run
-		filtered.run = filtered[command_key]
-		return
-	end
-
-	local configured_run = configured[configured_key]
-	if type(configured_run) ~= "string" or configured_run == "" then
-		return
-	end
-
-	if type(fallback_build_command) == "string" and fallback_build_command ~= "" then
-		filtered[command_key] = fallback_build_command .. " && " .. configured_run
-	else
-		filtered[command_key] = configured_run
-	end
-	filtered.run = filtered[command_key]
-end
-
----@param configured table<string, string>
----@param parser_commands table<string, string>
+---@param parser_commands table<string, string>|nil
 ---@param selected_keys string[]
----@param fallback_commands table<string, string|nil>
 ---@param alias_map table<string, string>
----@param run_command_key string
----@param run_configured_key string
----@param fallback_build_command string|nil
 ---@return table<string, string>
-local function build_namespaced_system_commands(
-	configured,
-	parser_commands,
-	selected_keys,
-	fallback_commands,
-	alias_map,
-	run_command_key,
-	run_configured_key,
-	fallback_build_command
-)
+local function build_filtered_system_commands(configured, parser_commands, selected_keys, alias_map)
 	local filtered = copy_selected_commands(configured, selected_keys)
 	M.extend_string_map(filtered, parser_commands)
-	fill_missing_commands(filtered, fallback_commands)
-	mirror_commands(filtered, alias_map)
-	set_system_run_command(
-		filtered,
-		configured,
-		run_command_key,
-		run_configured_key,
-		parser_commands.run or parser_commands[run_command_key],
-		fallback_build_command
-	)
-	return filtered
-end
-
----@param configured table<string, string>
----@param parser_commands table<string, string>
----@param selected_keys string[]
----@return table<string, string>
-local function build_backend_system_commands(configured, parser_commands, selected_keys)
-	local filtered = copy_selected_commands(configured, selected_keys)
-	M.extend_string_map(filtered, parser_commands)
+	fill_missing_aliases(filtered, alias_map)
 	return filtered
 end
 
 ---@param configured table<string, string>
 ---@param root string
 ---@param cmake_commands table<string, string>
----@param root string
 ---@return table<string, string>
 local function build_cmake_commands(configured, root, cmake_commands)
-	if has_commands(cmake_commands) then
-		return build_backend_system_commands(configured, cmake_commands, {
-			"cmake-config",
-			"cmake-build",
-			"cmake-clean",
-			"cmake-debug",
-			"cmake-release",
-			"cmake-test",
-			"cmake-run",
-			"config",
-			"build",
-			"clean",
-			"debug",
-			"release",
-			"test",
-			"run",
-			"install",
-		})
-	end
-
-	return build_namespaced_system_commands(
+	local _ = root
+	return build_filtered_system_commands(
 		configured,
 		cmake_commands,
 		{
@@ -256,53 +149,24 @@ local function build_cmake_commands(configured, root, cmake_commands)
 			"install",
 		},
 		{
-			["cmake-config"] = cmake_commands["cmake-config"] or systems.cmake_config_command(root),
-			["cmake-clean"] = cmake_commands["cmake-clean"] or systems.cmake_clean_command(root),
-			["cmake-debug"] = cmake_commands["cmake-debug"]
-				or "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-			["cmake-release"] = cmake_commands["cmake-release"]
-				or "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-			["cmake-test"] = cmake_commands["cmake-test"] or "ctest --test-dir build",
-			install = cmake_commands.install or "cmake --build build --target install",
-			["cmake-build"] = cmake_commands["cmake-build"] or systems.cmake_build_command(root, nil),
-		},
-		{
 			build = "cmake-build",
 			clean = "cmake-clean",
 			debug = "cmake-debug",
 			release = "cmake-release",
 			test = "cmake-test",
 			config = "cmake-config",
-		},
-		"cmake-run",
-		"cmake-run",
-		cmake_commands["cmake-build"] or systems.cmake_build_command(root, nil)
+			run = "cmake-run",
+		}
 	)
 end
 
 ---@param configured table<string, string>
 ---@param root string
 ---@param meson_commands table<string, string>
----@param root string
 ---@return table<string, string>
 local function build_meson_commands(configured, root, meson_commands)
-	if has_commands(meson_commands) then
-		return build_backend_system_commands(configured, meson_commands, {
-			"meson-setup",
-			"meson-build",
-			"meson-clean",
-			"meson-test",
-			"meson-run",
-			"setup",
-			"build",
-			"clean",
-			"test",
-			"run",
-			"install",
-		})
-	end
-
-	return build_namespaced_system_commands(
+	local _ = root
+	return build_filtered_system_commands(
 		configured,
 		meson_commands,
 		{
@@ -314,21 +178,12 @@ local function build_meson_commands(configured, root, meson_commands)
 			"install",
 		},
 		{
-			["meson-setup"] = meson_commands["meson-setup"] or systems.meson_setup_command(root),
-			["meson-clean"] = meson_commands["meson-clean"] or systems.meson_clean_command(root),
-			["meson-test"] = meson_commands["meson-test"] or "meson test -C build",
-			install = meson_commands.install or "meson install -C build",
-			["meson-build"] = meson_commands["meson-build"] or systems.meson_build_command(root, nil),
-		},
-		{
 			build = "meson-build",
 			clean = "meson-clean",
 			test = "meson-test",
 			setup = "meson-setup",
-		},
-		"meson-run",
-		"meson-run",
-		meson_commands["meson-build"] or systems.meson_build_command(root, nil)
+			run = "meson-run",
+		}
 	)
 end
 
