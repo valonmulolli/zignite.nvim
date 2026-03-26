@@ -1,4 +1,4 @@
-local shared = require("zignite.ui.shared")
+local frame = require("zignite.ui.frame")
 
 ---@type table
 local M = {}
@@ -21,7 +21,7 @@ local spinner_frames = {
 ---@param base_title string
 ---@return nil
 function M.start_title_spinner(win_id, base_title)
-	local config = shared.get_config()
+	local config = frame.get_config()
 	if not config.enable_animations then
 		pcall(vim.api.nvim_win_set_config, win_id, { title = " " .. base_title .. " " })
 		return
@@ -88,7 +88,7 @@ function M.set_exit_status(win_id, exit_code)
 	local footer = string.format(" Process exited with %d ", exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
 
-	local float_config = shared.get_config().float
+	local float_config = frame.get_config().float
 	local new_border_hl = success and (float_config.border_hl_success or "DiagnosticOk")
 		or (float_config.border_hl_error or "DiagnosticError")
 	pcall(vim.api.nvim_set_option_value, "winhl", "Normal:Normal,FloatBorder:" .. new_border_hl, { win = win_id })

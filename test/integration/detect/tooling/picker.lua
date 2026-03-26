@@ -232,7 +232,7 @@ local function test_go_detected_commands_worker_error_frame_fallback()
     init.setup({
         build_commands = {},
     })
-    local detect_module = require("zignite.build.detect")
+    local detect_module = require("zignite.build.tooling.query")
     detect_module.reset()
 
     reset_job_results()

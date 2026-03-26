@@ -122,7 +122,7 @@ local function test_rust_detected_commands_require_backend()
         build_commands = {},
     })
 
-    local detect_module = require("zignite.build.detect")
+    local detect_module = require("zignite.build.tooling.query")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
 
@@ -157,8 +157,8 @@ local function test_detect_worker_async_timeout_resets_client()
         build_commands = {},
     })
 
-    local detect_module = require("zignite.build.detect")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_module = require("zignite.build.tooling.query")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_executable = vim.fn.executable
     local original_chansend = vim.fn.chansend
     local original_new_timer = vim.loop and vim.loop.new_timer or nil
@@ -233,8 +233,8 @@ local function test_detect_worker_sync_multiline_response()
         build_commands = {},
     })
 
-    local detect_module = require("zignite.build.detect")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_module = require("zignite.build.tooling.query")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_wait = vim.wait
@@ -282,7 +282,7 @@ local function test_run_build_command_with_detected_cpp_make_target()
 		build_commands = {},
 	})
 
-	local detect_backend = require("zignite.build.detect.backend")
+	local detect_backend = require("zignite.build.tooling.transport")
 
 	with_overrides({
 		{ tbl = vim.bo, key = "filetype", value = "cpp" },

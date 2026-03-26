@@ -1,6 +1,6 @@
 local quickfix = require("zignite.ui.quickfix")
-local runner = require("zignite.ui.runner")
-local shared = require("zignite.ui.shared")
+local registry = require("zignite.ui.registry")
+local frame = require("zignite.ui.frame")
 local spinner = require("zignite.ui.spinner")
 
 ---@type table
@@ -69,7 +69,7 @@ end
 ---@return nil
 function M.close_output(stop_jobs)
 	spinner.stop_spinner()
-	runner.close_all(shared.should_stop_on_close(stop_jobs))
+	registry.close_all(frame.should_stop_on_close(stop_jobs))
 end
 
 ---@param command string
@@ -78,30 +78,30 @@ end
 ---@param job_opts table|nil
 ---@return integer|nil, integer|nil, integer|nil
 function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
-	local config = shared.get_config()
+	local config = frame.get_config()
 
 	if config.singleton then
 		M.close_output(true)
 	else
-		runner.clean_invalid()
+		registry.clean_invalid()
 	end
 
 	local buf = vim.api.nvim_create_buf(false, true)
-	local opts = shared.get_float_config()
+	local opts = frame.get_float_config()
 	local float_config = config.float
 	local should_focus = float_config.focus ~= false
 	opts.title = " Preparing... "
-	opts.footer = shared.build_float_footer(float_config, should_focus)
+	opts.footer = frame.build_float_footer(float_config, should_focus)
 
 	local win = vim.api.nvim_open_win(buf, should_focus, opts)
-	local tracked_runner = runner.track(win, buf)
+	local tracked_runner = registry.track(win, buf)
 
 	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. float_config.border_hl, { win = win })
 
 	local close_key = float_config.close_key or "<Esc>"
 	---@return nil
 	local function close_float_runner()
-		runner.close_by_win_id(win, shared.should_stop_on_close(nil))
+		registry.close_by_win_id(win, frame.should_stop_on_close(nil))
 	end
 
 	vim.keymap.set("n", close_key, close_float_runner, { buffer = buf, silent = true, nowait = true })
@@ -144,20 +144,20 @@ end
 ---@param job_opts table|nil
 ---@return nil
 function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
-	local config_opts = shared.get_config()
+	local config_opts = frame.get_config()
 	if config_opts.singleton then
 		M.close_output(true)
 	end
 
 	local term_config = config_opts.term
-	local resolved_mode = shared.normalize_mode(mode)
+	local resolved_mode = frame.normalize_mode(mode)
 	local buf = vim.api.nvim_create_buf(false, true)
 	local win, previous_win, previous_tab = open_mode_window(resolved_mode, buf, term_config)
 	if not win then
 		return
 	end
 
-	local tracked_runner = runner.track(win, buf)
+	local tracked_runner = registry.track(win, buf)
 	restore_focus_if_disabled(resolved_mode, term_config, previous_win, previous_tab)
 
 	local job_id = vim.fn.jobstart(command, {
@@ -187,9 +187,9 @@ end
 function M.show_output(message, mode)
 	local text = type(message) == "string" and message or tostring(message)
 	local level = text:match("^Error:") and vim.log.levels.ERROR or vim.log.levels.WARN
-	local config = shared.get_config()
-	local resolved_mode = shared.normalize_mode(mode)
-	local lines = shared.split_text_lines(text)
+	local config = frame.get_config()
+	local resolved_mode = frame.normalize_mode(mode)
+	local lines = frame.split_text_lines(text)
 
 	---@param buf integer
 	---@return nil
@@ -203,23 +203,23 @@ function M.show_output(message, mode)
 	---@param win_id integer
 	---@return nil
 	local function close_message_runner(win_id)
-		runner.close_by_win_id(win_id, false)
+		registry.close_by_win_id(win_id, false)
 	end
 
 	if resolved_mode == "float" then
 		local buf = vim.api.nvim_create_buf(false, true)
 		set_message_buffer(buf)
 
-		local opts = shared.get_float_config()
+		local opts = frame.get_float_config()
 		local float_config = config.float
 		local should_focus = float_config.focus ~= false
 		opts.title = level == vim.log.levels.ERROR and " Zignite Error " or " Zignite Message "
-		opts.footer = string.format(" %s: close ", shared.format_key_for_display(float_config.close_key or "<Esc>"))
+		opts.footer = string.format(" %s: close ", frame.format_key_for_display(float_config.close_key or "<Esc>"))
 		local win = vim.api.nvim_open_win(buf, should_focus, opts)
 		local border_hl = level == vim.log.levels.ERROR and (float_config.border_hl_error or "DiagnosticError")
 			or (float_config.border_hl or "FloatBorder")
 		vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. border_hl, { win = win })
-		runner.track(win, buf)
+		registry.track(win, buf)
 
 		local close_key = float_config.close_key or "<Esc>"
 		vim.keymap.set("n", close_key, function()
@@ -240,7 +240,7 @@ function M.show_output(message, mode)
 		return
 	end
 
-	runner.track(win, buf)
+	registry.track(win, buf)
 	restore_focus_if_disabled(resolved_mode, term_config, previous_win, previous_tab)
 	vim.keymap.set("n", "<Esc>", function()
 		close_message_runner(win)

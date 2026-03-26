@@ -6,7 +6,7 @@
 -- luacheck: globals make_expand_override with_overrides
 
 local build = require("zignite.build.runtime_lookup")
-local build_detect = require("zignite.build.detect")
+local build_detect = require("zignite.build.tooling.query")
 local project_utils = require("zignite.utils.project")
 
 local function make_filereadable_override(readable_paths)
@@ -213,7 +213,7 @@ end
 local function test_uv_python_runner_uses_warmed_system_cache()
 	config.setup({ mode = "float" })
 
-		local build_state = require("zignite.build.state")
+		local build_state = require("zignite.build.cache_state")
 		build_detect.reset()
 	build.reset()
 

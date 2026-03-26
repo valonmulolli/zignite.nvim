@@ -5,7 +5,7 @@
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands
 
 local build_module = require("zignite.build.runtime_lookup")
-local build_detect = require("zignite.build.detect")
+local build_detect = require("zignite.build.tooling.query")
 local runtime_state = require("zignite.runtime.state")
 local project_utils = require("zignite.utils.project")
 
@@ -33,7 +33,7 @@ end
 ---@param result table
 ---@return nil
 local function seed_system_runtime_cache(query, filepath, project_root, result)
-	local build_state = require("zignite.build.state")
+	local build_state = require("zignite.build.cache_state")
 	local cache_key = table.concat({
 		tostring(query or ""),
 		tostring(project_root or ""),
@@ -478,7 +478,7 @@ local function test_cached_zig_system_results_take_precedence()
 	})
 
 	local systems = require("zignite.build.system_runtime")
-		local detect_backend = require("zignite.build.detect.backend")
+		local detect_backend = require("zignite.build.tooling.transport")
 	local original_get_project_root = project_utils.get_project_root
 	local original_filereadable = vim.fn.filereadable
 	local original_parse_project_lines_once = detect_backend.parse_project_lines_once
@@ -690,7 +690,7 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	})
 
 	local systems = require("zignite.build.system_runtime")
-	local detect_backend = require("zignite.build.detect.backend")
+	local detect_backend = require("zignite.build.tooling.transport")
 		local original_get_project_root = project_utils.get_project_root
 	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
 	local original_filereadable = vim.fn.filereadable
@@ -806,7 +806,7 @@ local function test_async_c_family_project_prewarm_avoids_sync_parse()
 		},
 	})
 
-	local detect_backend = require("zignite.build.detect.backend")
+	local detect_backend = require("zignite.build.tooling.transport")
 		local original_get_project_root = project_utils.get_project_root
 	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
 	local original_parse_project_lines_once = detect_backend.parse_project_lines_once

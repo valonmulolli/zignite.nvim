@@ -1,7 +1,7 @@
 local config = require("zignite.config")
 local backend = require("zignite.build.project_query")
 local commands = require("zignite.build.command_policy")
-local state = require("zignite.build.state")
+local state = require("zignite.build.cache_state")
 local systems = require("zignite.build.system_runtime")
 
 ---@type table
