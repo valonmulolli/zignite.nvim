@@ -28,7 +28,7 @@ end
 ---@param index integer
 ---@param stop_job boolean
 ---@return nil
-function M.close_at_index(index, stop_job)
+local function close_at_index(index, stop_job)
 	local runner = runners[index]
 	if not runner then
 		return
@@ -57,7 +57,7 @@ end
 function M.close_by_win_id(win_id, stop_job)
 	for idx, runner in ipairs(runners) do
 		if runner.win_id == win_id then
-			M.close_at_index(idx, stop_job)
+			close_at_index(idx, stop_job)
 			return true
 		end
 	end
@@ -80,7 +80,7 @@ end
 ---@return nil
 function M.close_all(stop_jobs)
 	for idx = #runners, 1, -1 do
-		M.close_at_index(idx, stop_jobs)
+		close_at_index(idx, stop_jobs)
 	end
 	runners = {}
 end

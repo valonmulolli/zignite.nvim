@@ -28,7 +28,7 @@ end
 ---@param filetype string
 ---@param command_name string
 ---@return string
-function M.get_prompt_buffer_help_line(filetype, command_name)
+local function get_prompt_buffer_help_line(filetype, command_name)
 	if filetype == "zig" and command_name == "fetch" then
 		return " Paste GitHub URL only and press Enter "
 	end
@@ -136,7 +136,7 @@ function M.open_prompt_buffer_argument_entry(opts)
 
 	local prompt_buf = vim.api.nvim_create_buf(false, true)
 	local prompt_label = opts.get_command_argument_prompt(opts.filetype, opts.selected.name)
-	local help_line = M.get_prompt_buffer_help_line(opts.filetype, opts.selected.name)
+	local help_line = get_prompt_buffer_help_line(opts.filetype, opts.selected.name)
 	local preview_line = " cmd: " .. opts.command_for_display(opts.selected.command)
 
 	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = prompt_buf })

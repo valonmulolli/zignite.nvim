@@ -39,7 +39,7 @@ function M.normalize_mode(mode)
 end
 
 ---@return string
-function M.normalize_close_behavior()
+local function normalize_close_behavior()
 	local behavior = tostring(M.get_config().close_behavior or "stop"):lower()
 	if behavior ~= "hide" and behavior ~= "stop" then
 		return "stop"
@@ -51,7 +51,7 @@ end
 ---@return boolean
 function M.should_stop_on_close(stop_jobs)
 	if stop_jobs == nil then
-		return M.normalize_close_behavior() == "stop"
+		return normalize_close_behavior() == "stop"
 	end
 	return stop_jobs == true
 end

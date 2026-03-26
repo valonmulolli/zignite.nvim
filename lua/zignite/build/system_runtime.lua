@@ -307,7 +307,7 @@ end
 ---@param candidates string[]
 ---@param max_up integer
 ---@return string|nil
-function M.find_root_for_files(start_path, candidates, max_up)
+local function find_root_for_files(start_path, candidates, max_up)
 	local dir = vim.fn.fnamemodify(start_path, ":h")
 	local limit = max_up or 10
 	for _ = 1, limit do
@@ -328,7 +328,7 @@ end
 ---@param root string
 ---@param markers string[]
 ---@return boolean
-function M.root_has_any_marker(root, markers)
+local function root_has_any_marker(root, markers)
 	for _, marker in ipairs(markers) do
 		if vim.fn.filereadable(vim.fs.joinpath(root, marker)) == 1 then
 			return true
@@ -340,7 +340,7 @@ end
 ---@param root string
 ---@param markers string[]
 ---@return string
-function M.build_marker_signature(root, markers)
+local function build_marker_signature(root, markers)
 	---@type string[]
 	local signatures = {}
 	for _, marker in ipairs(markers) do
@@ -354,16 +354,23 @@ function M.build_marker_signature(root, markers)
 	return table.concat(signatures, "|")
 end
 
+---@param root string
+---@param marker string
+---@return boolean
+local function root_has_marker(root, marker)
+	return type(vim.fn.filereadable) == "function" and vim.fn.filereadable(vim.fs.joinpath(root, marker)) == 1
+end
+
 ---@param filepath string
 ---@param markers string[]
 ---@param max_up integer|nil
 ---@return string|nil
 local function resolve_root_with_markers(filepath, markers, max_up)
 	local root = utils.get_project_root(filepath, config.options.project)
-	if root and root ~= "" and M.root_has_any_marker(root, markers) then
+	if root and root ~= "" and root_has_any_marker(root, markers) then
 		return root
 	end
-	return M.find_root_for_files(filepath, markers, max_up or 12)
+	return find_root_for_files(filepath, markers, max_up or 12)
 end
 
 ---@param root string
@@ -371,10 +378,10 @@ end
 local function detect_c_family_system_for_root(root)
 	for _, check in ipairs(C_FAMILY_ROOT_CHECKS) do
 		if check.markers then
-			if M.root_has_any_marker(root, check.markers) then
+			if root_has_any_marker(root, check.markers) then
 				return check.system
 			end
-		elseif check.marker and M.root_has_marker(root, check.marker) then
+		elseif check.marker and root_has_marker(root, check.marker) then
 			return check.system
 		end
 	end
@@ -394,10 +401,10 @@ local function resolve_jvm_root_local(filepath)
 	if not found_root or found_root == "" then
 		return nil, nil
 	end
-	if M.root_has_marker(found_root, "pom.xml") then
+	if root_has_marker(found_root, "pom.xml") then
 		return found_root, "maven"
 	end
-	if M.root_has_any_marker(found_root, GRADLE_ROOT_MARKERS) then
+	if root_has_any_marker(found_root, GRADLE_ROOT_MARKERS) then
 		return found_root, "gradle"
 	end
 	return found_root, nil
@@ -474,13 +481,6 @@ function M.supports_bazel_project_commands(filetype)
 		return false
 	end
 	return M.BAZEL_PROJECT_FILETYPES[filetype] == true
-end
-
----@param root string
----@param marker string
----@return boolean
-function M.root_has_marker(root, marker)
-	return type(vim.fn.filereadable) == "function" and vim.fn.filereadable(vim.fs.joinpath(root, marker)) == 1
 end
 
 ---@param filepath string
@@ -597,13 +597,13 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 	local signature = nil
 
 	if filetype == "c" or filetype == "cpp" then
-		signature = M.build_marker_signature(root, C_FAMILY_SIGNATURE_MARKERS)
+		signature = build_marker_signature(root, C_FAMILY_SIGNATURE_MARKERS)
 	elseif filetype == "javascript" or filetype == "typescript" then
-		signature = M.build_marker_signature(root, NODE_ROOT_MARKERS)
+		signature = build_marker_signature(root, NODE_ROOT_MARKERS)
 	elseif filetype == "python" then
-		signature = M.build_marker_signature(root, PYTHON_ROOT_MARKERS)
+		signature = build_marker_signature(root, PYTHON_ROOT_MARKERS)
 	elseif filetype == "java" or filetype == "kotlin" then
-		signature = M.build_marker_signature(root, JVM_ROOT_MARKERS)
+		signature = build_marker_signature(root, JVM_ROOT_MARKERS)
 	end
 
 	local tool_name = nil
@@ -640,12 +640,12 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 	if is_detection_enabled("bazel_project") and M.supports_bazel_project_commands(filetype) then
 		local bazel_root = M.resolve_bazel_root(filepath)
 		if bazel_root then
-			return append_signature(signature, "bazel:" .. M.build_marker_signature(bazel_root, M.BAZEL_ROOT_MARKERS))
+			return append_signature(signature, "bazel:" .. build_marker_signature(bazel_root, M.BAZEL_ROOT_MARKERS))
 		end
 	end
 
 	if filetype == "javascript" or filetype == "typescript" then
-		return append_signature(signature, "node:" .. M.build_marker_signature(root, NODE_ROOT_MARKERS))
+		return append_signature(signature, "node:" .. build_marker_signature(root, NODE_ROOT_MARKERS))
 	end
 
 	return signature
