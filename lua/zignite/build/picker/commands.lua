@@ -1,9 +1,6 @@
----@type table
-local M = {}
-
 ---@param cmd_name string
 ---@return string|nil, string|nil
-function M.split_command_prefix(cmd_name)
+local function split_command_prefix(cmd_name)
 	local name = tostring(cmd_name or "")
 	local prefix, rest = name:match("^(%w+)%-(.+)$")
 	if not prefix or not rest then
@@ -17,7 +14,7 @@ end
 ---@param cmd_string string
 ---@param is_c_family boolean
 ---@return boolean
-function M.is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_family)
+local function is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_family)
 	if not is_c_family then
 		return false
 	end
@@ -33,13 +30,16 @@ function M.is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_fam
 	return type(generic_command) == "string" and generic_command == cmd_string
 end
 
+---@type table
+local M = {}
+
 ---@param cmd table
 ---@param common_command_order table<string, integer>
 ---@param profile_command_order table<string, integer>
 ---@return string
 function M.command_section(cmd, common_command_order, profile_command_order)
 	local name = tostring(cmd.name or "")
-	local prefix, rest = M.split_command_prefix(name)
+	local prefix, rest = split_command_prefix(name)
 	local semantic_name = rest or name
 
 	if prefix and (prefix == "cmake" or prefix == "meson") then
@@ -69,10 +69,10 @@ end
 ---@param profile_command_order table<string, integer>
 ---@param section_order table<string, integer>
 ---@return integer
-function M.command_sort_rank(cmd, last_selected_name, common_command_order, profile_command_order, section_order)
+local function command_sort_rank(cmd, last_selected_name, common_command_order, profile_command_order, section_order)
 	local section = M.command_section(cmd, common_command_order, profile_command_order)
 	local name = tostring(cmd.name or "")
-	local _, rest = M.split_command_prefix(name)
+	local _, rest = split_command_prefix(name)
 	local semantic_name = rest or name
 	if last_selected_name and name == last_selected_name then
 		return -1000
@@ -102,20 +102,20 @@ function M.build_command_list(
 	---@type table[]
 	local entries = {}
 	for cmd_name, cmd_string in pairs(command_map or {}) do
-		if not M.is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_family) then
+		if not is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_family) then
 			entries[#entries + 1] = { name = cmd_name, command = cmd_string }
 		end
 	end
 
 	table.sort(entries, function(a, b)
-		local rank_a = M.command_sort_rank(
+		local rank_a = command_sort_rank(
 			a,
 			last_selected_name,
 			common_command_order,
 			profile_command_order,
 			section_order
 		)
-		local rank_b = M.command_sort_rank(
+		local rank_b = command_sort_rank(
 			b,
 			last_selected_name,
 			common_command_order,
