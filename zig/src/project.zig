@@ -100,7 +100,20 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             continue;
         }
 
-        const header = parseProjectDaemonBegin(begin_line) catch continue;
+        const header = parseProjectDaemonBegin(begin_line) catch |err| {
+            if (frame.parseRequestId(begin_line, PROJECT_DAEMON_REQ_BEGIN)) |request_id| {
+                try frame.writeErrorResponse(
+                    stdout,
+                    PROJECT_DAEMON_RES_BEGIN,
+                    PROJECT_DAEMON_RES_ERR,
+                    PROJECT_DAEMON_RES_END,
+                    request_id,
+                    @errorName(err),
+                );
+                try stdout.flush();
+            }
+            continue;
+        };
         var request_args: std.ArrayList([]u8) = .empty;
         defer {
             for (request_args.items) |arg| allocator.free(arg);
