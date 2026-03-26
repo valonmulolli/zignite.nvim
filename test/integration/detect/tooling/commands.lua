@@ -5,6 +5,7 @@
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 
+local build = require("zignite.build.runtime_lookup")
 
 local function test_run_build_command_with_detected_zig_command()
     init.setup({
@@ -442,8 +443,7 @@ local function test_detected_java_preferred_run_alias()
         build_commands = {},
     })
 
-    local build = require("zignite.build")
-    vim.bo.filetype = "java"
+        vim.bo.filetype = "java"
     local original_expand = vim.fn.expand
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable

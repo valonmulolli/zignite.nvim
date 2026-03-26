@@ -418,9 +418,9 @@ function M.setup(opts)
 	opts = opts or {}
 	validate_config(opts)
 	M.options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
-	local ok, utils = pcall(require, "zignite.utils")
-	if ok and utils.clear_project_cache then
-		utils.clear_project_cache()
+	local ok, project_utils = pcall(require, "zignite.utils.project")
+	if ok and project_utils.clear_project_cache then
+		project_utils.clear_project_cache()
 	end
 
 	M.setup_keymaps()

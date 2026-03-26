@@ -1,7 +1,7 @@
 local config = require("zignite.config")
 local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
-local utils = require("zignite.utils")
+local project_utils = require("zignite.utils.project")
 
 ---@type table
 local M = {}
@@ -296,7 +296,7 @@ end
 ---@param filepath string
 ---@return string
 function M.resolve_project_root_for_detection(filepath)
-	local root = utils.get_project_root(filepath, config.options.project)
+	local root = project_utils.get_project_root(filepath, config.options.project)
 	if root and root ~= "" then
 		return vim.fs.normalize(root)
 	end
@@ -366,7 +366,7 @@ end
 ---@param max_up integer|nil
 ---@return string|nil
 local function resolve_root_with_markers(filepath, markers, max_up)
-	local root = utils.get_project_root(filepath, config.options.project)
+	local root = project_utils.get_project_root(filepath, config.options.project)
 	if root and root ~= "" and root_has_any_marker(root, markers) then
 		return root
 	end
@@ -432,7 +432,7 @@ end
 ---@param filepath string
 ---@return string|nil
 function M.resolve_bazel_root(filepath)
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local backend = get_cached_bazel_result(filepath, project_root)
 	if type(backend) == "table" and type(backend.root) == "string" then
 		return backend.root
@@ -455,7 +455,7 @@ end
 ---@param filepath string
 ---@return string|nil, string|nil
 function M.resolve_jvm_root(filepath)
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local backend = get_cached_system_result("jvm-root", filepath, project_root)
 	if type(backend) == "table" and type(backend.root) == "string" then
 		return backend.root, backend.system
@@ -486,7 +486,7 @@ end
 ---@param filepath string
 ---@return string|nil, string|nil
 function M.detect_c_family_build_system(filepath)
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local backend = get_cached_system_result("c-family", filepath, project_root)
 	if type(backend) == "table" and type(backend.system) == "string" and backend.system ~= "" then
 		return backend.system, backend.root or M.resolve_project_root_for_detection(filepath)
@@ -549,7 +549,7 @@ function M.prime_system_detection_async(filetype, filepath, is_detection_enabled
 		end
 	end
 
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	if filetype == "c" or filetype == "cpp" then
 		start_query("c-family", project_root)
 	end
