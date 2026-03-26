@@ -169,12 +169,25 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
         .bazel_auto => {
             const result = try build_system.detect(allocator, .bazel_root, options.path, options.project_root);
             defer build_system.freeOwnedResult(allocator, result);
-            const root = result.root orelse return true;
-            try emit.writeDirectOutput(stdout, allocator, .{
-                .kind = .bazel_workspace,
-                .path = root,
-                .match_path = options.match_path orelse options.path,
-            }, "");
+            if (try buildBazelAutoSignatureAlloc(allocator, options, result)) |signature| {
+                defer allocator.free(signature);
+                if (try cache.getAutoOutput(options, signature)) |cached_output| {
+                    try stdout.writeAll(cached_output);
+                    return true;
+                }
+
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(allocator);
+                try writeBazelAutoOutput(out.writer(allocator), allocator, options, result);
+                const output = try out.toOwnedSlice(allocator);
+                defer allocator.free(output);
+
+                try cache.storeAutoOutput(options, signature, output);
+                try stdout.writeAll(output);
+                return true;
+            }
+
+            try writeBazelAutoOutput(stdout, allocator, options, result);
             return true;
         },
         else => return false,
@@ -265,6 +278,15 @@ fn writePythonAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options:
     }, pyproject_contents);
 }
 
+fn writeBazelAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, result: build_system.Result) !void {
+    const root = result.root orelse return;
+    try emit.writeDirectOutput(stdout, allocator, .{
+        .kind = .bazel_workspace,
+        .path = root,
+        .match_path = options.match_path orelse options.path,
+    }, "");
+}
+
 fn buildJVMAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
     const root = result.root orelse return null;
     const system = result.system orelse return null;
@@ -309,6 +331,52 @@ fn buildPythonAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_sys
     return try buildMarkerSignatureAlloc(allocator, root, &.{ "pyproject.toml", "uv.lock" });
 }
 
+fn buildBazelAutoSignatureAlloc(allocator: std.mem.Allocator, options: Options, result: build_system.Result) !?[]u8 {
+    const root = result.root orelse return null;
+    const match_path = options.match_path orelse options.path;
+
+    var signature: std.ArrayList(u8) = .empty;
+    errdefer signature.deinit(allocator);
+
+    const workspace_signature = try buildMarkerSignatureAlloc(
+        allocator,
+        root,
+        &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" },
+    );
+    defer allocator.free(workspace_signature);
+    try signature.appendSlice(allocator, workspace_signature);
+
+    const normalized_root = try common.normalizePathAlloc(allocator, root);
+    defer allocator.free(normalized_root);
+    const normalized_match = try common.normalizePathAlloc(allocator, match_path);
+    defer allocator.free(normalized_match);
+
+    var current_dir = try allocator.dupe(u8, std.fs.path.dirname(normalized_match) orelse normalized_match);
+    defer allocator.free(current_dir);
+
+    while (current_dir.len > 0) {
+        const build_bazel_path = try std.fs.path.join(allocator, &.{ current_dir, "BUILD.bazel" });
+        defer allocator.free(build_bazel_path);
+        const build_path = try std.fs.path.join(allocator, &.{ current_dir, "BUILD" });
+        defer allocator.free(build_path);
+
+        if (project_io.pathExists(build_bazel_path)) {
+            try appendSignatureFile(allocator, &signature, build_bazel_path);
+        } else if (project_io.pathExists(build_path)) {
+            try appendSignatureFile(allocator, &signature, build_path);
+        }
+
+        if (std.mem.eql(u8, current_dir, normalized_root)) break;
+        const parent = std.fs.path.dirname(current_dir) orelse break;
+        if (std.mem.eql(u8, parent, current_dir)) break;
+
+        allocator.free(current_dir);
+        current_dir = try allocator.dupe(u8, parent);
+    }
+
+    return try signature.toOwnedSlice(allocator);
+}
+
 fn buildMarkerSignatureAlloc(
     allocator: std.mem.Allocator,
     root: []const u8,
@@ -347,6 +415,23 @@ fn fileMtimeKeyAlloc(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
 
     const stat = try file.stat();
     return try std.fmt.allocPrint(allocator, "{d}:{d}", .{ stat.size, stat.mtime });
+}
+
+fn appendSignatureFile(
+    allocator: std.mem.Allocator,
+    signature: *std.ArrayList(u8),
+    path: []const u8,
+) !void {
+    try signature.append(allocator, '|');
+    try signature.appendSlice(allocator, path);
+    try signature.append(allocator, ':');
+    const mtime_key = try fileMtimeKeyAlloc(allocator, path);
+    defer if (mtime_key) |key| allocator.free(key);
+    if (mtime_key) |key| {
+        try signature.appendSlice(allocator, key);
+    } else {
+        try signature.appendSlice(allocator, "missing");
+    }
 }
 
 test "writeAutoOutput emits cargo-auto records from source path" {
@@ -509,6 +594,62 @@ test "writeAutoOutput refreshes cached c-family-auto output after Makefile chang
     }));
     try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\trun\tmake run\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\ttest\tmake test\n") != null);
+}
+
+test "writeAutoOutput refreshes cached bazel-auto output after BUILD changes" {
+    const allocator = std.testing.allocator;
+    cache.resetForTests();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{ .sub_path = "MODULE.bazel", .data = "" });
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.cc", .data = "int main() { return 0; }\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "app/BUILD.bazel", .data =
+        \\cc_binary(
+        \\    name = "main",
+        \\    srcs = ["main.cc"],
+        \\)
+    });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try tmp.dir.realpathAlloc(allocator, "app/main.cc");
+    defer allocator.free(filepath);
+
+    var first: std.ArrayList(u8) = .empty;
+    defer first.deinit(allocator);
+
+    try std.testing.expect(try writeAutoOutput(first.writer(allocator), allocator, .{
+        .kind = .bazel_auto,
+        .path = filepath,
+    }));
+    try std.testing.expect(std.mem.indexOf(u8, first.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") == null);
+
+    std.time.sleep(2 * std.time.ns_per_ms);
+    try tmp.dir.writeFile(.{ .sub_path = "app/BUILD.bazel", .data =
+        \\cc_binary(
+        \\    name = "main",
+        \\    srcs = ["main.cc"],
+        \\)
+        \\
+        \\cc_test(
+        \\    name = "main_test",
+        \\    srcs = ["main_test.cc"],
+        \\)
+    });
+
+    var second: std.ArrayList(u8) = .empty;
+    defer second.deinit(allocator);
+
+    try std.testing.expect(try writeAutoOutput(second.writer(allocator), allocator, .{
+        .kind = .bazel_auto,
+        .path = filepath,
+    }));
+    try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\tbazel-build-main\tbazel build //app:main\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\tbazel-test-main_test\tbazel test //app:main_test\n") != null);
 }
 
 test "writeAutoOutput emits c-family auto commands for nested cmake source" {
