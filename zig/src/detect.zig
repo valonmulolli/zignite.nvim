@@ -70,46 +70,58 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, DETECT_DAEMON_REQ_BEGIN)) continue;
-
-        const header = parseDetectDaemonBegin(begin_line) catch |err| {
-            if (frame.parseRequestId(begin_line, DETECT_DAEMON_REQ_BEGIN)) |request_id| {
-                try frame.writeErrorResponse(
-                    stdout,
-                    DETECT_DAEMON_RES_BEGIN,
-                    DETECT_DAEMON_RES_ERR,
-                    DETECT_DAEMON_RES_END,
-                    request_id,
-                    @errorName(err),
-                );
-                try stdout.flush();
-            }
-            continue;
+        handleDaemonFrame(allocator, reader, stdout, begin_line) catch |err| {
+            if (err == error.UnexpectedEof) break;
+            return err;
         };
-        const completed = try frame.skipUntilEnd(
-            allocator,
-            reader,
-            DETECT_DAEMON_MAX_LINE,
-            DETECT_DAEMON_REQ_END,
-            header.request_id,
-        );
-
-        if (!completed) break;
-
-        try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_BEGIN, header.request_id });
-        const detect_result = detectToolCommands(allocator, header.tool);
-        if (detect_result) |commands| {
-            defer freeOwnedCommandList(allocator, commands);
-            for (commands) |command| {
-                try stdout.writeByte('\t');
-                try stdout.writeAll(command);
-                try stdout.writeByte('\n');
-            }
-        } else |err| {
-            try stdout.print("{s} {d} {s}\n", .{ DETECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
-        }
-        try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_END, header.request_id });
-        try stdout.flush();
     }
+}
+
+pub fn handleDaemonFrame(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    stdout: anytype,
+    begin_line: []const u8,
+) !void {
+    const header = parseDetectDaemonBegin(begin_line) catch |err| {
+        if (frame.parseRequestId(begin_line, DETECT_DAEMON_REQ_BEGIN)) |request_id| {
+            try frame.writeErrorResponse(
+                stdout,
+                DETECT_DAEMON_RES_BEGIN,
+                DETECT_DAEMON_RES_ERR,
+                DETECT_DAEMON_RES_END,
+                request_id,
+                @errorName(err),
+            );
+            try stdout.flush();
+            return;
+        }
+        return err;
+    };
+    const completed = try frame.skipUntilEnd(
+        allocator,
+        reader,
+        DETECT_DAEMON_MAX_LINE,
+        DETECT_DAEMON_REQ_END,
+        header.request_id,
+    );
+
+    if (!completed) return error.UnexpectedEof;
+
+    try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_BEGIN, header.request_id });
+    const detect_result = detectToolCommands(allocator, header.tool);
+    if (detect_result) |commands| {
+        defer freeOwnedCommandList(allocator, commands);
+        for (commands) |command| {
+            try stdout.writeByte('\t');
+            try stdout.writeAll(command);
+            try stdout.writeByte('\n');
+        }
+    } else |err| {
+        try stdout.print("{s} {d} {s}\n", .{ DETECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
+    }
+    try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_END, header.request_id });
+    try stdout.flush();
 }
 
 pub fn detectToolCommands(allocator: std.mem.Allocator, tool: Tool) ![][]u8 {

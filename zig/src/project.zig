@@ -99,72 +99,84 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         if (!std.mem.startsWith(u8, begin_line, PROJECT_DAEMON_REQ_BEGIN)) {
             continue;
         }
-
-        const header = parseProjectDaemonBegin(begin_line) catch |err| {
-            if (frame.parseRequestId(begin_line, PROJECT_DAEMON_REQ_BEGIN)) |request_id| {
-                try frame.writeErrorResponse(
-                    stdout,
-                    PROJECT_DAEMON_RES_BEGIN,
-                    PROJECT_DAEMON_RES_ERR,
-                    PROJECT_DAEMON_RES_END,
-                    request_id,
-                    @errorName(err),
-                );
-                try stdout.flush();
-            }
-            continue;
+        handleDaemonFrame(allocator, reader, stdout, begin_line) catch |err| {
+            if (err == error.UnexpectedEof) break;
+            return err;
         };
-        var request_args: std.ArrayList([]u8) = .empty;
-        defer {
-            for (request_args.items) |arg| allocator.free(arg);
-            request_args.deinit(allocator);
+    }
+}
+
+pub fn handleDaemonFrame(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    stdout: anytype,
+    begin_line: []const u8,
+) !void {
+    const header = parseProjectDaemonBegin(begin_line) catch |err| {
+        if (frame.parseRequestId(begin_line, PROJECT_DAEMON_REQ_BEGIN)) |request_id| {
+            try frame.writeErrorResponse(
+                stdout,
+                PROJECT_DAEMON_RES_BEGIN,
+                PROJECT_DAEMON_RES_ERR,
+                PROJECT_DAEMON_RES_END,
+                request_id,
+                @errorName(err),
+            );
+            try stdout.flush();
+            return;
         }
+        return err;
+    };
+    var request_args: std.ArrayList([]u8) = .empty;
+    defer {
+        for (request_args.items) |arg| allocator.free(arg);
+        request_args.deinit(allocator);
+    }
 
-        const ParseArgsLine = struct {
-            allocator: std.mem.Allocator,
-            request_args: *std.ArrayList([]u8),
+    const ParseArgsLine = struct {
+        allocator: std.mem.Allocator,
+        request_args: *std.ArrayList([]u8),
 
-            fn onLine(self: @This(), line: []const u8) !void {
-                if (line.len > 0 and line[0] == '\t') {
-                    try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line[1..]));
-                } else if (line.len > 0) {
-                    try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line));
-                }
+        fn onLine(self: @This(), line: []const u8) !void {
+            if (line.len > 0 and line[0] == '\t') {
+                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line[1..]));
+            } else if (line.len > 0) {
+                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line));
             }
-        };
-        const parse_args_line = ParseArgsLine{
-            .allocator = allocator,
-            .request_args = &request_args,
-        };
-        const completed = try frame.readUntilEnd(
-            allocator,
-            reader,
-            PROJECT_DAEMON_MAX_LINE,
-            PROJECT_DAEMON_REQ_END,
-            header.request_id,
-            parse_args_line.onLine,
-        );
+        }
+    };
+    const parse_args_line = ParseArgsLine{
+        .allocator = allocator,
+        .request_args = &request_args,
+    };
+    const completed = try frame.readUntilEnd(
+        allocator,
+        reader,
+        PROJECT_DAEMON_MAX_LINE,
+        PROJECT_DAEMON_REQ_END,
+        header.request_id,
+        parse_args_line.onLine,
+    );
 
-        if (!completed) break;
+    if (!completed) return error.UnexpectedEof;
 
-        try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
-        const options = parseArgs(request_args.items);
-        if (options) |parsed| {
-            const contents = readProjectFile(allocator, parsed.kind, parsed.path);
-            if (contents) |payload| {
-                defer allocator.free(payload);
-                writeOutput(stdout, allocator, parsed, payload) catch |err| {
-                    try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
-                };
-            } else |err| {
+    try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
+    const options = parseArgs(request_args.items);
+    if (options) |parsed| {
+        const contents = readProjectFile(allocator, parsed.kind, parsed.path);
+        if (contents) |payload| {
+            defer allocator.free(payload);
+            writeOutput(stdout, allocator, parsed, payload) catch |err| {
                 try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
-            }
+            };
         } else |err| {
             try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
         }
-        try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_END, header.request_id });
-        try stdout.flush();
+    } else |err| {
+        try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
     }
+    try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_END, header.request_id });
+    try stdout.flush();
 }
 
 fn parseKind(value: []const u8) !Kind {
