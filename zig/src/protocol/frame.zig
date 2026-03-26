@@ -50,3 +50,98 @@ pub fn skipUntilEnd(
     return readUntilEnd(allocator, reader, max_line, end_marker, request_id, Skip.onLine);
 }
 
+const TestReader = struct {
+    lines: []const []const u8,
+    index: usize = 0,
+
+    fn readUntilDelimiterOrEofAlloc(
+        self: *TestReader,
+        allocator: std.mem.Allocator,
+        delimiter: u8,
+        max_line: usize,
+    ) !?[]u8 {
+        _ = delimiter;
+        if (self.index >= self.lines.len) return null;
+        const line = self.lines[self.index];
+        self.index += 1;
+        if (line.len > max_line) return error.StreamTooLong;
+        return try allocator.dupe(u8, line);
+    }
+};
+
+test "stripTrailingCR trims only trailing carriage return" {
+    try std.testing.expectEqualStrings("line", stripTrailingCR("line\r"));
+    try std.testing.expectEqualStrings("line", stripTrailingCR("line"));
+}
+
+test "isFrameEndLine validates marker and request id" {
+    try std.testing.expect(isFrameEndLine("@@ZPRJ_REQ_END 19", "@@ZPRJ_REQ_END", 19));
+    try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 18", "@@ZPRJ_REQ_END", 19));
+    try std.testing.expect(!isFrameEndLine("@@ZDET_REQ_END 19", "@@ZPRJ_REQ_END", 19));
+    try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 19 extra", "@@ZPRJ_REQ_END", 19));
+}
+
+test "readUntilEnd forwards lines until matching frame end" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "first\r",
+        "@@ZPRJ_REQ_END 6",
+        "second",
+        "@@ZPRJ_REQ_END 7\r",
+        "tail",
+    } };
+    var collected: std.ArrayList(u8) = .empty;
+    defer collected.deinit(allocator);
+    var writer = collected.writer(allocator);
+    const Collect = struct {
+        writer: *@TypeOf(collected.writer(allocator)),
+
+        fn onLine(self: @This(), line: []const u8) !void {
+            try self.writer.writeAll(line);
+            try self.writer.writeByte('\n');
+        }
+    };
+    const collect = Collect{ .writer = &writer };
+
+    const completed = try readUntilEnd(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+        7,
+        collect.onLine,
+    );
+
+    try std.testing.expect(completed);
+    try std.testing.expectEqualStrings("first\n@@ZPRJ_REQ_END 6\nsecond\n", collected.items);
+    try std.testing.expectEqual(@as(usize, 4), reader.index);
+}
+
+test "skipUntilEnd returns false on eof before matching end" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{ "line-one", "line-two" } };
+
+    const completed = try skipUntilEnd(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+        7,
+    );
+
+    try std.testing.expect(!completed);
+    try std.testing.expectEqual(@as(usize, 2), reader.index);
+}
+
+test "readUntilEnd propagates oversized line errors" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{ "123456" } };
+    const Noop = struct {
+        fn onLine(_: []const u8) !void {}
+    };
+
+    try std.testing.expectError(
+        error.StreamTooLong,
+        readUntilEnd(allocator, &reader, 3, "@@ZPRJ_REQ_END", 1, Noop.onLine),
+    );
+}

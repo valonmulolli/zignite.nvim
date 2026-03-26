@@ -288,9 +288,3 @@ test "parseProjectBegin decodes project request header" {
 
     try std.testing.expectEqual(@as(u64, 19), header.request_id);
 }
-
-test "isFrameEndLine validates marker and request id" {
-    try std.testing.expect(frame.isFrameEndLine("@@ZPRJ_REQ_END 19", PROJECT_REQ_END, 19));
-    try std.testing.expect(!frame.isFrameEndLine("@@ZPRJ_REQ_END 18", PROJECT_REQ_END, 19));
-    try std.testing.expect(!frame.isFrameEndLine("@@ZDET_REQ_END 19", PROJECT_REQ_END, 19));
-}
