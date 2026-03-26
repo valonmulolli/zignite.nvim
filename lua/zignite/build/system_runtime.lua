@@ -102,19 +102,6 @@ local function system_cache_key(query, filepath, project_root)
 	}, "::")
 end
 
----@param entry table|nil
----@return boolean
-local function is_system_cache_stale(entry)
-	if type(entry) ~= "table" then
-		return true
-	end
-	local updated_at_ms = tonumber(entry.updated_at_ms)
-	if not updated_at_ms then
-		return true
-	end
-	return (state.now_ms() - updated_at_ms) >= state.SYSTEM_RUNTIME_DEFAULT_TTL_MS
-end
-
 ---@param query string
 ---@param filepath string
 ---@param project_root string|nil
@@ -125,7 +112,7 @@ local function get_cached_system_result(query, filepath, project_root)
 		state.system_runtime_cache_order,
 		system_cache_key(query, filepath, project_root)
 	)
-	if is_system_cache_stale(entry) then
+	if type(entry) ~= "table" then
 		return nil
 	end
 	return copy_system_result(entry.result)
@@ -148,7 +135,6 @@ local function set_cached_system_result(query, filepath, project_root, result)
 	if type(result) ~= "table" or next(result) == nil then
 		return
 	end
-	local updated_at_ms = state.now_ms()
 	local copied_result = copy_system_result(result)
 
 	local function store(cache_path, cache_root)
@@ -159,7 +145,6 @@ local function set_cached_system_result(query, filepath, project_root, result)
 			system_cache_key(query, cache_path, cache_root),
 			{
 				result = copy_system_result(copied_result),
-				updated_at_ms = updated_at_ms,
 			}
 		)
 	end
