@@ -4,7 +4,6 @@ local build_picker = require("zignite.build.picker")
 local build_systems = require("zignite.build.system_runtime")
 local config = require("zignite.config")
 local runtime_argv = require("zignite.runtime.argv")
-local runtime_backend = require("zignite.runtime.backend")
 local runtime_command = require("zignite.runtime.command")
 local runtime_filetype = require("zignite.runtime.filetype")
 local runtime_state = require("zignite.runtime.state")
@@ -330,7 +329,7 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 			local standalone_cmd = command_utils.substitute_variables(zig_runner, filepath)
 			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
 			local standalone_argv = runtime_argv.command_to_argv(zig_runner, filepath)
-			local standalone_system_command = runtime_backend.build_system_command(standalone_cmd, standalone_argv)
+			local standalone_system_command = runtime_argv.build_system_command(standalone_cmd, standalone_argv)
 			M.execute_command(standalone_system_command, filepath, 0, mode, "zig: run", nil, {
 				cwd = standalone_dir,
 			})
@@ -344,7 +343,7 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 		argv_command = nil
 	end
 
-	local system_command = runtime_backend.build_system_command(command, argv_command)
+	local system_command = runtime_argv.build_system_command(command, argv_command)
 	local display_name = string.format("%s: %s", filetype, command_name)
 	build.set_last_build_command(filetype, command_name)
 	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
@@ -424,7 +423,7 @@ function M.run_code(range, mode)
 		argv_command = nil
 	end
 
-	local system_command = runtime_backend.build_system_command(final_command, argv_command)
+	local system_command = runtime_argv.build_system_command(final_command, argv_command)
 	M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command, {
 		cwd = command_cwd,
 	})
