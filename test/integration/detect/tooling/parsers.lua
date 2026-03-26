@@ -929,7 +929,7 @@ local function test_make_targets_use_zig_project_daemon()
 
     local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils.project")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
@@ -1014,7 +1014,7 @@ local function test_make_targets_fall_back_after_project_daemon_timeout()
 
     local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils.project")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
@@ -1112,7 +1112,7 @@ local function test_make_targets_use_buffered_project_daemon_chunks()
 
     local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils.project")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
@@ -1197,7 +1197,7 @@ local function test_make_targets_use_multiline_project_daemon_response()
 
     local make_parser = require("zignite.build.project_query")
     local utils_module = require("zignite.utils.project")
-    local detect_backend = require("zignite.build.detect.backend")
+    local detect_backend = require("zignite.build.tooling.transport")
     local original_get_project_root = utils_module.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist

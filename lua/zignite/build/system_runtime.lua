@@ -1,6 +1,6 @@
 local config = require("zignite.config")
-local detect_backend = require("zignite.build.detect.backend")
-local state = require("zignite.build.state")
+local tooling_transport = require("zignite.build.tooling.transport")
+local cache_state = require("zignite.build.cache_state")
 local project_utils = require("zignite.utils.project")
 
 ---@type table
@@ -107,9 +107,9 @@ end
 ---@param project_root string|nil
 ---@return table|nil
 local function get_cached_system_result(query, filepath, project_root)
-	local entry = state.get_bounded_cache_entry(
-		state.system_runtime_cache,
-		state.system_runtime_cache_order,
+	local entry = cache_state.get_bounded_cache_entry(
+		cache_state.system_runtime_cache,
+		cache_state.system_runtime_cache_order,
 		system_cache_key(query, filepath, project_root)
 	)
 	if type(entry) ~= "table" then
@@ -138,10 +138,10 @@ local function set_cached_system_result(query, filepath, project_root, result)
 	local copied_result = copy_system_result(result)
 
 	local function store(cache_path, cache_root)
-		state.set_bounded_cache_entry(
-			state.system_runtime_cache,
-			state.system_runtime_cache_order,
-			state.SYSTEM_RUNTIME_CACHE_MAX,
+		cache_state.set_bounded_cache_entry(
+			cache_state.system_runtime_cache,
+			cache_state.system_runtime_cache_order,
+			cache_state.SYSTEM_RUNTIME_CACHE_MAX,
 			system_cache_key(query, cache_path, cache_root),
 			{
 				result = copy_system_result(copied_result),
@@ -248,24 +248,24 @@ local function prime_system_query_async(filepath, query, project_root, on_done)
 	end
 
 	local cache_key = system_cache_key(query, filepath, project_root)
-	local inflight = state.system_runtime_inflight[cache_key]
+	local inflight = cache_state.system_runtime_inflight[cache_key]
 	if inflight then
 		inflight.callbacks[#inflight.callbacks + 1] = on_done
 		return true
 	end
 
-	state.system_runtime_inflight[cache_key] = { callbacks = { on_done } }
+	cache_state.system_runtime_inflight[cache_key] = { callbacks = { on_done } }
 	---@type string[]
 	local extra_args = { "--query=" .. query }
 	if type(project_root) == "string" and project_root ~= "" then
 		extra_args[#extra_args + 1] = "--project-root=" .. project_root
 	end
 
-	local started = detect_backend.parse_project_lines_async("system", filepath, extra_args, function(lines)
+	local started = tooling_transport.parse_project_lines_async("system", filepath, extra_args, function(lines)
 		local result = decode_system_backend_lines(lines)
 		set_cached_system_result(query, filepath, project_root, result)
-		local pending = state.system_runtime_inflight[cache_key]
-		state.system_runtime_inflight[cache_key] = nil
+		local pending = cache_state.system_runtime_inflight[cache_key]
+		cache_state.system_runtime_inflight[cache_key] = nil
 		for _, callback in ipairs((pending and pending.callbacks) or {}) do
 			if type(callback) == "function" then
 				pcall(callback, copy_system_result(result))
@@ -274,7 +274,7 @@ local function prime_system_query_async(filepath, query, project_root, on_done)
 	end)
 
 	if not started then
-		state.system_runtime_inflight[cache_key] = nil
+		cache_state.system_runtime_inflight[cache_key] = nil
 		return false
 	end
 
@@ -335,7 +335,7 @@ local function build_marker_signature(root, markers)
 		local path = vim.fs.joinpath(root, marker)
 		local signature = "missing"
 		if type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1 then
-			signature = state.get_file_mtime_key(path) or "unknown"
+			signature = cache_state.get_file_mtime_key(path) or "unknown"
 		end
 		signatures[#signatures + 1] = marker .. ":" .. signature
 	end
@@ -501,7 +501,7 @@ function M.detect_file_signature(path)
 	if type(vim.fn.filereadable) ~= "function" or vim.fn.filereadable(path) ~= 1 then
 		return "missing"
 	end
-	return state.get_file_mtime_key(path) or "unknown"
+	return cache_state.get_file_mtime_key(path) or "unknown"
 end
 
 ---@param filetype string
@@ -618,7 +618,7 @@ function M.get_mtime_signature_for_filetype(filetype, filepath, is_detection_ena
 				"tool:%s:%s:%s",
 				tool_name,
 				executable_path,
-				state.get_file_mtime_key(executable_path) or "unknown"
+				cache_state.get_file_mtime_key(executable_path) or "unknown"
 			)
 		else
 			signature = "tool:" .. tool_name

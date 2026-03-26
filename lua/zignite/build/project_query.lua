@@ -1,6 +1,6 @@
 local config = require("zignite.config")
-local detect_backend = require("zignite.build.detect.backend")
-local state = require("zignite.build.state")
+local tooling_transport = require("zignite.build.tooling.transport")
+local cache_state = require("zignite.build.cache_state")
 local systems = require("zignite.build.system_runtime")
 local project_utils = require("zignite.utils.project")
 
@@ -37,7 +37,7 @@ end
 ---@param extra_args string[]|nil
 ---@return table<string, string>
 local function parse_backend_command_map(kind, filepath, extra_args)
-	local lines = detect_backend.parse_project_lines_once(kind, filepath, extra_args)
+	local lines = tooling_transport.parse_project_lines_once(kind, filepath, extra_args)
 	if type(lines) == "table" and #lines > 0 then
 		return decode_backend_commands(lines)
 	end
@@ -54,12 +54,12 @@ local function store_command_cache_entry(cache, order, max_entries, key, entry)
 	local stored = {}
 	for field, value in pairs(entry or {}) do
 		if field == "commands" then
-			stored.commands = state.copy_string_map(value or {})
+			stored.commands = cache_state.copy_string_map(value or {})
 		else
 			stored[field] = value
 		end
 	end
-	state.set_bounded_cache_entry(cache, order, max_entries, key, stored)
+	cache_state.set_bounded_cache_entry(cache, order, max_entries, key, stored)
 end
 
 ---@param query string
@@ -69,7 +69,7 @@ local function get_warmed_system_commands(query, filepath)
 	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local warmed_system = systems.get_cached_system_query_result(query, filepath, project_root)
 	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
-		local commands = state.copy_string_map(warmed_system.commands)
+		local commands = cache_state.copy_string_map(warmed_system.commands)
 		if next(commands) ~= nil then
 			return commands
 		end
@@ -112,9 +112,9 @@ local function detect_cached_backend_commands(opts)
 		return {}, nil
 	end
 
-	local cached = state.get_bounded_cache_entry(opts.cache, opts.order, opts.cache_key)
+	local cached = cache_state.get_bounded_cache_entry(opts.cache, opts.order, opts.cache_key)
 	if cached and opts.is_fresh(cached) then
-		return state.copy_string_map(cached.commands), nil
+		return cache_state.copy_string_map(cached.commands), nil
 	end
 
 	local commands = parse_backend_command_map(opts.kind, opts.filepath, opts.extra_args)
@@ -128,7 +128,7 @@ local function detect_cached_backend_commands(opts)
 	end
 	store_command_cache_entry(opts.cache, opts.order, opts.max_entries, opts.cache_key, entry)
 	if next(commands) ~= nil then
-		return state.copy_string_map(commands), nil
+		return cache_state.copy_string_map(commands), nil
 	end
 	return {}, nil
 end
@@ -170,9 +170,9 @@ end
 ---@return table|nil, string
 local function get_c_family_cached_entry(filepath)
 	local cache_key = normalize_path(filepath)
-	local cached = state.get_bounded_cache_entry(
-		state.c_family_project_cache,
-		state.c_family_project_cache_order,
+	local cached = cache_state.get_bounded_cache_entry(
+		cache_state.c_family_project_cache,
+		cache_state.c_family_project_cache_order,
 		cache_key
 	)
 	return cached, cache_key
@@ -184,16 +184,16 @@ end
 ---@param commands table<string, string>
 ---@return nil
 local function store_c_family_cached_entry(cache_key, system, root, commands)
-	state.set_bounded_cache_entry(
-		state.c_family_project_cache,
-		state.c_family_project_cache_order,
-		state.C_FAMILY_PROJECT_CACHE_MAX,
+	cache_state.set_bounded_cache_entry(
+		cache_state.c_family_project_cache,
+		cache_state.c_family_project_cache_order,
+		cache_state.C_FAMILY_PROJECT_CACHE_MAX,
 		cache_key,
 		{
 			system = system,
 			root = root,
 			detect_flag = system == "make" and "c_cpp_make" or nil,
-			commands = state.copy_string_map(commands),
+			commands = cache_state.copy_string_map(commands),
 		}
 	)
 end
@@ -204,9 +204,9 @@ function M.detect_package_scripts(filepath)
 	local commands = detect_cached_backend_commands({
 		kind = "package-json-auto",
 		filepath = filepath,
-		cache = state.package_script_cache,
-		order = state.package_script_cache_order,
-		max_entries = state.PACKAGE_SCRIPT_CACHE_MAX,
+		cache = cache_state.package_script_cache,
+		order = cache_state.package_script_cache_order,
+		max_entries = cache_state.PACKAGE_SCRIPT_CACHE_MAX,
 		cache_key = normalize_path(filepath),
 		mtime_key = "auto",
 		is_fresh = function(_)
@@ -245,13 +245,13 @@ function M.detect_cargo_project_commands(filepath)
 	if vim.fn.filereadable(cargo_toml_path) ~= 1 then
 		return {}, nil
 	end
-	local mtime_key = state.get_file_mtime_key(cargo_toml_path) or "missing"
+	local mtime_key = cache_state.get_file_mtime_key(cargo_toml_path) or "missing"
 	return detect_cached_backend_commands({
 		kind = "cargo-auto",
 		filepath = filepath,
-		cache = state.cargo_target_cache,
-		order = state.cargo_target_cache_order,
-		max_entries = state.CARGO_TARGET_CACHE_MAX,
+		cache = cache_state.cargo_target_cache,
+		order = cache_state.cargo_target_cache_order,
+		max_entries = cache_state.CARGO_TARGET_CACHE_MAX,
 		cache_key = cargo_toml_path,
 		mtime_key = mtime_key,
 		is_fresh = function(cached)
@@ -281,15 +281,15 @@ function M.detect_go_project_commands(filepath)
 	local go_mod_path = vim.fs.joinpath(root, "go.mod")
 	local mtime_key = string.format(
 		"%s|%s",
-		state.get_file_mtime_key(go_work_path) or "missing",
-		state.get_file_mtime_key(go_mod_path) or "missing"
+		cache_state.get_file_mtime_key(go_work_path) or "missing",
+		cache_state.get_file_mtime_key(go_mod_path) or "missing"
 	)
 	return detect_cached_backend_commands({
 		kind = "go-auto",
 		filepath = filepath,
-		cache = state.go_project_cache,
-		order = state.go_project_cache_order,
-		max_entries = state.GO_PROJECT_CACHE_MAX,
+		cache = cache_state.go_project_cache,
+		order = cache_state.go_project_cache_order,
+		max_entries = cache_state.GO_PROJECT_CACHE_MAX,
 		cache_key = cache_key,
 		mtime_key = mtime_key,
 		is_fresh = function(cached)
@@ -402,12 +402,12 @@ function M.detect_c_family_build_result(filepath)
 			system = cached.system,
 			root = cached.root,
 			detect_flag = cached.detect_flag,
-			commands = state.copy_string_map(cached.commands),
+			commands = cache_state.copy_string_map(cached.commands),
 			info = nil,
 		}
 	end
 
-	local zig_lines = detect_backend.parse_project_lines_once("c-family-auto", filepath, {
+	local zig_lines = tooling_transport.parse_project_lines_once("c-family-auto", filepath, {
 		"--project-root=" .. root,
 	})
 	local decoded = decode_backend_project_result(zig_lines)
@@ -458,7 +458,7 @@ function M.detect_c_family_build_result_cached(filepath)
 			system = cached.system,
 			root = cached.root,
 			detect_flag = cached.detect_flag,
-			commands = state.copy_string_map(cached.commands),
+			commands = cache_state.copy_string_map(cached.commands),
 			info = nil,
 		}
 	end
@@ -472,7 +472,7 @@ function M.detect_c_family_build_result_cached(filepath)
 		and next(warmed_system.commands) ~= nil
 	then
 		local warmed_root = warmed_system.root or root
-		local warmed_commands = state.copy_string_map(warmed_system.commands)
+		local warmed_commands = cache_state.copy_string_map(warmed_system.commands)
 		store_c_family_cached_entry(cache_key, warmed_system.system, warmed_root, warmed_commands)
 		return {
 			system = warmed_system.system,
@@ -507,7 +507,7 @@ function M.prime_c_family_project_commands_async(filepath, on_done)
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
 	local _, cache_key = get_c_family_cached_entry(filepath)
 
-	return detect_backend.parse_project_lines_async("c-family-auto", filepath, {
+	return tooling_transport.parse_project_lines_async("c-family-auto", filepath, {
 		"--project-root=" .. root,
 	}, function(lines)
 		local decoded = decode_backend_project_result(lines)
