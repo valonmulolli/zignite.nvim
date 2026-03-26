@@ -9,18 +9,18 @@ const CacheEntry = struct {
     output: []u8,
 };
 
-var c_family_auto_cache: std.StringHashMap(CacheEntry) = .init(page_allocator);
+var auto_output_cache: std.StringHashMap(CacheEntry) = .init(page_allocator);
 
-pub fn getCFamilyAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
+pub fn getAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
     const cache_key = try cacheKeyAlloc(page_allocator, options);
     defer page_allocator.free(cache_key);
 
-    const entry = c_family_auto_cache.get(cache_key) orelse return null;
+    const entry = auto_output_cache.get(cache_key) orelse return null;
     if (!std.mem.eql(u8, entry.signature, signature)) return null;
     return entry.output;
 }
 
-pub fn storeCFamilyAutoOutput(options: Options, signature: []const u8, output: []const u8) !void {
+pub fn storeAutoOutput(options: Options, signature: []const u8, output: []const u8) !void {
     const cache_key = try cacheKeyAlloc(page_allocator, options);
     errdefer page_allocator.free(cache_key);
 
@@ -29,7 +29,7 @@ pub fn storeCFamilyAutoOutput(options: Options, signature: []const u8, output: [
     const owned_output = try page_allocator.dupe(u8, output);
     errdefer page_allocator.free(owned_output);
 
-    const gop = try c_family_auto_cache.getOrPut(cache_key);
+    const gop = try auto_output_cache.getOrPut(cache_key);
     if (gop.found_existing) {
         page_allocator.free(cache_key);
         page_allocator.free(gop.value_ptr.signature);
@@ -44,13 +44,13 @@ pub fn storeCFamilyAutoOutput(options: Options, signature: []const u8, output: [
 }
 
 pub fn resetForTests() void {
-    var iterator = c_family_auto_cache.iterator();
+    var iterator = auto_output_cache.iterator();
     while (iterator.next()) |entry| {
         page_allocator.free(entry.key_ptr.*);
         page_allocator.free(entry.value_ptr.signature);
         page_allocator.free(entry.value_ptr.output);
     }
-    c_family_auto_cache.clearRetainingCapacity();
+    auto_output_cache.clearRetainingCapacity();
 }
 
 fn cacheKeyAlloc(allocator: std.mem.Allocator, options: Options) ![]u8 {
