@@ -22,13 +22,20 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const input = try readStdinAll(allocator);
     defer allocator.free(input);
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     try processQuickfixPayload(allocator, input, options, false, stdout);
+    try stdout.flush();
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var reader = std.fs.File.stdin().deprecatedReader();
-    var stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const reader = &stdin_reader.interface;
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DAEMON_MAX_LINE);
@@ -80,6 +87,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             try stdout.writeByte('\n');
         }
         try stdout.print("{s} {d}\n", .{ DAEMON_RES_END, header.request_id });
+        try stdout.flush();
     }
 }
 
@@ -177,7 +185,9 @@ fn isDaemonEndLine(line: []const u8, request_id: u64) bool {
 }
 
 fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
-    return try std.fs.File.stdin().deprecatedReader().readAllAlloc(allocator, std.math.maxInt(usize));
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    return try stdin_reader.interface.readAllAlloc(allocator, std.math.maxInt(usize));
 }
 
 fn stripTrailingCR(line: []const u8) []const u8 {

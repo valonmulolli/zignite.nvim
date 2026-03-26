@@ -38,8 +38,12 @@ const ProjectHeader = struct {
 };
 
 pub fn run(allocator: std.mem.Allocator) !void {
-    var reader = std.fs.File.stdin().deprecatedReader();
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const reader = &stdin_reader.interface;
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     while (true) {
         const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', QUICKFIX_MAX_LINE);
@@ -103,6 +107,7 @@ fn handleQuickfixFrame(
         try stdout.writeByte('\n');
     }
     try stdout.print("{s} {d}\n", .{ QUICKFIX_RES_END, header.request_id });
+    try stdout.flush();
 }
 
 fn handleDetectFrame(
@@ -134,6 +139,7 @@ fn handleDetectFrame(
         try stdout.print("{s} {d} {s}\n", .{ DETECT_RES_ERR, header.request_id, @errorName(err) });
     }
     try stdout.print("{s} {d}\n", .{ DETECT_RES_END, header.request_id });
+    try stdout.flush();
 }
 
 fn handleProjectFrame(
@@ -181,6 +187,7 @@ fn handleProjectFrame(
         try stdout.print("{s} {d} {s}\n", .{ PROJECT_RES_ERR, header.request_id, @errorName(err) });
     }
     try stdout.print("{s} {d}\n", .{ PROJECT_RES_END, header.request_id });
+    try stdout.flush();
 }
 
 fn parseQuickfixBegin(line: []const u8) !QuickfixHeader {
