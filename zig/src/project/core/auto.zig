@@ -35,36 +35,25 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
         .jvm_auto => {
             const result = try build_system.detect(allocator, .jvm_root, options.path, options.project_root);
             defer build_system.freeOwnedResult(allocator, result);
+            if (try buildJVMAutoSignatureAlloc(allocator, result)) |signature| {
+                defer allocator.free(signature);
+                if (try cache.getAutoOutput(options, signature)) |cached_output| {
+                    try stdout.writeAll(cached_output);
+                    return true;
+                }
 
-            const root = result.root orelse return true;
-            const system = result.system orelse return true;
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(allocator);
+                try writeJVMAutoOutput(out.writer(allocator), allocator, result);
+                const output = try out.toOwnedSlice(allocator);
+                defer allocator.free(output);
 
-            if (std.mem.eql(u8, system, "maven")) {
-                const pom_path = try std.fs.path.join(allocator, &.{ root, "pom.xml" });
-                defer allocator.free(pom_path);
-                const pom_contents = try common.readFileAlloc(allocator, pom_path);
-                defer allocator.free(pom_contents);
-                try emit.writeDirectOutput(stdout, allocator, .{ .kind = .maven, .path = pom_path }, pom_contents);
+                try cache.storeAutoOutput(options, signature, output);
+                try stdout.writeAll(output);
                 return true;
             }
 
-            if (std.mem.eql(u8, system, "gradle")) {
-                const gradle_kts = try std.fs.path.join(allocator, &.{ root, "build.gradle.kts" });
-                defer allocator.free(gradle_kts);
-                const gradle_groovy = try std.fs.path.join(allocator, &.{ root, "build.gradle" });
-                defer allocator.free(gradle_groovy);
-
-                const build_file = if (project_io.pathExists(gradle_kts))
-                    gradle_kts
-                else if (project_io.pathExists(gradle_groovy))
-                    gradle_groovy
-                else
-                    return true;
-
-                const build_contents = try common.readFileAlloc(allocator, build_file);
-                defer allocator.free(build_contents);
-                try emit.writeDirectOutput(stdout, allocator, .{ .kind = .gradle, .path = build_file }, build_contents);
-            }
+            try writeJVMAutoOutput(stdout, allocator, result);
             return true;
         },
         .c_family_auto => {
@@ -73,7 +62,7 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
             if (try buildCFamilyAutoSignatureAlloc(allocator, result)) |signature| {
                 defer allocator.free(signature);
 
-                if (try cache.getCFamilyAutoOutput(options, signature)) |cached_output| {
+                if (try cache.getAutoOutput(options, signature)) |cached_output| {
                     try stdout.writeAll(cached_output);
                     return true;
                 }
@@ -84,7 +73,7 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
                 const output = try out.toOwnedSlice(allocator);
                 defer allocator.free(output);
 
-                try cache.storeCFamilyAutoOutput(options, signature, output);
+                try cache.storeAutoOutput(options, signature, output);
                 try stdout.writeAll(output);
                 return true;
             }
@@ -130,14 +119,27 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
             return true;
         },
         .python_auto => {
-            const pyproject_path = (try project_io.findParentFileAlloc(allocator, options.path, "pyproject.toml", 12)) orelse return true;
-            defer allocator.free(pyproject_path);
-            const pyproject_contents = try common.readFileAlloc(allocator, pyproject_path);
-            defer allocator.free(pyproject_contents);
-            try emit.writeDirectOutput(stdout, allocator, .{
-                .kind = .python_auto,
-                .path = pyproject_path,
-            }, pyproject_contents);
+            const result = try build_system.detect(allocator, .python_root, options.path, options.project_root);
+            defer build_system.freeOwnedResult(allocator, result);
+            if (try buildPythonAutoSignatureAlloc(allocator, result)) |signature| {
+                defer allocator.free(signature);
+                if (try cache.getAutoOutput(options, signature)) |cached_output| {
+                    try stdout.writeAll(cached_output);
+                    return true;
+                }
+
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(allocator);
+                try writePythonAutoOutput(out.writer(allocator), allocator, options);
+                const output = try out.toOwnedSlice(allocator);
+                defer allocator.free(output);
+
+                try cache.storeAutoOutput(options, signature, output);
+                try stdout.writeAll(output);
+                return true;
+            }
+
+            try writePythonAutoOutput(stdout, allocator, options);
             return true;
         },
         .cmake_auto => {
@@ -176,6 +178,38 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
             return true;
         },
         else => return false,
+    }
+}
+
+fn writeJVMAutoOutput(stdout: anytype, allocator: std.mem.Allocator, result: build_system.Result) !void {
+    const root = result.root orelse return;
+    const system = result.system orelse return;
+
+    if (std.mem.eql(u8, system, "maven")) {
+        const pom_path = try std.fs.path.join(allocator, &.{ root, "pom.xml" });
+        defer allocator.free(pom_path);
+        const pom_contents = try common.readFileAlloc(allocator, pom_path);
+        defer allocator.free(pom_contents);
+        try emit.writeDirectOutput(stdout, allocator, .{ .kind = .maven, .path = pom_path }, pom_contents);
+        return;
+    }
+
+    if (std.mem.eql(u8, system, "gradle")) {
+        const gradle_kts = try std.fs.path.join(allocator, &.{ root, "build.gradle.kts" });
+        defer allocator.free(gradle_kts);
+        const gradle_groovy = try std.fs.path.join(allocator, &.{ root, "build.gradle" });
+        defer allocator.free(gradle_groovy);
+
+        const build_file = if (project_io.pathExists(gradle_kts))
+            gradle_kts
+        else if (project_io.pathExists(gradle_groovy))
+            gradle_groovy
+        else
+            return;
+
+        const build_contents = try common.readFileAlloc(allocator, build_file);
+        defer allocator.free(build_contents);
+        try emit.writeDirectOutput(stdout, allocator, .{ .kind = .gradle, .path = build_file }, build_contents);
     }
 }
 
@@ -220,6 +254,35 @@ fn writeCFamilyAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options
     }
 }
 
+fn writePythonAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
+    const pyproject_path = (try project_io.findParentFileAlloc(allocator, options.path, "pyproject.toml", 12)) orelse return;
+    defer allocator.free(pyproject_path);
+    const pyproject_contents = try common.readFileAlloc(allocator, pyproject_path);
+    defer allocator.free(pyproject_contents);
+    try emit.writeDirectOutput(stdout, allocator, .{
+        .kind = .python_auto,
+        .path = pyproject_path,
+    }, pyproject_contents);
+}
+
+fn buildJVMAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
+    const root = result.root orelse return null;
+    const system = result.system orelse return null;
+
+    if (std.mem.eql(u8, system, "maven")) {
+        return try buildMarkerSignatureAlloc(allocator, root, &.{"pom.xml"});
+    }
+    if (std.mem.eql(u8, system, "gradle")) {
+        return try buildMarkerSignatureAlloc(
+            allocator,
+            root,
+            &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" },
+        );
+    }
+
+    return null;
+}
+
 fn buildCFamilyAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
     const root = result.root orelse return null;
     const system = result.system orelse return null;
@@ -239,6 +302,11 @@ fn buildCFamilyAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_sy
     }
 
     return null;
+}
+
+fn buildPythonAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
+    const root = result.root orelse return null;
+    return try buildMarkerSignatureAlloc(allocator, root, &.{ "pyproject.toml", "uv.lock" });
 }
 
 fn buildMarkerSignatureAlloc(
