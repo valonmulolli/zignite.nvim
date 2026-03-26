@@ -92,6 +92,23 @@ function M.attach(ctx, simulation)
 					end
 					return 1
 				end
+				if type(ctx.state.next_quickfix_backend_error) == "string" and ctx.state.next_quickfix_backend_error ~= "" then
+					local request_id = text:match("^@@ZQF_BEGIN%s+(%d+)%s+")
+					local error_message = ctx.state.next_quickfix_backend_error
+					ctx.state.next_quickfix_backend_error = nil
+					if request_id and job.opts and job.opts.on_stdout then
+						local response = {
+							"@@ZQF_RES_BEGIN " .. request_id,
+							"@@ZQF_RES_ERR " .. request_id .. " " .. error_message,
+							"@@ZQF_RES_END " .. request_id,
+						}
+						ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
+						vim.defer_fn(function()
+							job.opts.on_stdout(job_id, to_stdout_payload(response))
+						end, 10)
+					end
+					return 1
+				end
 
 				local response = simulation.parse_unified_daemon_request(text)
 				if response and job.opts and job.opts.on_stdout then
@@ -328,6 +345,26 @@ function M.attach(ctx, simulation)
 				end, 10)
 			end
 			return 1
+		end
+		if type(ctx.state.next_quickfix_backend_error) == "string" and ctx.state.next_quickfix_backend_error ~= "" then
+			local error_message = ctx.state.next_quickfix_backend_error
+			ctx.state.next_quickfix_backend_error = nil
+			if job.opts and job.opts.on_stdout and simulation.is_quickfix_daemon_cmd(job.cmd) then
+				local text = tostring(job.input or "")
+				local request_id = text:match("^@@ZQF_BEGIN%s+(%d+)%s+")
+				if request_id then
+					local response = {
+						"@@ZQF_RES_BEGIN " .. request_id,
+						"@@ZQF_RES_ERR " .. request_id .. " " .. error_message,
+						"@@ZQF_RES_END " .. request_id,
+					}
+					ctx.state.quickfix_backend_invocations = ctx.state.quickfix_backend_invocations + 1
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, response)
+					end, 10)
+					return 1
+				end
+			end
 		end
 
 		local lines = simulation.simulate_quickfix_backend(job.input, job.cmd)
