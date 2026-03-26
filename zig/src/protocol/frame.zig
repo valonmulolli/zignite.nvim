@@ -17,6 +17,27 @@ pub fn isFrameEndLine(line: []const u8, marker_name: []const u8, request_id: u64
     return parsed == request_id;
 }
 
+pub fn parseRequestId(line: []const u8, begin_marker: []const u8) ?u64 {
+    var it = std.mem.tokenizeScalar(u8, line, ' ');
+    const marker = it.next() orelse return null;
+    if (!std.mem.eql(u8, marker, begin_marker)) return null;
+    const raw_id = it.next() orelse return null;
+    return std.fmt.parseInt(u64, raw_id, 10) catch null;
+}
+
+pub fn writeErrorResponse(
+    writer: anytype,
+    response_begin: []const u8,
+    response_err: []const u8,
+    response_end: []const u8,
+    request_id: u64,
+    message: []const u8,
+) !void {
+    try writer.print("{s} {d}\n", .{ response_begin, request_id });
+    try writer.print("{s} {d} {s}\n", .{ response_err, request_id, message });
+    try writer.print("{s} {d}\n", .{ response_end, request_id });
+}
+
 pub fn readUntilEnd(
     allocator: std.mem.Allocator,
     reader: anytype,
@@ -79,6 +100,32 @@ test "isFrameEndLine validates marker and request id" {
     try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 18", "@@ZPRJ_REQ_END", 19));
     try std.testing.expect(!isFrameEndLine("@@ZDET_REQ_END 19", "@@ZPRJ_REQ_END", 19));
     try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 19 extra", "@@ZPRJ_REQ_END", 19));
+}
+
+test "parseRequestId extracts request id from begin frame" {
+    try std.testing.expectEqual(@as(?u64, 42), parseRequestId("@@ZQF_BEGIN 42 100 2048 1 50 0", "@@ZQF_BEGIN"));
+    try std.testing.expectEqual(@as(?u64, null), parseRequestId("@@ZQF_BEGIN nope 100", "@@ZQF_BEGIN"));
+    try std.testing.expectEqual(@as(?u64, null), parseRequestId("@@ZDET_REQ_BEGIN 42 cargo", "@@ZQF_BEGIN"));
+}
+
+test "writeErrorResponse emits protocol frame" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeErrorResponse(
+        out.writer(allocator),
+        "@@ZDET_RES_BEGIN",
+        "@@ZDET_RES_ERR",
+        "@@ZDET_RES_END",
+        7,
+        "InvalidDetectTool",
+    );
+
+    try std.testing.expectEqualStrings(
+        "@@ZDET_RES_BEGIN 7\n@@ZDET_RES_ERR 7 InvalidDetectTool\n@@ZDET_RES_END 7\n",
+        out.items,
+    );
 }
 
 test "readUntilEnd forwards lines until matching frame end" {

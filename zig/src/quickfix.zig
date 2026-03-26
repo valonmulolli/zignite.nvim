@@ -50,7 +50,13 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
         if (!std.mem.startsWith(u8, begin_line, DAEMON_REQ_BEGIN)) continue;
 
-        const header = parseDaemonBegin(begin_line) catch continue;
+        const header = parseDaemonBegin(begin_line) catch |err| {
+            if (frame.parseRequestId(begin_line, DAEMON_REQ_BEGIN)) |request_id| {
+                try writeDaemonResponse(stdout, request_id, "", err);
+                try stdout.flush();
+            }
+            continue;
+        };
         var payload: std.ArrayList(u8) = .empty;
         defer payload.deinit(allocator);
         var payload_writer = payload.writer(allocator);

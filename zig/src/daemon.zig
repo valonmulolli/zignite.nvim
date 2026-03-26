@@ -54,15 +54,47 @@ pub fn run(allocator: std.mem.Allocator) !void {
         if (line.len == 0) continue;
 
         if (std.mem.startsWith(u8, line, QUICKFIX_REQ_BEGIN)) {
-            try handleQuickfixFrame(allocator, reader, stdout, line);
+            handleQuickfixFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, QUICKFIX_REQ_BEGIN)) |request_id| {
+                    try quickfix.writeDaemonResponse(stdout, request_id, "", err);
+                    try stdout.flush();
+                }
+            };
             continue;
         }
         if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
-            try handleDetectFrame(allocator, reader, stdout, line);
+            handleDetectFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, DETECT_REQ_BEGIN)) |request_id| {
+                    try frame.writeErrorResponse(
+                        stdout,
+                        DETECT_RES_BEGIN,
+                        DETECT_RES_ERR,
+                        DETECT_RES_END,
+                        request_id,
+                        @errorName(err),
+                    );
+                    try stdout.flush();
+                }
+            };
             continue;
         }
         if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
-            try handleProjectFrame(allocator, reader, stdout, line);
+            handleProjectFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, PROJECT_REQ_BEGIN)) |request_id| {
+                    try frame.writeErrorResponse(
+                        stdout,
+                        PROJECT_RES_BEGIN,
+                        PROJECT_RES_ERR,
+                        PROJECT_RES_END,
+                        request_id,
+                        @errorName(err),
+                    );
+                    try stdout.flush();
+                }
+            };
             continue;
         }
     }

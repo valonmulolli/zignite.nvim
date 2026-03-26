@@ -71,7 +71,20 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
         if (!std.mem.startsWith(u8, begin_line, DETECT_DAEMON_REQ_BEGIN)) continue;
 
-        const header = parseDetectDaemonBegin(begin_line) catch continue;
+        const header = parseDetectDaemonBegin(begin_line) catch |err| {
+            if (frame.parseRequestId(begin_line, DETECT_DAEMON_REQ_BEGIN)) |request_id| {
+                try frame.writeErrorResponse(
+                    stdout,
+                    DETECT_DAEMON_RES_BEGIN,
+                    DETECT_DAEMON_RES_ERR,
+                    DETECT_DAEMON_RES_END,
+                    request_id,
+                    @errorName(err),
+                );
+                try stdout.flush();
+            }
+            continue;
+        };
         const completed = try frame.skipUntilEnd(
             allocator,
             reader,
