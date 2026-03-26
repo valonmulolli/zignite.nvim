@@ -21,8 +21,6 @@ const PROJECT_MAX_LINE = 16384;
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
 const QUICKFIX_REQ_END = "@@ZQF_END";
-const QUICKFIX_RES_BEGIN = "@@ZQF_RES_BEGIN";
-const QUICKFIX_RES_END = "@@ZQF_RES_END";
 const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
 
 const QuickfixHeader = struct {
@@ -91,30 +89,32 @@ fn handleQuickfixFrame(
         }
     };
     const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
-    const completed = try frame.readUntilEnd(
-        allocator,
-        reader,
-        QUICKFIX_MAX_LINE,
-        QUICKFIX_REQ_END,
-        header.request_id,
-        write_payload_line.onLine,
-    );
-    if (!completed) return error.UnexpectedEof;
+    var response_err: ?anyerror = null;
+    const completed = blk: {
+        const result = frame.readUntilEnd(
+            allocator,
+            reader,
+            QUICKFIX_MAX_LINE,
+            QUICKFIX_REQ_END,
+            header.request_id,
+            write_payload_line.onLine,
+        ) catch |err| {
+            response_err = err;
+            break :blk false;
+        };
+        break :blk result;
+    };
+    if (response_err == null and !completed) return error.UnexpectedEof;
 
     var out_buf: std.ArrayList(u8) = .empty;
     defer out_buf.deinit(allocator);
     const out_writer = out_buf.writer(allocator);
-    try quickfix.processQuickfixPayload(allocator, payload.items, header.options, false, out_writer);
-
-    try stdout.print("{s} {d}\n", .{ QUICKFIX_RES_BEGIN, header.request_id });
-    var split = std.mem.splitScalar(u8, out_buf.items, '\n');
-    while (split.next()) |line| {
-        if (line.len == 0) continue;
-        try stdout.writeByte('\t');
-        try stdout.writeAll(line);
-        try stdout.writeByte('\n');
+    if (response_err == null) {
+        quickfix.processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
+            response_err = err;
+        };
     }
-    try stdout.print("{s} {d}\n", .{ QUICKFIX_RES_END, header.request_id });
+    try quickfix.writeDaemonResponse(stdout, header.request_id, out_buf.items, response_err);
     try stdout.flush();
 }
 

@@ -461,6 +461,64 @@ local function test_quickfix_zig_fallback()
     print("✓ Quickfix zig fallback test passed")
 end
 
+-- Test worker-mode protocol errors fall back cleanly to Lua quickfix generation.
+local function test_quickfix_zig_protocol_error_fallback()
+    config.setup({
+        mode = "float",
+        quickfix = {
+            enabled = true,
+            processor = "zig",
+            max_lines = 2,
+            max_bytes = 1024,
+            strip_ansi = true,
+            strip_ansi_max_lines = 2,
+            parse_diagnostics = false,
+        },
+    })
+
+    vim.bo.filetype = "python"
+    local original_expand = vim.fn.expand
+    local original_line_count = vim.api.nvim_buf_line_count
+    local original_get_lines = vim.api.nvim_buf_get_lines
+    local test_lines = {
+        "line-1",
+        "\27[31merror-2\27[0m",
+        "\27[33merror-3\27[0m",
+    }
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/qf/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_line_count = function() return #test_lines end
+    vim.api.nvim_buf_get_lines = function(_, start_idx, _, _)
+        local out = {}
+        for i = start_idx + 1, #test_lines do
+            table.insert(out, test_lines[i])
+        end
+        return out
+    end
+
+    state.next_quickfix_backend_error = "QuickfixBoom"
+    state.next_exit_code = 1
+    init.run_code(0, "float")
+
+    assert(count_quickfix_daemon_jobs() > 0, "Worker quickfix path should still use the daemon")
+    assert(count_quickfix_backend_jobs() > 0, "Worker quickfix path should receive a backend response")
+    assert(#quickfix_results > 0, "Lua fallback should populate quickfix after protocol error")
+    local qf = quickfix_results[#quickfix_results]
+    assert(not qf.lines[1]:match("\27"), "Lua fallback should still strip ANSI codes")
+
+    state.next_exit_code = 0
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_line_count = original_line_count
+    vim.api.nvim_buf_get_lines = original_get_lines
+    reset_job_results()
+    reset_quickfix_results()
+
+    print("✓ Quickfix zig protocol error fallback test passed")
+end
+
 -- Test zig diagnostic parser canonicalizes common compiler formats.
 local function test_quickfix_zig_diagnostic_parser()
     config.setup({
@@ -523,4 +581,5 @@ test_quickfix_backend_availability_resets_on_setup()
 test_quickfix_zig_processor_keeps_tail_on_byte_cap()
 test_quickfix_auto_threshold_behavior()
 test_quickfix_zig_fallback()
+test_quickfix_zig_protocol_error_fallback()
 test_quickfix_zig_diagnostic_parser()

@@ -17,6 +17,7 @@ const DaemonRequestHeader = struct {
 const DAEMON_REQ_BEGIN = "@@ZQF_BEGIN";
 const DAEMON_REQ_END = "@@ZQF_END";
 const DAEMON_RES_BEGIN = "@@ZQF_RES_BEGIN";
+const DAEMON_RES_ERR = "@@ZQF_RES_ERR";
 const DAEMON_RES_END = "@@ZQF_RES_END";
 const DAEMON_MAX_LINE = 16 * 1024 * 1024;
 
@@ -63,31 +64,33 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             }
         };
         const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
-        const completed = try frame.readUntilEnd(
-            allocator,
-            reader,
-            DAEMON_MAX_LINE,
-            DAEMON_REQ_END,
-            header.request_id,
-            write_payload_line.onLine,
-        );
+        var response_err: ?anyerror = null;
+        const completed = blk: {
+            const result = frame.readUntilEnd(
+                allocator,
+                reader,
+                DAEMON_MAX_LINE,
+                DAEMON_REQ_END,
+                header.request_id,
+                write_payload_line.onLine,
+            ) catch |err| {
+                response_err = err;
+                break :blk false;
+            };
+            break :blk result;
+        };
 
-        if (!completed) break;
+        if (response_err == null and !completed) break;
 
         var out_buf: std.ArrayList(u8) = .empty;
         defer out_buf.deinit(allocator);
         const out_writer = out_buf.writer(allocator);
-        try processQuickfixPayload(allocator, payload.items, header.options, false, out_writer);
-
-        try stdout.print("{s} {d}\n", .{ DAEMON_RES_BEGIN, header.request_id });
-        var split = std.mem.splitScalar(u8, out_buf.items, '\n');
-        while (split.next()) |line| {
-            if (line.len == 0) continue;
-            try stdout.writeByte('\t');
-            try stdout.writeAll(line);
-            try stdout.writeByte('\n');
+        if (response_err == null) {
+            processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
+                response_err = err;
+            };
         }
-        try stdout.print("{s} {d}\n", .{ DAEMON_RES_END, header.request_id });
+        try writeDaemonResponse(stdout, header.request_id, out_buf.items, response_err);
         try stdout.flush();
     }
 }
@@ -147,6 +150,27 @@ pub fn processQuickfixPayload(
 
         if (tmp_line) |owned| allocator.free(owned);
     }
+}
+
+pub fn writeDaemonResponse(
+    writer: anytype,
+    request_id: u64,
+    body: []const u8,
+    response_err: ?anyerror,
+) !void {
+    try writer.print("{s} {d}\n", .{ DAEMON_RES_BEGIN, request_id });
+    if (response_err) |err| {
+        try writer.print("{s} {d} {s}\n", .{ DAEMON_RES_ERR, request_id, @errorName(err) });
+    } else {
+        var split = std.mem.splitScalar(u8, body, '\n');
+        while (split.next()) |line| {
+            if (line.len == 0) continue;
+            try writer.writeByte('\t');
+            try writer.writeAll(line);
+            try writer.writeByte('\n');
+        }
+    }
+    try writer.print("{s} {d}\n", .{ DAEMON_RES_END, request_id });
 }
 
 fn parseDaemonBegin(line: []const u8) !DaemonRequestHeader {
@@ -244,6 +268,19 @@ test "quickfix canonicalizes paren diagnostics" {
 
     try std.testing.expectEqualStrings(
         "src/main.c:7:2: missing semicolon\n",
+        out.items,
+    );
+}
+
+test "quickfix daemon response emits error frame" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try writeDaemonResponse(out.writer(allocator), 42, "", error.OutOfMemory);
+
+    try std.testing.expectEqualStrings(
+        "@@ZQF_RES_BEGIN 42\n@@ZQF_RES_ERR 42 OutOfMemory\n@@ZQF_RES_END 42\n",
         out.items,
     );
 }

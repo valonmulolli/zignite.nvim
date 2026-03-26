@@ -11,6 +11,7 @@ local project_root = bootstrap.setup()
 local state = {
 	next_exit_code = 0,
 	next_quickfix_backend_exit_code = 0,
+	next_quickfix_backend_error = nil,
 	next_detect_backend_exit_code = 0,
 	next_detect_backend_error = nil,
 	next_project_backend_error = nil,
@@ -100,6 +101,7 @@ local function reset_job_results()
 	state.project_backend_request_count = 0
 	state.next_detect_backend_error = nil
 	state.next_project_backend_error = nil
+	state.next_quickfix_backend_error = nil
 	state.next_project_backend_stdout_chunks = nil
 	state.jobstop_count = 0
 end
