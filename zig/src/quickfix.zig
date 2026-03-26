@@ -1,6 +1,7 @@
 const std = @import("std");
 const ansi = @import("quickfix/ansi.zig");
 const diagnostic = @import("quickfix/diagnostic.zig");
+const frame = @import("protocol/frame.zig");
 const tail = @import("quickfix/tail.zig");
 const types = @import("quickfix/types.zig");
 
@@ -43,7 +44,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
-        const begin_line = stripTrailingCR(begin_owned);
+        const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, DAEMON_REQ_BEGIN)) continue;
 
@@ -51,25 +52,24 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         var payload: std.ArrayList(u8) = .empty;
         defer payload.deinit(allocator);
         var payload_writer = payload.writer(allocator);
-        var completed = false;
+        const WritePayloadLine = struct {
+            payload_writer: *@TypeOf(payload.writer(allocator)),
 
-        while (true) {
-            const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DAEMON_MAX_LINE);
-            if (maybe_line == null) break;
-
-            const line_owned = maybe_line.?;
-            defer allocator.free(line_owned);
-            const line = stripTrailingCR(line_owned);
-
-            if (isDaemonEndLine(line, header.request_id)) {
-                completed = true;
-                break;
+            fn onLine(self: @This(), line: []const u8) !void {
+                const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
+                try self.payload_writer.writeAll(content);
+                try self.payload_writer.writeByte('\n');
             }
-
-            const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-            try payload_writer.writeAll(content);
-            try payload_writer.writeByte('\n');
-        }
+        };
+        const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
+        const completed = try frame.readUntilEnd(
+            allocator,
+            reader,
+            DAEMON_MAX_LINE,
+            DAEMON_REQ_END,
+            header.request_id,
+            write_payload_line.onLine,
+        );
 
         if (!completed) break;
 
@@ -173,30 +173,11 @@ fn parseDaemonBegin(line: []const u8) !DaemonRequestHeader {
     };
 }
 
-fn isDaemonEndLine(line: []const u8, request_id: u64) bool {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return false;
-    if (!std.mem.eql(u8, marker, DAEMON_REQ_END)) return false;
-
-    const raw_id = it.next() orelse return false;
-    if (it.next() != null) return false;
-    const parsed = std.fmt.parseInt(u64, raw_id, 10) catch return false;
-    return parsed == request_id;
-}
-
 fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
     var stdin_buffer: [4096]u8 = undefined;
     var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
     return try stdin_reader.interface.readAllAlloc(allocator, std.math.maxInt(usize));
 }
-
-fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
-}
-
 test "quickfix max_bytes keeps newest lines" {
     const allocator = std.testing.allocator;
     var out: std.ArrayList(u8) = .empty;

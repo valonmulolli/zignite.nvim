@@ -2,6 +2,7 @@ const std = @import("std");
 const parse = @import("detect/parse.zig");
 const template = @import("detect/template.zig");
 const types = @import("detect/types.zig");
+const frame = @import("protocol/frame.zig");
 
 pub const Tool = types.Tool;
 pub const Options = types.Options;
@@ -65,26 +66,18 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
-        const begin_line = parse.stripTrailingCR(begin_owned);
+        const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, DETECT_DAEMON_REQ_BEGIN)) continue;
 
         const header = parseDetectDaemonBegin(begin_line) catch continue;
-        var completed = false;
-
-        while (true) {
-            const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DETECT_DAEMON_MAX_LINE);
-            if (maybe_line == null) break;
-
-            const line_owned = maybe_line.?;
-            defer allocator.free(line_owned);
-            const line = parse.stripTrailingCR(line_owned);
-
-            if (isDetectDaemonEndLine(line, header.request_id)) {
-                completed = true;
-                break;
-            }
-        }
+        const completed = try frame.skipUntilEnd(
+            allocator,
+            reader,
+            DETECT_DAEMON_MAX_LINE,
+            DETECT_DAEMON_REQ_END,
+            header.request_id,
+        );
 
         if (!completed) break;
 
@@ -138,19 +131,4 @@ fn parseDetectDaemonBegin(line: []const u8) !DetectDaemonRequestHeader {
         .request_id = request_id,
         .tool = tool,
     };
-}
-
-fn isDetectDaemonEndLine(line: []const u8, request_id: u64) bool {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return false;
-    if (!std.mem.eql(u8, marker, DETECT_DAEMON_REQ_END)) {
-        return false;
-    }
-
-    const raw_id = it.next() orelse return false;
-    if (it.next() != null) {
-        return false;
-    }
-    const parsed = std.fmt.parseInt(u64, raw_id, 10) catch return false;
-    return parsed == request_id;
 }
