@@ -49,56 +49,68 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, DAEMON_REQ_BEGIN)) continue;
-
-        const header = parseDaemonBegin(begin_line) catch |err| {
-            if (frame.parseRequestId(begin_line, DAEMON_REQ_BEGIN)) |request_id| {
-                try writeDaemonResponse(stdout, request_id, "", err);
-                try stdout.flush();
-            }
-            continue;
+        handleDaemonFrame(allocator, reader, stdout, begin_line) catch |err| {
+            if (err == error.UnexpectedEof) break;
+            return err;
         };
-        var payload: std.ArrayList(u8) = .empty;
-        defer payload.deinit(allocator);
-        var payload_writer = payload.writer(allocator);
-        const WritePayloadLine = struct {
-            payload_writer: *@TypeOf(payload.writer(allocator)),
-
-            fn onLine(self: @This(), line: []const u8) !void {
-                const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-                try self.payload_writer.writeAll(content);
-                try self.payload_writer.writeByte('\n');
-            }
-        };
-        const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
-        var response_err: ?anyerror = null;
-        const completed = blk: {
-            const result = frame.readUntilEnd(
-                allocator,
-                reader,
-                DAEMON_MAX_LINE,
-                DAEMON_REQ_END,
-                header.request_id,
-                write_payload_line.onLine,
-            ) catch |err| {
-                response_err = err;
-                break :blk false;
-            };
-            break :blk result;
-        };
-
-        if (response_err == null and !completed) break;
-
-        var out_buf: std.ArrayList(u8) = .empty;
-        defer out_buf.deinit(allocator);
-        const out_writer = out_buf.writer(allocator);
-        if (response_err == null) {
-            processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
-                response_err = err;
-            };
-        }
-        try writeDaemonResponse(stdout, header.request_id, out_buf.items, response_err);
-        try stdout.flush();
     }
+}
+
+pub fn handleDaemonFrame(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    stdout: anytype,
+    begin_line: []const u8,
+) !void {
+    const header = parseDaemonBegin(begin_line) catch |err| {
+        if (frame.parseRequestId(begin_line, DAEMON_REQ_BEGIN)) |request_id| {
+            try writeDaemonResponse(stdout, request_id, "", err);
+            try stdout.flush();
+            return;
+        }
+        return err;
+    };
+    var payload: std.ArrayList(u8) = .empty;
+    defer payload.deinit(allocator);
+    var payload_writer = payload.writer(allocator);
+    const WritePayloadLine = struct {
+        payload_writer: *@TypeOf(payload.writer(allocator)),
+
+        fn onLine(self: @This(), line: []const u8) !void {
+            const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
+            try self.payload_writer.writeAll(content);
+            try self.payload_writer.writeByte('\n');
+        }
+    };
+    const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
+    var response_err: ?anyerror = null;
+    const completed = blk: {
+        const result = frame.readUntilEnd(
+            allocator,
+            reader,
+            DAEMON_MAX_LINE,
+            DAEMON_REQ_END,
+            header.request_id,
+            write_payload_line.onLine,
+        ) catch |err| {
+            response_err = err;
+            break :blk false;
+        };
+        break :blk result;
+    };
+
+    if (response_err == null and !completed) return error.UnexpectedEof;
+
+    var out_buf: std.ArrayList(u8) = .empty;
+    defer out_buf.deinit(allocator);
+    const out_writer = out_buf.writer(allocator);
+    if (response_err == null) {
+        processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
+            response_err = err;
+        };
+    }
+    try writeDaemonResponse(stdout, header.request_id, out_buf.items, response_err);
+    try stdout.flush();
 }
 
 pub fn processQuickfixPayload(
