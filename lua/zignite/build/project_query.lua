@@ -166,48 +166,30 @@ local function decode_backend_project_result(lines)
 	return result
 end
 
----@param root string
----@return string
-local function c_family_project_mtime_key(root)
-	return table.concat({
-		"Makefile:" .. systems.detect_file_signature(vim.fs.joinpath(root, "Makefile")),
-		"CMakeLists.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "CMakeLists.txt")),
-		"meson.build:" .. systems.detect_file_signature(vim.fs.joinpath(root, "meson.build")),
-		"build/CMakeCache.txt:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "CMakeCache.txt")),
-		"build/build.ninja:" .. systems.detect_file_signature(vim.fs.joinpath(root, "build", "build.ninja")),
-		"build/meson-private/coredata.dat:"
-			.. systems.detect_file_signature(vim.fs.joinpath(root, "build", "meson-private", "coredata.dat")),
-	}, "|")
-end
-
 ---@param filepath string
----@param root string
----@return table|nil, string, string
-local function get_c_family_cached_entry(filepath, root)
+---@return table|nil, string
+local function get_c_family_cached_entry(filepath)
 	local cache_key = normalize_path(filepath)
-	local mtime_key = c_family_project_mtime_key(root)
 	local cached = state.get_bounded_cache_entry(
 		state.c_family_project_cache,
 		state.c_family_project_cache_order,
 		cache_key
 	)
-	return cached, cache_key, mtime_key
+	return cached, cache_key
 end
 
 ---@param cache_key string
----@param mtime_key string
 ---@param system string|nil
 ---@param root string
 ---@param commands table<string, string>
 ---@return nil
-local function store_c_family_cached_entry(cache_key, mtime_key, system, root, commands)
+local function store_c_family_cached_entry(cache_key, system, root, commands)
 	state.set_bounded_cache_entry(
 		state.c_family_project_cache,
 		state.c_family_project_cache_order,
 		state.C_FAMILY_PROJECT_CACHE_MAX,
 		cache_key,
 		{
-			mtime_key = mtime_key,
 			system = system,
 			root = root,
 			detect_flag = system == "make" and "c_cpp_make" or nil,
@@ -411,8 +393,8 @@ function M.detect_c_family_build_result(filepath)
 	end
 
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
-	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
-	if cached and cached.mtime_key == mtime_key then
+	local cached, cache_key = get_c_family_cached_entry(filepath)
+	if cached then
 		if type(cached.system) ~= "string" or cached.system == "" then
 			return nil
 		end
@@ -436,7 +418,7 @@ function M.detect_c_family_build_result(filepath)
 		decoded.root = local_root or decoded.root or root
 	end
 	local detect_flag = system == "make" and "c_cpp_make" or nil
-	store_c_family_cached_entry(cache_key, mtime_key, system, decoded.root or root, decoded.commands)
+	store_c_family_cached_entry(cache_key, system, decoded.root or root, decoded.commands)
 	if type(system) ~= "string" or system == "" then
 		return nil
 	end
@@ -470,8 +452,8 @@ function M.detect_c_family_build_result_cached(filepath)
 	end
 
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
-	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
-	if cached and cached.mtime_key == mtime_key and type(cached.system) == "string" and cached.system ~= "" then
+	local cached, cache_key = get_c_family_cached_entry(filepath)
+	if cached and type(cached.system) == "string" and cached.system ~= "" then
 		return {
 			system = cached.system,
 			root = cached.root,
@@ -491,7 +473,7 @@ function M.detect_c_family_build_result_cached(filepath)
 	then
 		local warmed_root = warmed_system.root or root
 		local warmed_commands = state.copy_string_map(warmed_system.commands)
-		store_c_family_cached_entry(cache_key, mtime_key, warmed_system.system, warmed_root, warmed_commands)
+		store_c_family_cached_entry(cache_key, warmed_system.system, warmed_root, warmed_commands)
 		return {
 			system = warmed_system.system,
 			root = warmed_root,
@@ -523,11 +505,7 @@ function M.prime_c_family_project_commands_async(filepath, on_done)
 	end
 
 	local root = local_root or systems.resolve_project_root_for_detection(filepath)
-	local cached, cache_key, mtime_key = get_c_family_cached_entry(filepath, root)
-	if cached and cached.mtime_key == mtime_key then
-		vim.schedule(on_done)
-		return true
-	end
+	local _, cache_key = get_c_family_cached_entry(filepath)
 
 	return detect_backend.parse_project_lines_async("c-family-auto", filepath, {
 		"--project-root=" .. root,
@@ -539,7 +517,7 @@ function M.prime_c_family_project_commands_async(filepath, on_done)
 			decoded.system = local_system
 			decoded.root = local_root or decoded.root or root
 		end
-		store_c_family_cached_entry(cache_key, mtime_key, system, decoded.root or root, decoded.commands or {})
+		store_c_family_cached_entry(cache_key, system, decoded.root or root, decoded.commands or {})
 		on_done()
 	end)
 end
