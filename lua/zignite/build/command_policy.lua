@@ -415,20 +415,6 @@ end
 
 ---@param filetype string
 ---@param filepath string
----@return table<string, string>
-function M.get_configured_build_commands(filetype, filepath)
-	return get_configured_build_commands_internal(filetype, filepath, false)
-end
-
----@param filetype string
----@param filepath string
----@return table<string, string>
-function M.get_configured_build_commands_cached(filetype, filepath)
-	return get_configured_build_commands_internal(filetype, filepath, true)
-end
-
----@param filetype string
----@param filepath string
 ---@param detected table<string, string>|nil
 ---@return table<string, string>
 function M.merge_build_commands(filetype, filepath, detected)

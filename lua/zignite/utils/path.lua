@@ -30,25 +30,4 @@ function M.read_text_file(path)
 	return table.concat(lines, "\n")
 end
 
----@param payload string
----@return table|nil
-function M.decode_json_payload(payload)
-	if type(payload) ~= "string" or payload == "" then
-		return nil
-	end
-	if vim.json and type(vim.json.decode) == "function" then
-		local ok, decoded = pcall(vim.json.decode, payload)
-		if ok then
-			return decoded
-		end
-	end
-	if vim.fn and type(vim.fn.json_decode) == "function" then
-		local ok, decoded = pcall(vim.fn.json_decode, payload)
-		if ok then
-			return decoded
-		end
-	end
-	return nil
-end
-
 return M

@@ -253,13 +253,6 @@ function M.parse_project_lines_async(kind, path, extra_args, on_done)
 	return project_client.async_request(params, on_done) or project_client.once_request_async(params, on_done)
 end
 
----@param kind string
----@param path string
----@return string[]|nil
-function M.parse_project_names_once(kind, path)
-	return M.parse_project_lines_once(kind, path, nil)
-end
-
 ---@return nil
 function M.reset()
 	detect_client.reset()
