@@ -5,6 +5,10 @@
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 -- luacheck: globals make_expand_override with_overrides
 
+local build = require("zignite.build.runtime_lookup")
+local build_detect = require("zignite.build.detect")
+local project_utils = require("zignite.utils.project")
+
 local function make_filereadable_override(readable_paths)
     local original_filereadable = vim.fn.filereadable
     local readable = {}
@@ -209,9 +213,8 @@ end
 local function test_uv_python_runner_uses_warmed_system_cache()
 	config.setup({ mode = "float" })
 
-	local build = require("zignite.build")
-	local build_state = require("zignite.build.state")
-	local utils_module = require("zignite.utils")
+		local build_state = require("zignite.build.state")
+		build_detect.reset()
 	build.reset()
 
 	build_state.set_bounded_cache_entry(
@@ -236,7 +239,7 @@ local function test_uv_python_runner_uses_warmed_system_cache()
 	reset_job_results()
 	with_file_context("python", "/tmp/warmpy/main.py", {
 		{
-			tbl = utils_module,
+			tbl = project_utils,
 			key = "get_project_root",
 			value = function(path)
 				if path == "/tmp/warmpy/main.py" then
@@ -262,6 +265,7 @@ local function test_uv_python_runner_uses_warmed_system_cache()
 		"warmed Zig python-root cache should drive uv Python runner selection"
 	)
 	assert(command:match("%-%-argv"), "warmed Zig Python runner should stay in argv mode")
+	build_detect.reset()
 	build.reset()
 	reset_job_results()
 
@@ -272,8 +276,7 @@ end
 local function test_get_command_avoids_eager_project_resolution_for_filetype_runner()
     config.setup({ mode = "float" })
 
-    local build = require("zignite.build")
-    local original_get_preferred_project_command = build.get_preferred_project_command
+        local original_get_preferred_project_command = build.get_preferred_project_command
     local calls = 0
 
     build.get_preferred_project_command = function(...)

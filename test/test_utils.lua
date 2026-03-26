@@ -68,7 +68,14 @@ _G.vim = {
     end
 }
 
-local utils = require('zignite.utils')
+local command_utils = require("zignite.utils.command")
+local project_utils = require("zignite.utils.project")
+local utils = {
+    substitute_variables = command_utils.substitute_variables,
+    normalize_command = command_utils.normalize_command,
+    detect_project = project_utils.detect_project,
+    clear_project_cache = project_utils.clear_project_cache,
+}
 
 -- Test variable substitution
 local function test_substitute_variables()

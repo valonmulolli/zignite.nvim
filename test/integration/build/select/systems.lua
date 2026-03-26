@@ -5,6 +5,9 @@
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 -- luacheck: ignore 631
 
+local build = require("zignite.build.runtime_lookup")
+local build_detect = require("zignite.build.detect")
+
 ---@param cmd string[]
 ---@param prefix string
 ---@return string|nil
@@ -528,13 +531,13 @@ end
 
 ---@return nil
 local function test_cpp_cmake_target_cache_is_file_specific()
-    local build = require("zignite.build")
-    local original_expand = vim.fn.expand
+        local original_expand = vim.fn.expand
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
     init.setup({})
-    build.reset()
+    build_detect.reset()
+	build.reset()
     vim.bo.filetype = "cpp"
 
     vim.fn.expand = function(expr)
@@ -613,13 +616,13 @@ end
 
 ---@return nil
 local function test_cpp_meson_target_cache_is_file_specific()
-    local build = require("zignite.build")
-    local original_expand = vim.fn.expand
+        local original_expand = vim.fn.expand
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
     init.setup({})
-    build.reset()
+    build_detect.reset()
+	build.reset()
     vim.bo.filetype = "cpp"
 
     vim.fn.expand = function(expr)

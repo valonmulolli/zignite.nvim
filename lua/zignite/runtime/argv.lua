@@ -1,5 +1,5 @@
 local state = require("zignite.runtime.state")
-local utils = require("zignite.utils")
+local command_utils = require("zignite.utils.command")
 
 ---@type table
 local M = {}
@@ -150,7 +150,7 @@ function M.command_to_argv(command_template, filepath)
 		return nil
 	end
 
-	local expanded_command = utils.substitute_variables_raw(command_template, filepath)
+	local expanded_command = command_utils.substitute_variables_raw(command_template, filepath)
 	if has_unresolved_placeholders(expanded_command) then
 		state.set_argv_cache(key, { ok = false })
 		return nil
