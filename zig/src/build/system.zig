@@ -1,9 +1,5 @@
 const std = @import("std");
-const bazel = @import("system/bazel.zig");
-const c_family = @import("system/c_family.zig");
-const jvm = @import("system/jvm.zig");
-const node = @import("system/node.zig");
-const python = @import("system/python.zig");
+const cache = @import("system/cache.zig");
 const types = @import("system/types.zig");
 
 pub const Query = types.Query;
@@ -18,13 +14,7 @@ pub fn detect(
     path: []const u8,
     project_root: ?[]const u8,
 ) !Result {
-    return switch (query) {
-        .c_family => try c_family.detect(allocator, path, project_root),
-        .bazel_root => try bazel.detect(allocator, path, project_root),
-        .jvm_root => try jvm.detect(allocator, path, project_root),
-        .node_root => try node.detect(allocator, path, project_root),
-        .python_root => try python.detect(allocator, path, project_root),
-    };
+    return try cache.detect(allocator, query, path, project_root);
 }
 
 fn findCommand(commands: []const CommandEntry, name: []const u8) ?[]const u8 {
