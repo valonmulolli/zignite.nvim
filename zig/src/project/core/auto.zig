@@ -1,5 +1,6 @@
 const std = @import("std");
 const build_system = @import("../../build/system.zig");
+const cache = @import("cache.zig");
 const common = @import("common.zig");
 const emit = @import("emit.zig");
 const project_io = @import("io.zig");
@@ -69,47 +70,26 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
         .c_family_auto => {
             const result = try build_system.detect(allocator, .c_family, options.path, options.project_root);
             defer build_system.freeOwnedResult(allocator, result);
+            if (try buildCFamilyAutoSignatureAlloc(allocator, result)) |signature| {
+                defer allocator.free(signature);
 
-            try writeSystemResult(stdout, result);
-            const system = result.system orelse return true;
+                if (try cache.getCFamilyAutoOutput(options, signature)) |cached_output| {
+                    try stdout.writeAll(cached_output);
+                    return true;
+                }
 
-            if (std.mem.eql(u8, system, "make")) {
-                const auto_contents = try project_io.readProjectFile(allocator, .make_auto, options.path);
-                defer allocator.free(auto_contents);
-                try emit.writeDirectOutput(stdout, allocator, .{
-                    .kind = .make_auto,
-                    .path = options.path,
-                    .project_root = result.root,
-                }, auto_contents);
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(allocator);
+                try writeCFamilyAutoOutput(out.writer(allocator), allocator, options, result);
+                const output = try out.toOwnedSlice(allocator);
+                defer allocator.free(output);
+
+                try cache.storeCFamilyAutoOutput(options, signature, output);
+                try stdout.writeAll(output);
                 return true;
             }
 
-            if (std.mem.eql(u8, system, "cmake")) {
-                const cmake_path = (try project_io.findParentFileAlloc(allocator, options.path, "CMakeLists.txt", 12)) orelse return true;
-                defer allocator.free(cmake_path);
-                const cmake_contents = try common.readFileAlloc(allocator, cmake_path);
-                defer allocator.free(cmake_contents);
-                try emit.writeDirectOutput(stdout, allocator, .{
-                    .kind = .cmake,
-                    .path = cmake_path,
-                    .match_path = options.match_path orelse options.path,
-                }, cmake_contents);
-                return true;
-            }
-
-            if (std.mem.eql(u8, system, "meson")) {
-                const meson_path = (try project_io.findParentFileAlloc(allocator, options.path, "meson.build", 12)) orelse return true;
-                defer allocator.free(meson_path);
-                const meson_contents = try common.readFileAlloc(allocator, meson_path);
-                defer allocator.free(meson_contents);
-                try emit.writeDirectOutput(stdout, allocator, .{
-                    .kind = .meson,
-                    .path = meson_path,
-                    .match_path = options.match_path orelse options.path,
-                }, meson_contents);
-                return true;
-            }
-
+            try writeCFamilyAutoOutput(stdout, allocator, options, result);
             return true;
         },
         .cargo_auto => {
@@ -197,6 +177,108 @@ pub fn writeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
         },
         else => return false,
     }
+}
+
+fn writeCFamilyAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, result: build_system.Result) !void {
+    try writeSystemResult(stdout, result);
+    const system = result.system orelse return;
+
+    if (std.mem.eql(u8, system, "make")) {
+        const auto_contents = try project_io.readProjectFile(allocator, .make_auto, options.path);
+        defer allocator.free(auto_contents);
+        try emit.writeDirectOutput(stdout, allocator, .{
+            .kind = .make_auto,
+            .path = options.path,
+            .project_root = result.root,
+        }, auto_contents);
+        return;
+    }
+
+    if (std.mem.eql(u8, system, "cmake")) {
+        const cmake_path = (try project_io.findParentFileAlloc(allocator, options.path, "CMakeLists.txt", 12)) orelse return;
+        defer allocator.free(cmake_path);
+        const cmake_contents = try common.readFileAlloc(allocator, cmake_path);
+        defer allocator.free(cmake_contents);
+        try emit.writeDirectOutput(stdout, allocator, .{
+            .kind = .cmake,
+            .path = cmake_path,
+            .match_path = options.match_path orelse options.path,
+        }, cmake_contents);
+        return;
+    }
+
+    if (std.mem.eql(u8, system, "meson")) {
+        const meson_path = (try project_io.findParentFileAlloc(allocator, options.path, "meson.build", 12)) orelse return;
+        defer allocator.free(meson_path);
+        const meson_contents = try common.readFileAlloc(allocator, meson_path);
+        defer allocator.free(meson_contents);
+        try emit.writeDirectOutput(stdout, allocator, .{
+            .kind = .meson,
+            .path = meson_path,
+            .match_path = options.match_path orelse options.path,
+        }, meson_contents);
+    }
+}
+
+fn buildCFamilyAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
+    const root = result.root orelse return null;
+    const system = result.system orelse return null;
+
+    if (std.mem.eql(u8, system, "make")) {
+        return try buildMarkerSignatureAlloc(allocator, root, &.{"Makefile"});
+    }
+    if (std.mem.eql(u8, system, "cmake")) {
+        return try buildMarkerSignatureAlloc(allocator, root, &.{ "CMakeLists.txt", "build/CMakeCache.txt" });
+    }
+    if (std.mem.eql(u8, system, "meson")) {
+        return try buildMarkerSignatureAlloc(
+            allocator,
+            root,
+            &.{ "meson.build", "build/build.ninja", "build/meson-private/coredata.dat" },
+        );
+    }
+
+    return null;
+}
+
+fn buildMarkerSignatureAlloc(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    markers: []const []const u8,
+) ![]u8 {
+    var signature: std.ArrayList(u8) = .empty;
+    errdefer signature.deinit(allocator);
+
+    for (markers, 0..) |marker, index| {
+        if (index > 0) try signature.append(allocator, '|');
+        try signature.appendSlice(allocator, marker);
+        try signature.append(allocator, ':');
+
+        const file_path = try std.fs.path.join(allocator, &.{ root, marker });
+        defer allocator.free(file_path);
+
+        const mtime_key = try fileMtimeKeyAlloc(allocator, file_path);
+        defer if (mtime_key) |key| allocator.free(key);
+
+        if (mtime_key) |key| {
+            try signature.appendSlice(allocator, key);
+        } else {
+            try signature.appendSlice(allocator, "missing");
+        }
+    }
+
+    return try signature.toOwnedSlice(allocator);
+}
+
+fn fileMtimeKeyAlloc(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+    const file = if (std.fs.path.isAbsolute(path))
+        std.fs.openFileAbsolute(path, .{}) catch return null
+    else
+        std.fs.cwd().openFile(path, .{}) catch return null;
+    defer file.close();
+
+    const stat = try file.stat();
+    return try std.fmt.allocPrint(allocator, "{d}:{d}", .{ stat.size, stat.mtime });
 }
 
 test "writeAutoOutput emits cargo-auto records from source path" {
@@ -318,6 +400,47 @@ test "writeAutoOutput emits jvm-auto records for Gradle projects" {
 
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tgradle-build\t./gradlew build\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\t./gradlew build\n") != null);
+}
+
+test "writeAutoOutput refreshes cached c-family-auto output after Makefile changes" {
+    const allocator = std.testing.allocator;
+    cache.resetForTests();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "Makefile", .data = "run:\n\t@echo run\n" });
+
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    var first: std.ArrayList(u8) = .empty;
+    defer first.deinit(allocator);
+
+    try std.testing.expect(try writeAutoOutput(first.writer(allocator), allocator, .{
+        .kind = .c_family_auto,
+        .path = filepath,
+        .project_root = root,
+    }));
+    try std.testing.expect(std.mem.indexOf(u8, first.items, "COMMAND\trun\tmake run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first.items, "COMMAND\ttest\tmake test\n") == null);
+
+    std.time.sleep(2 * std.time.ns_per_ms);
+    try tmp.dir.writeFile(.{ .sub_path = "Makefile", .data = "run:\n\t@echo run\ntest:\n\t@echo test\n" });
+
+    var second: std.ArrayList(u8) = .empty;
+    defer second.deinit(allocator);
+
+    try std.testing.expect(try writeAutoOutput(second.writer(allocator), allocator, .{
+        .kind = .c_family_auto,
+        .path = filepath,
+        .project_root = root,
+    }));
+    try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\trun\tmake run\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second.items, "COMMAND\ttest\tmake test\n") != null);
 }
 
 test "writeAutoOutput emits c-family auto commands for nested cmake source" {
