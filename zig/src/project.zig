@@ -1,5 +1,6 @@
 const std = @import("std");
 const build_system = @import("build/system.zig");
+const frame = @import("protocol/frame.zig");
 const project_io = @import("project/core/io.zig");
 const project_output = @import("project/core/output.zig");
 const types = @import("project/core/types.zig");
@@ -92,7 +93,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         if (maybe_begin == null) break;
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
-        const begin_line = stripTrailingCR(begin_owned);
+        const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, PROJECT_DAEMON_REQ_BEGIN)) {
             continue;
@@ -105,25 +106,30 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             request_args.deinit(allocator);
         }
 
-        var completed = false;
-        while (true) {
-            const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', PROJECT_DAEMON_MAX_LINE);
-            if (maybe_line == null) break;
-            const line_owned = maybe_line.?;
-            defer allocator.free(line_owned);
-            const line = stripTrailingCR(line_owned);
+        const ParseArgsLine = struct {
+            allocator: std.mem.Allocator,
+            request_args: *std.ArrayList([]u8),
 
-            if (isProjectDaemonEndLine(line, header.request_id)) {
-                completed = true;
-                break;
+            fn onLine(self: @This(), line: []const u8) !void {
+                if (line.len > 0 and line[0] == '\t') {
+                    try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line[1..]));
+                } else if (line.len > 0) {
+                    try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line));
+                }
             }
-
-            if (line.len > 0 and line[0] == '\t') {
-                try request_args.append(allocator, try allocator.dupe(u8, line[1..]));
-            } else if (line.len > 0) {
-                try request_args.append(allocator, try allocator.dupe(u8, line));
-            }
-        }
+        };
+        const parse_args_line = ParseArgsLine{
+            .allocator = allocator,
+            .request_args = &request_args,
+        };
+        const completed = try frame.readUntilEnd(
+            allocator,
+            reader,
+            PROJECT_DAEMON_MAX_LINE,
+            PROJECT_DAEMON_REQ_END,
+            header.request_id,
+            parse_args_line.onLine,
+        );
 
         if (!completed) break;
 
@@ -188,26 +194,4 @@ fn parseProjectDaemonBegin(line: []const u8) !ProjectDaemonRequestHeader {
     }
 
     return .{ .request_id = request_id };
-}
-
-fn isProjectDaemonEndLine(line: []const u8, request_id: u64) bool {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return false;
-    if (!std.mem.eql(u8, marker, PROJECT_DAEMON_REQ_END)) {
-        return false;
-    }
-
-    const raw_id = it.next() orelse return false;
-    if (it.next() != null) {
-        return false;
-    }
-    const parsed = std.fmt.parseInt(u64, raw_id, 10) catch return false;
-    return parsed == request_id;
-}
-
-fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
 }

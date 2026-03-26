@@ -1,5 +1,6 @@
 const std = @import("std");
 const detect = @import("detect.zig");
+const frame = @import("protocol/frame.zig");
 const project = @import("project.zig");
 const quickfix = @import("quickfix.zig");
 
@@ -50,7 +51,7 @@ pub fn run(allocator: std.mem.Allocator) !void {
         if (maybe_line == null) break;
         const line_owned = maybe_line.?;
         defer allocator.free(line_owned);
-        const line = stripTrailingCR(line_owned);
+        const line = frame.stripTrailingCR(line_owned);
         if (line.len == 0) continue;
 
         if (std.mem.startsWith(u8, line, QUICKFIX_REQ_BEGIN)) {
@@ -79,19 +80,25 @@ fn handleQuickfixFrame(
     defer payload.deinit(allocator);
     var payload_writer = payload.writer(allocator);
 
-    while (true) {
-        const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', QUICKFIX_MAX_LINE);
-        if (maybe_line == null) return error.UnexpectedEof;
-        const line_owned = maybe_line.?;
-        defer allocator.free(line_owned);
-        const line = stripTrailingCR(line_owned);
+    const WritePayloadLine = struct {
+        payload_writer: *@TypeOf(payload.writer(allocator)),
 
-        if (isFrameEndLine(line, QUICKFIX_REQ_END, header.request_id)) break;
-
-        const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-        try payload_writer.writeAll(content);
-        try payload_writer.writeByte('\n');
-    }
+        fn onLine(self: @This(), line: []const u8) !void {
+            const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
+            try self.payload_writer.writeAll(content);
+            try self.payload_writer.writeByte('\n');
+        }
+    };
+    const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
+    const completed = try frame.readUntilEnd(
+        allocator,
+        reader,
+        QUICKFIX_MAX_LINE,
+        QUICKFIX_REQ_END,
+        header.request_id,
+        write_payload_line.onLine,
+    );
+    if (!completed) return error.UnexpectedEof;
 
     var out_buf: std.ArrayList(u8) = .empty;
     defer out_buf.deinit(allocator);
@@ -117,14 +124,14 @@ fn handleDetectFrame(
     begin_line: []const u8,
 ) !void {
     const header = try parseDetectBegin(begin_line);
-    while (true) {
-        const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DETECT_MAX_LINE);
-        if (maybe_line == null) return error.UnexpectedEof;
-        const line_owned = maybe_line.?;
-        defer allocator.free(line_owned);
-        const line = stripTrailingCR(line_owned);
-        if (isFrameEndLine(line, DETECT_REQ_END, header.request_id)) break;
-    }
+    const completed = try frame.skipUntilEnd(
+        allocator,
+        reader,
+        DETECT_MAX_LINE,
+        DETECT_REQ_END,
+        header.request_id,
+    );
+    if (!completed) return error.UnexpectedEof;
 
     try stdout.print("{s} {d}\n", .{ DETECT_RES_BEGIN, header.request_id });
     const detect_result = detect.detectToolCommands(allocator, header.tool);
@@ -155,21 +162,31 @@ fn handleProjectFrame(
         request_args.deinit(allocator);
     }
 
-    while (true) {
-        const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', PROJECT_MAX_LINE);
-        if (maybe_line == null) return error.UnexpectedEof;
-        const line_owned = maybe_line.?;
-        defer allocator.free(line_owned);
-        const line = stripTrailingCR(line_owned);
+    const ParseArgsLine = struct {
+        allocator: std.mem.Allocator,
+        request_args: *std.ArrayList([]u8),
 
-        if (isFrameEndLine(line, PROJECT_REQ_END, header.request_id)) break;
-
-        if (line.len > 0 and line[0] == '\t') {
-            try request_args.append(allocator, try allocator.dupe(u8, line[1..]));
-        } else if (line.len > 0) {
-            try request_args.append(allocator, try allocator.dupe(u8, line));
+        fn onLine(self: @This(), line: []const u8) !void {
+            if (line.len > 0 and line[0] == '\t') {
+                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line[1..]));
+            } else if (line.len > 0) {
+                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line));
+            }
         }
-    }
+    };
+    const parse_args_line = ParseArgsLine{
+        .allocator = allocator,
+        .request_args = &request_args,
+    };
+    const completed = try frame.readUntilEnd(
+        allocator,
+        reader,
+        PROJECT_MAX_LINE,
+        PROJECT_REQ_END,
+        header.request_id,
+        parse_args_line.onLine,
+    );
+    if (!completed) return error.UnexpectedEof;
 
     try stdout.print("{s} {d}\n", .{ PROJECT_RES_BEGIN, header.request_id });
     const options = project.parseArgs(request_args.items);
@@ -236,23 +253,6 @@ fn parseProjectBegin(line: []const u8) !ProjectHeader {
     return .{ .request_id = request_id };
 }
 
-fn isFrameEndLine(line: []const u8, marker_name: []const u8, request_id: u64) bool {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return false;
-    if (!std.mem.eql(u8, marker, marker_name)) return false;
-    const raw_id = it.next() orelse return false;
-    if (it.next() != null) return false;
-    const parsed = std.fmt.parseInt(u64, raw_id, 10) catch return false;
-    return parsed == request_id;
-}
-
-fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
-}
-
 fn parseNonZeroInt(value: []const u8) !usize {
     const parsed = try std.fmt.parseInt(usize, value, 10);
     return if (parsed == 0) 1 else parsed;
@@ -289,7 +289,7 @@ test "parseProjectBegin decodes project request header" {
 }
 
 test "isFrameEndLine validates marker and request id" {
-    try std.testing.expect(isFrameEndLine("@@ZPRJ_REQ_END 19", PROJECT_REQ_END, 19));
-    try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 18", PROJECT_REQ_END, 19));
-    try std.testing.expect(!isFrameEndLine("@@ZDET_REQ_END 19", PROJECT_REQ_END, 19));
+    try std.testing.expect(frame.isFrameEndLine("@@ZPRJ_REQ_END 19", PROJECT_REQ_END, 19));
+    try std.testing.expect(!frame.isFrameEndLine("@@ZPRJ_REQ_END 18", PROJECT_REQ_END, 19));
+    try std.testing.expect(!frame.isFrameEndLine("@@ZDET_REQ_END 19", PROJECT_REQ_END, 19));
 }
