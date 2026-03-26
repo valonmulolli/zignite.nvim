@@ -145,6 +145,9 @@ end
 ---@param result table|nil
 ---@return nil
 local function set_cached_system_result(query, filepath, project_root, result)
+	if type(result) ~= "table" or next(result) == nil then
+		return
+	end
 	local updated_at_ms = state.now_ms()
 	local copied_result = copy_system_result(result)
 
