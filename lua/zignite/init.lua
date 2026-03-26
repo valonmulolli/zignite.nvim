@@ -1,6 +1,6 @@
 local build = require("zignite.build.runtime_lookup")
-local build_detect = require("zignite.build.detect")
-local build_picker = require("zignite.build.picker")
+local tooling_query = require("zignite.build.tooling.query")
+local picker_controller = require("zignite.build.picker.controller")
 local build_systems = require("zignite.build.system_runtime")
 local config = require("zignite.config")
 local runtime_argv = require("zignite.runtime.argv")
@@ -529,7 +529,7 @@ function M.select_build_command(mode)
 	ensure_config()
 
 	local filepath, filetype = resolve_current_source_context()
-	build_picker.open({
+	picker_controller.open({
 		filetype = filetype,
 		filepath = filepath,
 		mode = mode,
@@ -591,7 +591,7 @@ end
 ---@return nil
 function M.setup(opts)
 	runtime_state.reset()
-	build_detect.reset()
+	tooling_query.reset()
 	build.reset()
 	ui_windows.reset()
 	config.setup(opts)

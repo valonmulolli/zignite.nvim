@@ -63,8 +63,8 @@ end
 ---@param root string
 ---@return table<string, boolean>
 local function detect_pyproject_tools_root_with_backend(root)
-	local detect_backend = require("zignite.build.detect.backend")
-	return detect_pyproject_tools_from_lines(detect_backend.parse_project_lines_once("pyproject", pyproject_path(root)))
+	local tooling_transport = require("zignite.build.tooling.transport")
+	return detect_pyproject_tools_from_lines(tooling_transport.parse_project_lines_once("pyproject", pyproject_path(root)))
 end
 
 ---@param root string

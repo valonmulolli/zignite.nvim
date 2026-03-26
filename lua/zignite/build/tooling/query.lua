@@ -1,4 +1,4 @@
-local backend = require("zignite.build.detect.backend")
+local transport = require("zignite.build.tooling.transport")
 local cache_utils = require("zignite.utils.cache")
 
 ---@type table
@@ -29,30 +29,30 @@ local detect_tool_configs = {
 ---@param tool string
 ---@return table<string, string>|nil
 local function detect_commands_with_zig_backend(tool)
-	local commands = backend.detect_with_zig_worker(tool)
+	local commands = transport.detect_with_zig_worker(tool)
 	if commands ~= nil then
 		return commands
 	end
-	return backend.detect_with_zig_once(tool)
+	return transport.detect_with_zig_once(tool)
 end
 
 ---@param tool string
 ---@param on_done fun(commands: table<string, string>|nil):nil
 ---@return nil
 local function detect_commands_with_zig_backend_async(tool, on_done)
-	if backend.detect_with_zig_worker_async(tool, function(commands)
+	if transport.detect_with_zig_worker_async(tool, function(commands)
 		if commands ~= nil then
 			on_done(commands)
 			return
 		end
-		if backend.detect_with_zig_once_async(tool, on_done) then
+		if transport.detect_with_zig_once_async(tool, on_done) then
 			return
 		end
 		on_done(nil)
 	end) then
 		return
 	end
-	if backend.detect_with_zig_once_async(tool, on_done) then
+	if transport.detect_with_zig_once_async(tool, on_done) then
 		return
 	end
 	on_done(nil)
@@ -189,7 +189,7 @@ end
 
 ---@return nil
 function M.reset()
-	backend.reset()
+	transport.reset()
 	tool_command_cache = {}
 	tool_command_cache_order = {}
 end

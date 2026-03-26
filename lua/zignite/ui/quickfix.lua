@@ -1,11 +1,11 @@
 local backend_client = require("zignite.backend.client")
-local shared = require("zignite.ui.shared")
+local frame = require("zignite.ui.frame")
 
 ---@type table
 local M = {}
 
 local QUICKFIX_WORKER_REQUEST_TIMEOUT_MS = 3000
-local QUICKFIX_BACKEND = shared.get_plugin_path() .. "/zig/zig-out/bin/zignite"
+local QUICKFIX_BACKEND = frame.get_plugin_path() .. "/zig/zig-out/bin/zignite"
 local QUICKFIX_PROTOCOL = {
 	res_begin = "@@ZQF_RES_BEGIN",
 	res_end = "@@ZQF_RES_END",

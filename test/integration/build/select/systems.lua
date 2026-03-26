@@ -6,7 +6,7 @@
 -- luacheck: ignore 631
 
 local build = require("zignite.build.runtime_lookup")
-local build_detect = require("zignite.build.detect")
+local build_detect = require("zignite.build.tooling.query")
 
 ---@param cmd string[]
 ---@param prefix string

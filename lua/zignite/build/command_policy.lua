@@ -1,7 +1,7 @@
 local config = require("zignite.config")
-local detect = require("zignite.build.detect")
-local backend = require("zignite.build.project_query")
-local state = require("zignite.build.state")
+local tooling_query = require("zignite.build.tooling.query")
+local project_query = require("zignite.build.project_query")
+local cache_state = require("zignite.build.cache_state")
 local systems = require("zignite.build.system_runtime")
 local project_utils = require("zignite.utils.project")
 
@@ -11,23 +11,23 @@ local LIVE_COMMAND_PRIORITY = { "live", "dev", "watch", "serve", "start", "previ
 local TOOL_DETECTORS = {
 	zig = {
 		flag = "zig",
-		sync = detect.detect_zig_tool_commands,
-		async = detect.detect_zig_tool_commands_async,
+		sync = tooling_query.detect_zig_tool_commands,
+		async = tooling_query.detect_zig_tool_commands_async,
 	},
 	go = {
 		flag = "go",
-		sync = detect.detect_go_tool_commands,
-		async = detect.detect_go_tool_commands_async,
+		sync = tooling_query.detect_go_tool_commands,
+		async = tooling_query.detect_go_tool_commands_async,
 	},
 	rust = {
 		flag = "rust",
-		sync = detect.detect_rust_tool_commands,
-		async = detect.detect_rust_tool_commands_async,
+		sync = tooling_query.detect_rust_tool_commands,
+		async = tooling_query.detect_rust_tool_commands_async,
 	},
 	odin = {
 		flag = "odin",
-		sync = detect.detect_odin_tool_commands,
-		async = detect.detect_odin_tool_commands_async,
+		sync = tooling_query.detect_odin_tool_commands,
+		async = tooling_query.detect_odin_tool_commands_async,
 	},
 }
 local C_FAMILY_FALLBACK_KEYS = {
@@ -121,7 +121,7 @@ end
 ---@param available_commands table<string, string>|nil
 ---@return table<string, string>
 local function merge_contextual_command_map(filetype, configured, available_commands)
-	local merged = state.copy_string_map(available_commands or {})
+	local merged = cache_state.copy_string_map(available_commands or {})
 	extend_string_map(merged, select_contextual_overrides(filetype, configured, available_commands))
 	return merged
 end
@@ -144,7 +144,7 @@ end
 local function build_c_family_fallback_commands(configured, system)
 	local selected_keys = C_FAMILY_FALLBACK_KEYS[system]
 	if type(selected_keys) ~= "table" then
-		return state.copy_string_map(configured or {})
+		return cache_state.copy_string_map(configured or {})
 	end
 	local filtered = copy_selected_commands(configured, selected_keys)
 	if system == "cmake" then
@@ -203,12 +203,12 @@ local function finish_with_async_tool_detector(sync_commands, filetype, on_done,
 			if vim.tbl_isempty(sync_commands) then
 				on_done(nil)
 			else
-				on_done(state.copy_string_map(sync_commands))
+				on_done(cache_state.copy_string_map(sync_commands))
 			end
 			return
 		end
 
-		local merged = state.copy_string_map(sync_commands)
+		local merged = cache_state.copy_string_map(sync_commands)
 		extend_string_map(merged, async_commands)
 		on_done(merged)
 	end
@@ -219,7 +219,7 @@ local function finish_with_async_tool_detector(sync_commands, filetype, on_done,
 		return
 	end
 	vim.schedule(function()
-		on_done(state.copy_string_map(sync_commands))
+		on_done(cache_state.copy_string_map(sync_commands))
 	end)
 end
 
@@ -232,9 +232,9 @@ local function collect_sync_project_detected_commands(filetype, filepath, is_det
 	local _ = is_detection_enabled
 	local commands
 	if cached then
-		commands = backend.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
+		commands = project_query.collect_sync_project_commands_cached(filetype, filepath, is_detection_enabled)
 	else
-		commands = backend.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
+		commands = project_query.collect_sync_project_commands(filetype, filepath, is_detection_enabled)
 	end
 	return commands
 end
@@ -245,12 +245,13 @@ end
 ---@return table<string, string>|nil
 local function detect_javascript_project_commands(filepath, cached, detect_enabled)
 	if detect_enabled("js_package_scripts") then
-		local package_commands = backend.detect_package_scripts(filepath)
+		local package_commands = project_query.detect_package_scripts(filepath)
 		if next(package_commands) ~= nil then
 			return package_commands
 		end
 	end
-	local detect_node = cached and backend.detect_node_project_commands_cached or backend.detect_node_project_commands
+	local detect_node = cached and project_query.detect_node_project_commands_cached
+		or project_query.detect_node_project_commands
 	local node_commands = detect_node(filepath)
 	if next(node_commands) ~= nil then
 		return node_commands
@@ -263,8 +264,8 @@ end
 ---@return table<string, string>|nil
 local function detect_python_project_commands(filepath, cached)
 	local detect_python = cached
-			and backend.detect_python_project_commands_cached
-		or backend.detect_python_project_commands
+			and project_query.detect_python_project_commands_cached
+		or project_query.detect_python_project_commands
 	local python_commands = detect_python(filepath)
 	if next(python_commands) ~= nil then
 		return python_commands
@@ -285,13 +286,13 @@ local function detect_contextual_project_commands(filetype, filepath, cached, de
 		return detect_python_project_commands(filepath, cached)
 	end
 	if cached and detect_enabled("bazel_project") and systems.supports_bazel_project_commands(filetype) then
-		local bazel_commands = backend.detect_bazel_project_commands_cached(filepath)
+		local bazel_commands = project_query.detect_bazel_project_commands_cached(filepath)
 		if next(bazel_commands) ~= nil then
 			return bazel_commands
 		end
 	end
 	if cached and (filetype == "java" or filetype == "kotlin") and detect_enabled("java_kotlin_project") then
-		local java_commands = backend.detect_java_like_project_commands_cached(filepath)
+		local java_commands = project_query.detect_java_like_project_commands_cached(filepath)
 		if next(java_commands) ~= nil then
 			return java_commands
 		end
@@ -327,14 +328,14 @@ end
 ---@param cached boolean|nil
 ---@return table<string, string>
 local function get_configured_build_commands_internal(filetype, filepath, cached)
-	local configured = state.copy_string_map(config.options.build_commands[filetype] or {})
+	local configured = cache_state.copy_string_map(config.options.build_commands[filetype] or {})
 	local detect_enabled = config_detection_enabled()
 	local contextual_commands = detect_contextual_project_commands(filetype, filepath, cached, detect_enabled)
 	if contextual_commands then
 		return merge_contextual_command_map(filetype, configured, contextual_commands)
 	end
 
-	local parser_result = backend.detect_parser_backed_build_result(filetype, filepath)
+	local parser_result = project_query.detect_parser_backed_build_result(filetype, filepath)
 	if parser_result then
 		if parser_result.detect_flag and not detect_enabled(parser_result.detect_flag) then
 			return configured
@@ -348,8 +349,8 @@ local function get_configured_build_commands_internal(filetype, filepath, cached
 		return configured
 	end
 
-	local c_family_result = cached and backend.detect_c_family_build_result_cached(filepath)
-		or backend.detect_c_family_build_result(filepath)
+	local c_family_result = cached and project_query.detect_c_family_build_result_cached(filepath)
+		or project_query.detect_c_family_build_result(filepath)
 	return resolve_c_family_configured_commands(configured, filetype, c_family_result)
 end
 
@@ -359,7 +360,7 @@ end
 ---@param cached boolean|nil
 ---@return table<string, string>
 local function merge_build_commands_internal(filetype, filepath, detected, cached)
-	local merged = state.copy_string_map(detected)
+	local merged = cache_state.copy_string_map(detected)
 	extend_string_map(merged, get_configured_build_commands_internal(filetype, filepath, cached))
 	return merged
 end
