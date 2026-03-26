@@ -88,7 +88,7 @@ end
 
 local config = require("zignite.config")
 local init = require("zignite.init")
-local project_utils = require("zignite.project_utils.project")
+local project_utils = require("zignite.utils.project")
 
 config.setup({
 	project = {},
