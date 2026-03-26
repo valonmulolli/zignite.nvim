@@ -2,6 +2,7 @@ const std = @import("std");
 const ansi = @import("quickfix/ansi.zig");
 const diagnostic = @import("quickfix/diagnostic.zig");
 const frame = @import("protocol/frame.zig");
+const protocol_stdio = @import("protocol/stdio.zig");
 const tail = @import("quickfix/tail.zig");
 const types = @import("quickfix/types.zig");
 
@@ -23,20 +24,20 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const input = try readStdinAll(allocator);
     defer allocator.free(input);
 
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
     try processQuickfixPayload(allocator, input, options, false, stdout);
     try stdout.flush();
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var stdin_buffer: [4096]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-    const reader = &stdin_reader.interface;
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdin_ctx: protocol_stdio.Stdin = .{};
+    stdin_ctx.init();
+    const reader = stdin_ctx.io();
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DAEMON_MAX_LINE);
@@ -174,9 +175,9 @@ fn parseDaemonBegin(line: []const u8) !DaemonRequestHeader {
 }
 
 fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
-    var stdin_buffer: [4096]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-    return try stdin_reader.interface.readAllAlloc(allocator, std.math.maxInt(usize));
+    var stdin_ctx: protocol_stdio.Stdin = .{};
+    stdin_ctx.init();
+    return try stdin_ctx.io().readAllAlloc(allocator, std.math.maxInt(usize));
 }
 test "quickfix max_bytes keeps newest lines" {
     const allocator = std.testing.allocator;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_system = @import("build/system.zig");
 const frame = @import("protocol/frame.zig");
+const protocol_stdio = @import("protocol/stdio.zig");
 const project_io = @import("project/core/io.zig");
 const project_output = @import("project/core/output.zig");
 const types = @import("project/core/types.zig");
@@ -73,20 +74,20 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const contents = try readProjectFile(allocator, options.kind, options.path);
     defer allocator.free(contents);
 
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
     try writeOutput(stdout, allocator, options, contents);
     try stdout.flush();
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var stdin_buffer: [4096]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-    const reader = &stdin_reader.interface;
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdin_ctx: protocol_stdio.Stdin = .{};
+    stdin_ctx.init();
+    const reader = stdin_ctx.io();
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', PROJECT_DAEMON_MAX_LINE);
