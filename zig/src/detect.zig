@@ -42,15 +42,22 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const commands = try detectToolCommands(allocator, options.tool);
     defer freeOwnedCommandList(allocator, commands);
 
-    var stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     for (commands) |command| {
         try stdout.print("{s}\n", .{command});
     }
+    try stdout.flush();
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var reader = std.fs.File.stdin().deprecatedReader();
-    var stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const reader = &stdin_reader.interface;
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DETECT_DAEMON_MAX_LINE);
@@ -94,6 +101,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             try stdout.print("{s} {d} {s}\n", .{ DETECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
         }
         try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_END, header.request_id });
+        try stdout.flush();
     }
 }
 

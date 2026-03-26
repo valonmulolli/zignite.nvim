@@ -72,13 +72,20 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const contents = try readProjectFile(allocator, options.kind, options.path);
     defer allocator.free(contents);
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     try writeOutput(stdout, allocator, options, contents);
+    try stdout.flush();
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var reader = std.fs.File.stdin().deprecatedReader();
-    var stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const reader = &stdin_reader.interface;
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', PROJECT_DAEMON_MAX_LINE);
@@ -136,6 +143,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
             try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
         }
         try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_END, header.request_id });
+        try stdout.flush();
     }
 }
 
