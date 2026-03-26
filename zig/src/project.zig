@@ -221,3 +221,37 @@ fn parseProjectDaemonBegin(line: []const u8) !ProjectDaemonRequestHeader {
 
     return .{ .request_id = request_id };
 }
+
+const TestReader = struct {
+    fn readUntilDelimiterOrEofAlloc(
+        self: *TestReader,
+        allocator: std.mem.Allocator,
+        delimiter: u8,
+        max_line: usize,
+    ) !?[]u8 {
+        _ = self;
+        _ = allocator;
+        _ = delimiter;
+        _ = max_line;
+        return null;
+    }
+};
+
+test "handleDaemonFrame writes project error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{};
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try handleDaemonFrame(
+        allocator,
+        &reader,
+        out.writer(allocator),
+        "@@ZPRJ_REQ_BEGIN 11 extra",
+    );
+
+    try std.testing.expectEqualStrings(
+        "@@ZPRJ_RES_BEGIN 11\n@@ZPRJ_RES_ERR 11 InvalidProjectDaemonHeader\n@@ZPRJ_RES_END 11\n",
+        out.items,
+    );
+}

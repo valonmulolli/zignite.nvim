@@ -158,3 +158,37 @@ fn parseDetectDaemonBegin(line: []const u8) !DetectDaemonRequestHeader {
         .tool = tool,
     };
 }
+
+const TestReader = struct {
+    fn readUntilDelimiterOrEofAlloc(
+        self: *TestReader,
+        allocator: std.mem.Allocator,
+        delimiter: u8,
+        max_line: usize,
+    ) !?[]u8 {
+        _ = self;
+        _ = allocator;
+        _ = delimiter;
+        _ = max_line;
+        return null;
+    }
+};
+
+test "handleDaemonFrame writes detect error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{};
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try handleDaemonFrame(
+        allocator,
+        &reader,
+        out.writer(allocator),
+        "@@ZDET_REQ_BEGIN 9 nope",
+    );
+
+    try std.testing.expectEqualStrings(
+        "@@ZDET_RES_BEGIN 9\n@@ZDET_RES_ERR 9 InvalidDetectTool\n@@ZDET_RES_END 9\n",
+        out.items,
+    );
+}
