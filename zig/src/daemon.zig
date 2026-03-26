@@ -20,7 +20,6 @@ const PROJECT_RES_ERR = "@@ZPRJ_RES_ERR";
 const PROJECT_MAX_LINE = 16384;
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
-const QUICKFIX_REQ_END = "@@ZQF_END";
 const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
 
 const QuickfixHeader = struct {
@@ -114,48 +113,7 @@ fn handleQuickfixFrame(
     stdout: anytype,
     begin_line: []const u8,
 ) !void {
-    const header = try parseQuickfixBegin(begin_line);
-    var payload: std.ArrayList(u8) = .empty;
-    defer payload.deinit(allocator);
-    var payload_writer = payload.writer(allocator);
-
-    const WritePayloadLine = struct {
-        payload_writer: *@TypeOf(payload.writer(allocator)),
-
-        fn onLine(self: @This(), line: []const u8) !void {
-            const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-            try self.payload_writer.writeAll(content);
-            try self.payload_writer.writeByte('\n');
-        }
-    };
-    const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
-    var response_err: ?anyerror = null;
-    const completed = blk: {
-        const result = frame.readUntilEnd(
-            allocator,
-            reader,
-            QUICKFIX_MAX_LINE,
-            QUICKFIX_REQ_END,
-            header.request_id,
-            write_payload_line.onLine,
-        ) catch |err| {
-            response_err = err;
-            break :blk false;
-        };
-        break :blk result;
-    };
-    if (response_err == null and !completed) return error.UnexpectedEof;
-
-    var out_buf: std.ArrayList(u8) = .empty;
-    defer out_buf.deinit(allocator);
-    const out_writer = out_buf.writer(allocator);
-    if (response_err == null) {
-        quickfix.processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
-            response_err = err;
-        };
-    }
-    try quickfix.writeDaemonResponse(stdout, header.request_id, out_buf.items, response_err);
-    try stdout.flush();
+    return quickfix.handleDaemonFrame(allocator, reader, stdout, begin_line);
 }
 
 fn handleDetectFrame(
