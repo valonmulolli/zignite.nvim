@@ -1,10 +1,7 @@
----@type table
-local M = {}
-
 ---@param text string
 ---@param max_width integer
 ---@return string
-function M.truncate_text(text, max_width)
+local function truncate_text(text, max_width)
 	local value = tostring(text or "")
 	if max_width <= 0 then
 		return ""
@@ -25,7 +22,7 @@ end
 
 ---@param picker_config table
 ---@return "compact"|"detailed"
-function M.resolve_picker_layout(picker_config)
+local function resolve_picker_layout(picker_config)
 	local requested_layout = picker_config.layout or "auto"
 	if requested_layout == "compact" or requested_layout == "detailed" then
 		return requested_layout
@@ -40,7 +37,7 @@ end
 
 ---@param layout_mode "compact"|"detailed"
 ---@return integer, integer
-function M.resolve_picker_caps(layout_mode)
+local function resolve_picker_caps(layout_mode)
 	local min_width = layout_mode == "compact" and 24 or 34
 	local width_ratio = layout_mode == "compact" and 0.50 or 0.68
 	local min_height = layout_mode == "compact" and 7 or 8
@@ -53,7 +50,7 @@ end
 ---@param layout_mode "compact"|"detailed"
 ---@param width_cap integer
 ---@return string
-function M.picker_help_line(layout_mode, width_cap)
+local function picker_help_line(layout_mode, width_cap)
 	if layout_mode == "compact" then
 		if width_cap < 42 then
 			return "Enter | / filter | r repeat | q close"
@@ -71,10 +68,10 @@ end
 ---@param width_cap integer
 ---@param command_for_display fun(command: string): string
 ---@return string
-function M.format_command_line(cmd, layout_mode, width_cap, command_for_display)
+local function format_command_line(cmd, layout_mode, width_cap, command_for_display)
 	if layout_mode == "compact" then
 		local name_limit = math.max(10, width_cap - 5)
-		return "  " .. M.truncate_text(cmd.name, name_limit)
+		return "  " .. truncate_text(cmd.name, name_limit)
 	end
 
 	local display_command = command_for_display(cmd.command)
@@ -82,14 +79,14 @@ function M.format_command_line(cmd, layout_mode, width_cap, command_for_display)
 	local preview_limit = math.max(14, width_cap - name_width - 8)
 	return string.format(
 		"  %-" .. tostring(name_width) .. "s → %s",
-		M.truncate_text(cmd.name, name_width),
-		M.truncate_text(display_command, preview_limit)
+		truncate_text(cmd.name, name_width),
+		truncate_text(display_command, preview_limit)
 	)
 end
 
 ---@param args table
 ---@return string[], table<integer, integer>
-function M.build_lines(args)
+local function build_lines(args)
 	---@type table<integer, integer>
 	local command_lines = {}
 	if args.argument_mode then
@@ -98,12 +95,12 @@ function M.build_lines(args)
 		local shown_value = value ~= "" and value or "(required)"
 		local lines = {
 			" " .. prompt .. " ",
-			" > " .. M.truncate_text(shown_value, math.max(12, args.width_cap - 4)),
+			" > " .. truncate_text(shown_value, math.max(12, args.width_cap - 4)),
 		}
 		local help_text = args.help_text or "Type arguments, then press Enter to run"
 		lines[#lines + 1] = ""
-		lines[#lines + 1] = M.truncate_text(help_text, math.max(20, args.width_cap - 2))
-		local preview_text = M.truncate_text(args.preview_text or "(none)", math.max(12, args.width_cap - 8))
+		lines[#lines + 1] = truncate_text(help_text, math.max(20, args.width_cap - 2))
+		local preview_text = truncate_text(args.preview_text or "(none)", math.max(12, args.width_cap - 8))
 		lines[#lines + 1] = " cmd: " .. preview_text
 		return lines, command_lines
 	end
@@ -126,7 +123,7 @@ function M.build_lines(args)
 				lines[#lines + 1] = " " .. (args.section_labels[section] or args.section_labels.other)
 				last_section = section
 			end
-			lines[#lines + 1] = M.format_command_line(
+			lines[#lines + 1] = format_command_line(
 				cmd,
 				args.layout_mode,
 				args.width_cap,
@@ -136,14 +133,14 @@ function M.build_lines(args)
 		end
 	end
 
-	local help_text = args.help_text or M.picker_help_line(args.layout_mode, args.width_cap)
-	lines[#lines + 1] = M.truncate_text(help_text, math.max(20, args.width_cap - 2))
+	local help_text = args.help_text or picker_help_line(args.layout_mode, args.width_cap)
+	lines[#lines + 1] = truncate_text(help_text, math.max(20, args.width_cap - 2))
 
 	local preview_text = args.preview_text
 	if preview_text == nil and #args.filtered_commands > 0 and args.selected_index >= 1 then
 		preview_text = args.command_for_display(args.filtered_commands[args.selected_index].command)
 	end
-	preview_text = M.truncate_text(preview_text or "(none)", math.max(12, args.width_cap - 8))
+	preview_text = truncate_text(preview_text or "(none)", math.max(12, args.width_cap - 8))
 	lines[#lines + 1] = " cmd: " .. preview_text
 	return lines, command_lines
 end
@@ -151,7 +148,7 @@ end
 ---@param lines string[]
 ---@param args table
 ---@return table
-function M.build_window_opts(lines, args)
+local function build_window_opts(lines, args)
 	local max_width = 0
 	for _, line in ipairs(lines) do
 		max_width = math.max(max_width, vim.fn.strdisplaywidth(line))
@@ -177,12 +174,15 @@ function M.build_window_opts(lines, args)
 	}
 end
 
+---@type table
+local M = {}
+
 ---@param args table
 ---@return string[], table, table<integer, integer>
 function M.build_render_state(args)
-	local layout_mode = M.resolve_picker_layout(args.picker_config)
-	local width_cap, height_cap = M.resolve_picker_caps(layout_mode)
-	local lines, command_lines = M.build_lines({
+	local layout_mode = resolve_picker_layout(args.picker_config)
+	local width_cap, height_cap = resolve_picker_caps(layout_mode)
+	local lines, command_lines = build_lines({
 		layout_mode = layout_mode,
 		width_cap = width_cap,
 			filter_query = args.filter_query,
@@ -197,7 +197,7 @@ function M.build_render_state(args)
 			help_text = args.help_text,
 			preview_text = args.preview_text,
 		})
-	local win_opts = M.build_window_opts(lines, {
+	local win_opts = build_window_opts(lines, {
 		layout_mode = layout_mode,
 		width_cap = width_cap,
 		height_cap = height_cap,

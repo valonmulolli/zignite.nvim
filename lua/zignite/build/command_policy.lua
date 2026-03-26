@@ -104,9 +104,25 @@ end
 ---@param configured table<string, string>
 ---@param available_commands table<string, string>|nil
 ---@return table<string, string>
+local function extend_string_map(target, source)
+	if type(source) ~= "table" then
+		return target
+	end
+	for key, value in pairs(source) do
+		if type(key) == "string" and type(value) == "string" then
+			target[key] = value
+		end
+	end
+	return target
+end
+
+---@param filetype string
+---@param configured table<string, string>
+---@param available_commands table<string, string>|nil
+---@return table<string, string>
 local function merge_contextual_command_map(filetype, configured, available_commands)
 	local merged = state.copy_string_map(available_commands or {})
-	M.extend_string_map(merged, select_contextual_overrides(filetype, configured, available_commands))
+	extend_string_map(merged, select_contextual_overrides(filetype, configured, available_commands))
 	return merged
 end
 
@@ -161,18 +177,6 @@ local function filter_make_commands(configured)
 	return filtered
 end
 
-function M.extend_string_map(target, source)
-	if type(source) ~= "table" then
-		return target
-	end
-	for key, value in pairs(source) do
-		if type(key) == "string" and type(value) == "string" then
-			target[key] = value
-		end
-	end
-	return target
-end
-
 ---@param commands table<string, string>
 ---@param filetype string
 ---@param is_detection_enabled fun(flag: string): boolean
@@ -180,7 +184,7 @@ end
 local function append_sync_tool_detector_commands(commands, filetype, is_detection_enabled)
 	local detector = TOOL_DETECTORS[filetype]
 	if detector and is_detection_enabled(detector.flag) then
-		M.extend_string_map(commands, detector.sync())
+		extend_string_map(commands, detector.sync())
 	end
 	return commands
 end
@@ -205,7 +209,7 @@ local function finish_with_async_tool_detector(sync_commands, filetype, on_done,
 		end
 
 		local merged = state.copy_string_map(sync_commands)
-		M.extend_string_map(merged, async_commands)
+		extend_string_map(merged, async_commands)
 		on_done(merged)
 	end
 
@@ -356,7 +360,7 @@ end
 ---@return table<string, string>
 local function merge_build_commands_internal(filetype, filepath, detected, cached)
 	local merged = state.copy_string_map(detected)
-	M.extend_string_map(merged, get_configured_build_commands_internal(filetype, filepath, cached))
+	extend_string_map(merged, get_configured_build_commands_internal(filetype, filepath, cached))
 	return merged
 end
 
@@ -364,7 +368,7 @@ end
 ---@param filepath string
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return table<string, string>
-function M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
+local function collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
 	return collect_sync_project_detected_commands(filetype, filepath, is_detection_enabled, false)
 end
 
@@ -392,7 +396,7 @@ end
 ---@param is_detection_enabled fun(flag: string): boolean
 ---@return nil
 function M.detect_tool_commands_for_filetype_async(filetype, filepath, on_done, force_refresh, is_detection_enabled)
-	local sync_commands = M.collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
+	local sync_commands = collect_sync_detected_commands(filetype, filepath, is_detection_enabled)
 	finish_with_async_tool_detector(sync_commands, filetype, on_done, force_refresh, is_detection_enabled)
 end
 
