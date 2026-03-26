@@ -1,5 +1,6 @@
 const std = @import("std");
 const parse = @import("detect/parse.zig");
+const protocol_stdio = @import("protocol/stdio.zig");
 const template = @import("detect/template.zig");
 const types = @import("detect/types.zig");
 const frame = @import("protocol/frame.zig");
@@ -43,9 +44,9 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     const commands = try detectToolCommands(allocator, options.tool);
     defer freeOwnedCommandList(allocator, commands);
 
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
     for (commands) |command| {
         try stdout.print("{s}\n", .{command});
     }
@@ -53,12 +54,12 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
 }
 
 pub fn runDaemon(allocator: std.mem.Allocator) !void {
-    var stdin_buffer: [4096]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-    const reader = &stdin_reader.interface;
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    var stdin_ctx: protocol_stdio.Stdin = .{};
+    stdin_ctx.init();
+    const reader = stdin_ctx.io();
+    var stdout_ctx: protocol_stdio.Stdout = .{};
+    stdout_ctx.init();
+    const stdout = stdout_ctx.io();
 
     while (true) {
         const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DETECT_DAEMON_MAX_LINE);
