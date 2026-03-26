@@ -45,6 +45,14 @@ pub fn run(allocator: std.mem.Allocator) !void {
     stdout_ctx.init();
     const stdout = stdout_ctx.io();
 
+    try runWithIO(allocator, reader, stdout);
+}
+
+fn runWithIO(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    stdout: anytype,
+) !void {
     while (true) {
         const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', QUICKFIX_MAX_LINE);
         if (maybe_line == null) break;
@@ -319,4 +327,57 @@ test "parseProjectBegin decodes project request header" {
     const header = try parseProjectBegin("@@ZPRJ_REQ_BEGIN 19");
 
     try std.testing.expectEqual(@as(u64, 19), header.request_id);
+}
+
+const TestReader = struct {
+    lines: []const []const u8,
+    index: usize = 0,
+
+    fn readUntilDelimiterOrEofAlloc(
+        self: *TestReader,
+        allocator: std.mem.Allocator,
+        delimiter: u8,
+        max_line: usize,
+    ) !?[]u8 {
+        _ = delimiter;
+        if (self.index >= self.lines.len) return null;
+        const line = self.lines[self.index];
+        self.index += 1;
+        if (line.len > max_line) return error.StreamTooLong;
+        return try allocator.dupe(u8, line);
+    }
+};
+
+test "runWithIO writes quickfix error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZQF_BEGIN 7 100 2048 2 50 0",
+        "@@ZQF_END 7",
+    } };
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try runWithIO(allocator, &reader, out.writer(allocator));
+
+    try std.testing.expectEqualStrings(
+        "@@ZQF_RES_BEGIN 7\n@@ZQF_RES_ERR 7 InvalidBoolean\n@@ZQF_RES_END 7\n",
+        out.items,
+    );
+}
+
+test "runWithIO writes detect error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZDET_REQ_BEGIN 9 nope",
+        "@@ZDET_REQ_END 9",
+    } };
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try runWithIO(allocator, &reader, out.writer(allocator));
+
+    try std.testing.expectEqualStrings(
+        "@@ZDET_RES_BEGIN 9\n@@ZDET_RES_ERR 9 InvalidDetectTool\n@@ZDET_RES_END 9\n",
+        out.items,
+    );
 }
