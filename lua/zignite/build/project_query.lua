@@ -2,7 +2,7 @@ local config = require("zignite.config")
 local detect_backend = require("zignite.build.detect.backend")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.system_runtime")
-local utils = require("zignite.utils")
+local project_utils = require("zignite.utils.project")
 
 ---@type table
 local M = {}
@@ -66,7 +66,7 @@ end
 ---@param filepath string
 ---@return table<string, string>|nil
 local function get_warmed_system_commands(query, filepath)
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local warmed_system = systems.get_cached_system_query_result(query, filepath, project_root)
 	if type(warmed_system) == "table" and type(warmed_system.commands) == "table" then
 		local commands = state.copy_string_map(warmed_system.commands)
@@ -255,7 +255,7 @@ function M.detect_cargo_project_commands(filepath)
 	if not can_query_backend(filepath) then
 		return {}, nil
 	end
-	local root = utils.get_project_root(filepath, config.options.project)
+	local root = project_utils.get_project_root(filepath, config.options.project)
 	if type(root) ~= "string" or root == "" then
 		return {}, nil
 	end
@@ -288,7 +288,7 @@ function M.detect_go_project_commands(filepath)
 		return {}, nil
 	end
 
-	local root = utils.get_project_root(filepath, config.options.project)
+	local root = project_utils.get_project_root(filepath, config.options.project)
 	if type(root) ~= "string" or root == "" then
 		return {}, nil
 	end
@@ -455,7 +455,7 @@ function M.detect_c_family_build_result_cached(filepath)
 	if not filepath or filepath == "" then
 		return nil
 	end
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local local_system, local_root = systems.detect_c_family_build_system(filepath)
 	if not local_system then
 		return nil

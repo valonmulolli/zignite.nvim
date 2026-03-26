@@ -1,10 +1,17 @@
-local build = require("zignite.build")
+local build = require("zignite.build.runtime_lookup")
+local build_detect = require("zignite.build.detect")
 local build_picker = require("zignite.build.picker")
 local build_systems = require("zignite.build.system_runtime")
 local config = require("zignite.config")
-local runtime = require("zignite.runtime")
-local ui = require("zignite.ui")
-local utils = require("zignite.utils")
+local runtime_argv = require("zignite.runtime.argv")
+local runtime_backend = require("zignite.runtime.backend")
+local runtime_command = require("zignite.runtime.command")
+local runtime_filetype = require("zignite.runtime.filetype")
+local runtime_state = require("zignite.runtime.state")
+local ui_windows = require("zignite.ui.windows")
+local command_utils = require("zignite.utils.command")
+local package_utils = require("zignite.utils.package")
+local project_utils = require("zignite.utils.project")
 
 ---@type table
 local M = {}
@@ -35,7 +42,7 @@ end
 ---@return string, string
 local function resolve_source_context(filepath, requested_filetype)
 	local source_path = filepath or vim.fn.expand("%:p")
-	local filetype = runtime.resolve_supported_filetype(requested_filetype or vim.bo.filetype, source_path)
+	local filetype = runtime_filetype.resolve_supported_filetype(requested_filetype or vim.bo.filetype, source_path)
 	return source_path, filetype
 end
 
@@ -48,7 +55,7 @@ end
 ---@param filepath string
 ---@return string
 local function resolve_project_cwd(filepath)
-	return utils.get_project_root(filepath, config.options.project) or vim.fn.fnamemodify(filepath, ":h")
+	return project_utils.get_project_root(filepath, config.options.project) or vim.fn.fnamemodify(filepath, ":h")
 end
 
 ---@param root string|nil
@@ -60,7 +67,7 @@ end
 ---@param filepath string
 ---@return boolean
 local function uses_warmed_uv_python(filepath)
-	local project_root = utils.get_project_root(filepath, config.options.project)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
 	local cached = build_systems.get_cached_system_query_result("python-root", filepath, project_root)
 	return type(cached) == "table"
 		and type(cached.commands) == "table"
@@ -83,7 +90,7 @@ local function apply_smart_runner_defaults(filetype, filepath, runner)
 			return runner
 		end
 		local uses_uv = uses_warmed_uv_python(filepath)
-			or utils.detect_python_project_tool_fast(filepath, config.options.project) == "uv"
+			or package_utils.detect_python_project_tool_fast(filepath, config.options.project) == "uv"
 		if uses_uv then
 			return "uv run python -u $file"
 		end
@@ -95,7 +102,7 @@ local function apply_smart_runner_defaults(filetype, filepath, runner)
 		if runner ~= default_runner then
 			return runner
 		end
-		local project = utils.detect_project(filepath, config.options.project)
+		local project = project_utils.detect_project(filepath, config.options.project)
 		if project and project.name == "Go Project" then
 			return {
 				cmd = "go run .",
@@ -124,10 +131,10 @@ local function resolve_runner_execution(source, runner, filetype, buffer_path, e
 		cleanup_command = runner.cleanup_command
 	end
 	if type(runner) == "table" and type(runner.cwd) == "string" and runner.cwd ~= "" then
-		command_cwd = utils.substitute_variables_raw(runner.cwd, execution_path)
+		command_cwd = command_utils.substitute_variables_raw(runner.cwd, execution_path)
 	end
 
-	return runtime.get_normalized_runner_command(filetype, runner), cleanup_command, filetype, command_cwd
+	return runtime_command.get_normalized_runner_command(filetype, runner), cleanup_command, filetype, command_cwd
 end
 
 ---@return string
@@ -144,14 +151,14 @@ end
 ---@param mode string
 ---@return nil
 local function show_no_build_commands(filetype, mode)
-	ui.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
+	ui_windows.show_output(string.format("No build commands available for filetype: %s", filetype), mode)
 end
 
 ---@param filetype string
 ---@param mode string
 ---@return nil
 local function show_missing_live_command(filetype, mode)
-	ui.show_output(
+	ui_windows.show_output(
 		string.format(
 			"No live/watch command found for %s. Add one of: %s",
 			filetype,
@@ -187,7 +194,7 @@ end
 local function resolve_execution_path(range, buffer_path, filetype, mode)
 	if range <= 0 then
 		if buffer_path == "" then
-			ui.show_output(ERRORS.NO_FILE, mode)
+			ui_windows.show_output(ERRORS.NO_FILE, mode)
 			return nil
 		end
 		return buffer_path
@@ -195,14 +202,14 @@ local function resolve_execution_path(range, buffer_path, filetype, mode)
 
 	local code_to_run = get_visual_selection()
 	if code_to_run == "" then
-		ui.show_output(ERRORS.VISUAL_EMPTY, mode)
+		ui_windows.show_output(ERRORS.VISUAL_EMPTY, mode)
 		return nil
 	end
 
-	local execution_path = runtime.build_temp_execution_path(buffer_path, filetype)
+	local execution_path = runtime_filetype.build_temp_execution_path(buffer_path, filetype)
 	local wrote_file, err = write_temp_execution_file(execution_path, code_to_run)
 	if not wrote_file then
-		ui.show_output(err or ERRORS.TEMP_WRITE_FAIL, mode)
+		ui_windows.show_output(err or ERRORS.TEMP_WRITE_FAIL, mode)
 		return nil
 	end
 
@@ -226,7 +233,7 @@ local function show_build_command_missing(filetype, command_name, build_cmds, mo
 		available[#available + 1] = cmd_name
 	end
 	table.sort(available)
-	ui.show_output(
+	ui_windows.show_output(
 		string.format(
 			"Command '%s' not found for %s.\nAvailable commands: %s",
 			command_name,
@@ -291,7 +298,7 @@ end
 ---@param provided_args string|nil
 ---@return nil
 local function execute_build_command(filetype, filepath, command_name, command_template, mode, provided_args)
-	local resolved_template = runtime.resolve_command_arguments(
+	local resolved_template = runtime_command.resolve_command_arguments(
 		filetype,
 		command_name,
 		command_template,
@@ -303,8 +310,8 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 	end
 
 	local command = resolved_template
-	if runtime.is_reserved_argv_command(command) then
-		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+	if runtime_command.is_reserved_argv_command(command) then
+		ui_windows.show_output(ERRORS.RESERVED_ARGV, mode)
 		return
 	end
 
@@ -312,18 +319,18 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 
 	if filetype == "zig" and command_name == "run" then
 		if not has_build_zig(cwd) then
-			local zig_runner = utils.normalize_command(config.options.runners.zig)
+			local zig_runner = command_utils.normalize_command(config.options.runners.zig)
 			if type(zig_runner) ~= "string" or zig_runner:match("zig%s+build") then
 				zig_runner = "zig run $file"
 			end
-			if runtime.is_reserved_argv_command(zig_runner) then
-				ui.show_output(ERRORS.RESERVED_ARGV, mode)
+			if runtime_command.is_reserved_argv_command(zig_runner) then
+				ui_windows.show_output(ERRORS.RESERVED_ARGV, mode)
 				return
 			end
-			local standalone_cmd = utils.substitute_variables(zig_runner, filepath)
+			local standalone_cmd = command_utils.substitute_variables(zig_runner, filepath)
 			local standalone_dir = vim.fn.fnamemodify(filepath, ":h")
-			local standalone_argv = runtime.command_to_argv(zig_runner, filepath)
-			local standalone_system_command = runtime.build_system_command(standalone_cmd, standalone_argv)
+			local standalone_argv = runtime_argv.command_to_argv(zig_runner, filepath)
+			local standalone_system_command = runtime_backend.build_system_command(standalone_cmd, standalone_argv)
 			M.execute_command(standalone_system_command, filepath, 0, mode, "zig: run", nil, {
 				cwd = standalone_dir,
 			})
@@ -331,13 +338,13 @@ local function execute_build_command(filetype, filepath, command_name, command_t
 		end
 	end
 
-	command = utils.substitute_variables(command, filepath)
-	local argv_command = runtime.command_to_argv(resolved_template, filepath)
+	command = command_utils.substitute_variables(command, filepath)
+	local argv_command = runtime_argv.command_to_argv(resolved_template, filepath)
 	if not cwd then
 		argv_command = nil
 	end
 
-	local system_command = runtime.build_system_command(command, argv_command)
+	local system_command = runtime_backend.build_system_command(command, argv_command)
 	local display_name = string.format("%s: %s", filetype, command_name)
 	build.set_last_build_command(filetype, command_name)
 	M.execute_command(system_command, filepath, 0, mode, display_name, nil, { cwd = cwd })
@@ -351,7 +358,7 @@ function M.get_command(filepath, requested_filetype)
 
 	local source_path, filetype = resolve_source_context(filepath, requested_filetype)
 	local ft_runner = apply_smart_runner_defaults(filetype, source_path, config.options.runners[filetype])
-	local legacy_project = utils.detect_project(source_path, config.options.project)
+	local legacy_project = project_utils.detect_project(source_path, config.options.project)
 
 	if filetype == "zig" and legacy_project and legacy_project.command then
 		local project = build.get_preferred_project_command(filetype, source_path)
@@ -385,31 +392,31 @@ function M.run_code(range, mode)
 
 	local runner, source = M.get_command(buffer_path, vim.bo.filetype)
 	if not runner then
-		ui.show_output(string.format(ERRORS.NO_RUNNER, filetype), mode)
+		ui_windows.show_output(string.format(ERRORS.NO_RUNNER, filetype), mode)
 		return
 	end
 
 	if range == 0 and filetype == "zig" and vim.fn.fnamemodify(execution_path, ":e") ~= "zig" then
-		ui.show_output(string.format(ERRORS.ZIG_EXT, execution_path), mode)
+		ui_windows.show_output(string.format(ERRORS.ZIG_EXT, execution_path), mode)
 		return
 	end
 
 	local command_str, cleanup_command, display_name, command_cwd =
 		resolve_runner_execution(source, runner, filetype, buffer_path, execution_path)
 
-	if runtime.is_reserved_argv_command(command_str) then
-		ui.show_output(ERRORS.RESERVED_ARGV, mode)
+	if runtime_command.is_reserved_argv_command(command_str) then
+		ui_windows.show_output(ERRORS.RESERVED_ARGV, mode)
 		return
 	end
 
-	local final_command = utils.substitute_variables(command_str, execution_path)
-	local argv_command = runtime.command_to_argv(command_str, execution_path)
+	local final_command = command_utils.substitute_variables(command_str, execution_path)
+	local argv_command = runtime_argv.command_to_argv(command_str, execution_path)
 
 	if filetype == "zig" and source == "filetype" then
 		local uses_zig_build = final_command:match("zig%s+build") ~= nil
 		if not has_build_zig(vim.fn.fnamemodify(execution_path, ":h")) and uses_zig_build then
-			final_command = utils.substitute_variables("zig run $file", execution_path)
-			argv_command = runtime.command_to_argv("zig run $file", execution_path)
+			final_command = command_utils.substitute_variables("zig run $file", execution_path)
+			argv_command = runtime_argv.command_to_argv("zig run $file", execution_path)
 		end
 	end
 
@@ -417,7 +424,7 @@ function M.run_code(range, mode)
 		argv_command = nil
 	end
 
-	local system_command = runtime.build_system_command(final_command, argv_command)
+	local system_command = runtime_backend.build_system_command(final_command, argv_command)
 	M.execute_command(system_command, execution_path, range, mode, display_name, cleanup_command, {
 		cwd = command_cwd,
 	})
@@ -441,7 +448,7 @@ function M.execute_command(system_command, execution_path, range, mode, display_
 			os.remove(execution_path)
 		end
 		if cleanup_command then
-			vim.fn.jobstart(utils.substitute_variables(cleanup_command, execution_path), {
+			vim.fn.jobstart(command_utils.substitute_variables(cleanup_command, execution_path), {
 				cwd = exec_opts and exec_opts.cwd or nil,
 				on_exit = function()
 				end,
@@ -450,15 +457,15 @@ function M.execute_command(system_command, execution_path, range, mode, display_
 	end
 
 	if mode == "float" then
-		ui.run_in_float_terminal(system_command, on_exit, display_name, exec_opts)
+		ui_windows.run_in_float_terminal(system_command, on_exit, display_name, exec_opts)
 	else
-		ui.run_in_split_terminal(mode, system_command, on_exit, exec_opts)
+		ui_windows.run_in_split_terminal(mode, system_command, on_exit, exec_opts)
 	end
 end
 
 ---@return nil
 function M.stop_code()
-	ui.close_output(true)
+	ui_windows.close_output(true)
 	vim.notify("Runner stopped.", vim.log.levels.INFO)
 end
 
@@ -528,14 +535,14 @@ function M.select_build_command(mode)
 		filepath = filepath,
 		mode = mode,
 		config_options = config.options,
-		command_for_display = runtime.command_for_display,
+		command_for_display = runtime_command.command_for_display,
 		get_detect_runtime_options = build.get_detect_runtime_options,
 		get_build_commands_for_picker = build.get_build_commands_for_picker,
 		can_detect_build_commands_for_filetype = build.can_detect_build_commands_for_filetype,
 		run_build_command = M.run_build_command,
 		get_last_build_command = build.get_last_build_command,
-		command_requires_arguments = runtime.command_requires_arguments,
-		get_command_argument_prompt = runtime.get_command_argument_prompt,
+		command_requires_arguments = runtime_command.command_requires_arguments,
+		get_command_argument_prompt = runtime_command.get_command_argument_prompt,
 	})
 end
 
@@ -547,7 +554,7 @@ function M.run_last_build_command(mode)
 	local _, filetype = resolve_current_source_context()
 	local command_name = build.get_last_build_command(filetype)
 	if not command_name then
-		ui.show_output(string.format("No previous build command for filetype: %s", filetype), mode)
+		ui_windows.show_output(string.format("No previous build command for filetype: %s", filetype), mode)
 		return
 	end
 	M.run_build_command(command_name, mode)
@@ -575,7 +582,7 @@ function M.close_runner()
 	ensure_config()
 	local close_behavior = tostring(config.options.close_behavior or "stop"):lower()
 	local should_stop = close_behavior ~= "hide"
-	ui.close_output(should_stop)
+	ui_windows.close_output(should_stop)
 	if not should_stop then
 		vim.notify("Runner closed (hide mode). Use :StopCode to terminate active jobs.", vim.log.levels.INFO)
 	end
@@ -584,11 +591,12 @@ end
 ---@param opts table|nil
 ---@return nil
 function M.setup(opts)
-	runtime.reset()
+	runtime_state.reset()
+	build_detect.reset()
 	build.reset()
-	ui.reset()
+	ui_windows.reset()
 	config.setup(opts)
-	utils.clear_project_cache()
+	project_utils.clear_project_cache()
 end
 
 return M

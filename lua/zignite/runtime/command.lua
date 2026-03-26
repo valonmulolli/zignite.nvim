@@ -1,6 +1,6 @@
-local ui = require("zignite.ui")
+local ui_windows = require("zignite.ui.windows")
 local state = require("zignite.runtime.state")
-local utils = require("zignite.utils")
+local command_utils = require("zignite.utils.command")
 
 ---@type table
 local M = {}
@@ -117,7 +117,7 @@ function M.resolve_command_arguments(filetype, command_name, command_template, m
 
 	local entered = provided_args
 	if entered == nil and type(vim.fn.input) ~= "function" then
-		ui.show_output(
+		ui_windows.show_output(
 			string.format("Command '%s' requires extra arguments, but input prompt is unavailable.", command_name),
 			mode
 		)
@@ -134,7 +134,7 @@ function M.resolve_command_arguments(filetype, command_name, command_template, m
 
 	local trimmed = state.trim_text(entered)
 	if trimmed == "" then
-		ui.show_output(string.format("Command '%s' requires an argument.", command_name), mode)
+		ui_windows.show_output(string.format("Command '%s' requires an argument.", command_name), mode)
 		return nil
 	end
 
@@ -156,7 +156,7 @@ function M.get_normalized_runner_command(filetype, runner)
 		return cached
 	end
 
-	local normalized = utils.normalize_command(runner)
+	local normalized = command_utils.normalize_command(runner)
 	if normalized ~= nil then
 		state.set_normalized_runner_cache(key, normalized)
 	end

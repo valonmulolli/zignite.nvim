@@ -44,7 +44,7 @@ local restore_runtime = jobs.attach({
 
 local config = require("zignite.config")
 local init = require("zignite.init")
-local ui = require("zignite.ui")
+local ui_windows = require("zignite.ui.windows")
 
 ---@param cmd string|string[]
 ---@return string
@@ -176,7 +176,7 @@ end
 M.project_root = project_root
 M.config = config
 M.init = init
-M.ui = ui
+M.ui = ui_windows
 M.state = state
 M.job_results = job_results
 M.quickfix_results = quickfix_results

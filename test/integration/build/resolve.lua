@@ -4,8 +4,10 @@
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands
 
-local build_module = require("zignite.build")
-local runtime_module = require("zignite.runtime")
+local build_module = require("zignite.build.runtime_lookup")
+local build_detect = require("zignite.build.detect")
+local runtime_state = require("zignite.runtime.state")
+local project_utils = require("zignite.utils.project")
 
 ---@param tbl table
 ---@return table
@@ -391,7 +393,7 @@ local function test_shebang_cache_is_bounded()
 
 	local original_filereadable = vim.fn.filereadable
 	local original_readfile = vim.fn.readfile
-	local debug_state = runtime_module._debug_state()
+	local debug_state = runtime_state.debug_state()
 	local shebang_cache = debug_state.shebang_filetype_cache
 	local shebang_cache_order = debug_state.shebang_filetype_cache_order
 
@@ -476,15 +478,15 @@ local function test_cached_zig_system_results_take_precedence()
 	})
 
 	local systems = require("zignite.build.system_runtime")
-	local utils_module = require("zignite.utils")
-	local detect_backend = require("zignite.build.detect.backend")
-	local original_get_project_root = utils_module.get_project_root
+		local detect_backend = require("zignite.build.detect.backend")
+	local original_get_project_root = project_utils.get_project_root
 	local original_filereadable = vim.fn.filereadable
 	local original_parse_project_lines_once = detect_backend.parse_project_lines_once
 
+	build_detect.reset()
 	build_module.reset()
 
-	utils_module.get_project_root = function(path)
+	project_utils.get_project_root = function(path)
 		if type(path) ~= "string" then
 			return nil
 		end
@@ -666,9 +668,10 @@ local function test_cached_zig_system_results_take_precedence()
 		"Cached Zig python system commands should feed immediate Python install lookup"
 	)
 
-	utils_module.get_project_root = original_get_project_root
+	project_utils.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
 	detect_backend.parse_project_lines_once = original_parse_project_lines_once
+	build_detect.reset()
 	build_module.reset()
 
 	print("✓ Cached Zig system precedence test passed")
@@ -688,15 +691,15 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 
 	local systems = require("zignite.build.system_runtime")
 	local detect_backend = require("zignite.build.detect.backend")
-	local utils_module = require("zignite.utils")
-	local original_get_project_root = utils_module.get_project_root
+		local original_get_project_root = project_utils.get_project_root
 	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
 	local original_filereadable = vim.fn.filereadable
 	local queries = {}
 
+	build_detect.reset()
 	build_module.reset()
 
-	utils_module.get_project_root = function(path)
+	project_utils.get_project_root = function(path)
 		if type(path) ~= "string" then
 			return nil
 		end
@@ -783,8 +786,9 @@ local function test_async_system_prewarm_prefers_zig_queries_over_local_gating()
 	)
 
 	detect_backend.parse_project_lines_async = original_parse_project_lines_async
-	utils_module.get_project_root = original_get_project_root
+	project_utils.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
+	build_detect.reset()
 	build_module.reset()
 
 	print("✓ Async system prewarm Zig query test passed")
@@ -803,8 +807,7 @@ local function test_async_c_family_project_prewarm_avoids_sync_parse()
 	})
 
 	local detect_backend = require("zignite.build.detect.backend")
-	local utils_module = require("zignite.utils")
-	local original_get_project_root = utils_module.get_project_root
+		local original_get_project_root = project_utils.get_project_root
 	local original_parse_project_lines_async = detect_backend.parse_project_lines_async
 	local original_parse_project_lines_once = detect_backend.parse_project_lines_once
 	local original_filereadable = vim.fn.filereadable
@@ -812,9 +815,10 @@ local function test_async_c_family_project_prewarm_avoids_sync_parse()
 	local sync_c_family_auto_called = false
 	local refreshed_commands = nil
 
+	build_detect.reset()
 	build_module.reset()
 
-	utils_module.get_project_root = function(path)
+	project_utils.get_project_root = function(path)
 		if type(path) == "string" and path:match("^/tmp/warm%-cfamily/") then
 			return "/tmp/warm-cfamily"
 		end
@@ -905,8 +909,9 @@ local function test_async_c_family_project_prewarm_avoids_sync_parse()
 
 	detect_backend.parse_project_lines_async = original_parse_project_lines_async
 	detect_backend.parse_project_lines_once = original_parse_project_lines_once
-	utils_module.get_project_root = original_get_project_root
+	project_utils.get_project_root = original_get_project_root
 	vim.fn.filereadable = original_filereadable
+	build_detect.reset()
 	build_module.reset()
 
 	print("✓ Async C/C++ project prewarm test passed")

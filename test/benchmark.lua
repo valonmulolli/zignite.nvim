@@ -88,7 +88,7 @@ end
 
 local config = require("zignite.config")
 local init = require("zignite.init")
-local utils = require("zignite.utils")
+local project_utils = require("zignite.project_utils.project")
 
 config.setup({
 	project = {},
@@ -227,24 +227,24 @@ print(string.format("Timer source: %s", time_source))
 print(string.rep("-", 52))
 
 bench("detect_project (cold-ish)", function()
-	utils.clear_project_cache()
+	project_utils.clear_project_cache()
 	for i = 1, iterations do
 		local path = string.format("/tmp/bench-zig/src/module_%d/main.zig", i)
-		utils.detect_project(path, config.options.project)
+		project_utils.detect_project(path, config.options.project)
 	end
 end)
 
 bench("detect_project (hot)", function()
-	utils.clear_project_cache()
+	project_utils.clear_project_cache()
 	local path = "/tmp/bench-zig/src/main.zig"
-	utils.detect_project(path, config.options.project) -- warm cache
+	project_utils.detect_project(path, config.options.project) -- warm cache
 	for _ = 1, iterations do
-		utils.detect_project(path, config.options.project)
+		project_utils.detect_project(path, config.options.project)
 	end
 end)
 
 bench("get_command (hot)", function()
-	utils.clear_project_cache()
+	project_utils.clear_project_cache()
 	current_file = "/tmp/bench-zig/src/main.zig"
 	for _ = 1, iterations do
 		init.get_command()

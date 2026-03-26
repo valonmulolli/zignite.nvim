@@ -3,7 +3,7 @@ local detect = require("zignite.build.detect")
 local backend = require("zignite.build.project_query")
 local state = require("zignite.build.state")
 local systems = require("zignite.build.system_runtime")
-local utils = require("zignite.utils")
+local project_utils = require("zignite.utils.project")
 
 ---@type table
 local M = {}
@@ -443,7 +443,7 @@ function M.get_preferred_project_command(filetype, filepath)
 		filepath,
 		M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
 	)
-	local root = utils.get_project_root(filepath, config.options.project)
+	local root = project_utils.get_project_root(filepath, config.options.project)
 	if not root then
 		root = vim.fn.fnamemodify(filepath, ":h")
 	end

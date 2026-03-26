@@ -5,6 +5,10 @@
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 
+local runtime_argv = require("zignite.runtime.argv")
+local project_utils = require("zignite.utils.project")
+local ui_windows = require("zignite.ui.windows")
+
 ---@param filetype string
 ---@param filepath string
 ---@param overrides { tbl: table, key: string, value: any }[]|nil
@@ -113,14 +117,13 @@ local function test_run_build_command_with_zig_fetch_github_url()
         },
     }, function()
         reset_job_results()
-        local runtime = require("zignite.runtime")
-        init.run_build_command("fetch", "float")
+                init.run_build_command("fetch", "float")
         assert_last_job_command_matches(
             "GitHub zig fetch should start a job",
             "zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig",
             "Plain GitHub URL should expand to --save git+https://github.com/<owner>/<repo>"
         )
-        local argv = runtime.command_to_argv(
+        local argv = runtime_argv.command_to_argv(
             "zig fetch --save git+https://github.com/raylib-zig/raylib-zig",
             "/tmp/zigfetch/main.zig"
         )
@@ -171,14 +174,13 @@ local function test_run_build_command_with_zig_fetch_github_ref()
         },
     }, function()
         reset_job_results()
-        local runtime = require("zignite.runtime")
-        init.run_build_command("fetch", "float")
+                init.run_build_command("fetch", "float")
         assert_last_job_command_matches(
             "GitHub ref zig fetch should start a job",
             "zig fetch %-%-save git%+https://github%.com/raylib%-zig/raylib%-zig#devel",
             "GitHub tree URL should expand to a saved git dependency with #ref"
         )
-        local argv = runtime.command_to_argv(
+        local argv = runtime_argv.command_to_argv(
             "zig fetch --save git+https://github.com/raylib-zig/raylib-zig#devel",
             "/tmp/zigfetch-ref/main.zig"
         )
@@ -200,8 +202,7 @@ end
 
 -- Test argv conversion preserves quoted shell metacharacters inside a single argument.
 local function test_command_to_argv_preserves_quoted_metacharacters()
-    local runtime = require("zignite.runtime")
-    local argv = runtime.command_to_argv("cargo run --bin 'demo;touch /tmp/pwn'", "/tmp/rustproj/src/main.rs")
+        local argv = runtime_argv.command_to_argv("cargo run --bin 'demo;touch /tmp/pwn'", "/tmp/rustproj/src/main.rs")
     assert(
         type(argv) == "table" and #argv == 4,
         "Quoted metacharacter command should stay eligible for argv mode"
@@ -222,15 +223,13 @@ end
 -- Test Go package selectors with shell metacharacters remain safe in argv mode.
 local function test_go_project_commands_quote_package_selectors()
     local go_parser = require("zignite.build.project_query")
-    local runtime = require("zignite.runtime")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
+            local original_get_project_root = project_utils.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
     local original_readfile = vim.fn.readfile
 
-    utils_module.get_project_root = function()
+    project_utils.get_project_root = function()
         return "/tmp/goselector"
     end
     vim.fn.executable = function(path)
@@ -272,13 +271,13 @@ local function test_go_project_commands_quote_package_selectors()
     end
 
     local commands, go_info = go_parser.detect_go_project_commands("/tmp/goselector/cmd/web;touch/main.go")
-    local argv = runtime.command_to_argv(commands["go-run-package"], "/tmp/goselector/cmd/web;touch/main.go")
+    local argv = runtime_argv.command_to_argv(commands["go-run-package"], "/tmp/goselector/cmd/web;touch/main.go")
     assert(go_info == nil, "Lua should not decode redundant Go parser metadata on the backend path")
     assert(type(argv) == "table" and #argv == 3, "Go package command with metacharacters should still use argv mode")
     assert(argv[1] == "go" and argv[2] == "run", "Go package command should preserve go run argv tokens")
     assert(argv[3] == "./cmd/web;touch", "Go package selector should stay a single argv argument")
 
-    utils_module.get_project_root = original_get_project_root
+    project_utils.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -290,14 +289,12 @@ end
 -- Test Cargo bin names with shell metacharacters remain safe in argv mode.
 local function test_cargo_project_commands_quote_bin_names()
     local cargo_parser = require("zignite.build.project_query")
-    local runtime = require("zignite.runtime")
-    local utils_module = require("zignite.utils")
-    local original_get_project_root = utils_module.get_project_root
+            local original_get_project_root = project_utils.get_project_root
     local original_executable = vim.fn.executable
     local original_systemlist = vim.fn.systemlist
     local original_filereadable = vim.fn.filereadable
 
-    utils_module.get_project_root = function()
+    project_utils.get_project_root = function()
         return "/tmp/cargobin"
     end
     vim.fn.executable = function(path)
@@ -331,14 +328,14 @@ local function test_cargo_project_commands_quote_bin_names()
     end
 
     local commands, cargo_info = cargo_parser.detect_cargo_project_commands("/tmp/cargobin/src/main.rs")
-    local argv = runtime.command_to_argv(commands["cargo-run-demo;touch /tmp/pwn"], "/tmp/cargobin/src/main.rs")
+    local argv = runtime_argv.command_to_argv(commands["cargo-run-demo;touch /tmp/pwn"], "/tmp/cargobin/src/main.rs")
     assert(cargo_info == nil, "Lua should not decode redundant Cargo parser metadata on the backend path")
     assert(type(argv) == "table" and #argv == 4, "Cargo bin command with metacharacters should still use argv mode")
     assert(argv[1] == "cargo" and argv[2] == "run", "Cargo bin command should preserve cargo run argv tokens")
     assert(argv[3] == "--bin", "Cargo bin command should preserve the --bin option boundary")
     assert(argv[4] == "demo;touch /tmp/pwn", "Cargo bin name should stay a single argv argument")
 
-    utils_module.get_project_root = original_get_project_root
+    project_utils.get_project_root = original_get_project_root
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.fn.filereadable = original_filereadable
@@ -368,7 +365,7 @@ local function test_show_output_respects_mode()
         },
     }, function()
         reset_notify_results()
-        ui.show_output("Error: split mode output", "split")
+        ui_windows.show_output("Error: split mode output", "split")
         assert(#issued_cmds > 0, "show_output(split) should open a split window")
         assert(issued_cmds[1] == "topleft split", "show_output(split) should honor top split position")
         assert(#notify_results == 0, "show_output(split) should not fallback to notify")

@@ -1,6 +1,8 @@
 -- luacheck: globals config init job_results command_to_string reset_job_results
 -- luacheck: globals make_expand_override with_overrides
 
+local build = require("zignite.build.runtime_lookup")
+
 local function make_filereadable_override(readable_paths)
 	local original_filereadable = vim.fn.filereadable
 	local readable = {}
@@ -326,8 +328,7 @@ local function test_detected_bazel_preferred_run_alias()
 			},
 		}),
 	}, function()
-		local build = require("zignite.build")
-		local commands = build.get_build_commands_for_filetype("cpp", "/tmp/bazelzig/app/main.cc")
+				local commands = build.get_build_commands_for_filetype("cpp", "/tmp/bazelzig/app/main.cc")
 		assert(commands.run == "bazel run //app:main", "Generic Bazel run should follow Zig-preferred run command")
 	end)
 
