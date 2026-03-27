@@ -16,6 +16,7 @@ local CONFIG_PROTOCOL = {
 	res_end = CONFIG_RES_END,
 	res_err = CONFIG_RES_ERR,
 }
+local last_synced_revision = 0
 
 ---@param value string
 ---@return boolean
@@ -79,10 +80,19 @@ function M.sync_async(options, revision)
 		return false
 	end
 
-	return config_client.async_request({
+	local ok = config_client.async_request({
 		revision = revision,
 		json = json_payload,
 	}, function(_) end)
+	if ok then
+		last_synced_revision = revision
+	end
+	return ok
+end
+
+---@return integer
+function M.get_last_synced_revision()
+	return tonumber(last_synced_revision) or 0
 end
 
 return M

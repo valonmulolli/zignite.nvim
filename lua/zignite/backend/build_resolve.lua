@@ -132,4 +132,33 @@ function M.resolve_sync(filepath, filetype, project_root)
 	return decode_resolved_lines(lines)
 end
 
+---@param filepath string
+---@param filetype string
+---@param project_root string|nil
+---@param on_done fun(result: table|nil):nil
+---@return boolean
+function M.resolve_async(filepath, filetype, project_root, on_done)
+	return resolve_client.async_request({
+		path = filepath,
+		filetype = filetype,
+		project_root = project_root,
+	}, function(lines)
+		if type(lines) ~= "table" then
+			on_done(nil)
+			return
+		end
+		on_done(decode_resolved_lines(lines))
+	end) or resolve_client.once_request_async({
+		path = filepath,
+		filetype = filetype,
+		project_root = project_root,
+	}, function(lines)
+		if type(lines) ~= "table" then
+			on_done(nil)
+			return
+		end
+		on_done(decode_resolved_lines(lines))
+	end)
+end
+
 return M

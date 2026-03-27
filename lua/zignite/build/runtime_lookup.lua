@@ -125,7 +125,7 @@ end
 ---@param filetype string
 ---@param filepath string
 ---@return table<string, string>, table|nil, string, string|nil
-local function get_cached_detected_commands(filetype, filepath)
+local function get_cached_build_commands(filetype, filepath)
 	local cache_key = detect_runtime_cache_key(filetype, filepath)
 	local mtime_signature = systems.get_mtime_signature_for_filetype(filetype, filepath, is_detection_enabled)
 	local entry = state.get_bounded_cache_entry(
@@ -133,19 +133,19 @@ local function get_cached_detected_commands(filetype, filepath)
 		state.detect_runtime_cache_order,
 		cache_key
 	)
-	local cached_detected = {}
+	local cached_commands = {}
 	if type(entry) == "table" and type(entry.commands) == "table" then
-		cached_detected = state.copy_string_map(entry.commands)
+		cached_commands = state.copy_string_map(entry.commands)
 	end
-	return cached_detected, entry, cache_key, mtime_signature
+	return cached_commands, entry, cache_key, mtime_signature
 end
 
 ---@param cache_key string
----@param detected_commands table<string, string>
+---@param build_commands table<string, string>
 ---@param status string
 ---@param mtime_signature string|nil
 ---@return nil
-local function store_detect_runtime_entry(cache_key, detected_commands, status, mtime_signature)
+local function store_detect_runtime_entry(cache_key, build_commands, status, mtime_signature)
 	local updated_at_ms = state.now_ms()
 	if status == "failed" then
 		updated_at_ms = updated_at_ms - (state.DETECT_RUNTIME_FAILED_TTL_MS + 1)
@@ -157,12 +157,36 @@ local function store_detect_runtime_entry(cache_key, detected_commands, status, 
 		state.DETECT_RUNTIME_CACHE_MAX,
 		cache_key,
 		{
-			commands = state.copy_string_map(detected_commands),
+			commands = state.copy_string_map(build_commands),
 			updated_at_ms = updated_at_ms,
 			mtime_signature = mtime_signature,
 			status = status,
 		}
 	)
+end
+
+---@param filetype string
+---@param filepath string
+---@param cached_commands table<string, string>
+---@return table<string, string>
+local function get_refresh_fallback_commands(filetype, filepath, cached_commands)
+	if next(cached_commands or {}) ~= nil then
+		return state.copy_string_map(cached_commands)
+	end
+	return commands.merge_build_commands_cached(filetype, filepath, {})
+end
+
+---@param filetype string
+---@param resolved_commands table<string, string>|nil
+---@return table<string, string>
+local function merge_backend_refresh_commands(filetype, resolved_commands)
+	local merged = commands.detect_direct_tool_commands_for_filetype(filetype, is_detection_enabled)
+	for key, value in pairs(resolved_commands or {}) do
+		if type(key) == "string" and type(value) == "string" then
+			merged[key] = value
+		end
+	end
+	return merged
 end
 
 ---@param cache_key string
@@ -191,7 +215,7 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		return false
 	end
 
-	local cached_detected, entry, cache_key, mtime_signature = get_cached_detected_commands(filetype, filepath)
+	local cached_commands, entry, cache_key, mtime_signature = get_cached_build_commands(filetype, filepath)
 	if not is_cache_stale(entry, runtime_opts.cache_ttl_ms, mtime_signature) then
 		return false
 	end
@@ -208,7 +232,23 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		callbacks = type(on_refresh) == "function" and { on_refresh } or {},
 	}
 
-	local latest_detected = cached_detected
+	local fallback_commands = get_refresh_fallback_commands(filetype, filepath, cached_commands)
+	if commands.can_resolve_backend_build_commands(filetype, filepath) and DIRECT_DETECT_FLAGS[filetype] == nil then
+		if commands.resolve_backend_build_commands_async(filetype, filepath, function(resolved)
+			if type(resolved) == "table" and type(resolved.commands) == "table" and next(resolved.commands) ~= nil then
+				local merged_commands = merge_backend_refresh_commands(filetype, resolved.commands)
+				store_detect_runtime_entry(cache_key, merged_commands, "ready", mtime_signature)
+				flush_detect_runtime_callbacks(cache_key, merged_commands)
+				return
+			end
+			store_detect_runtime_entry(cache_key, fallback_commands, "failed", mtime_signature)
+			flush_detect_runtime_callbacks(cache_key, fallback_commands)
+		end) then
+			return true
+		end
+	end
+
+	local latest_commands = fallback_commands
 	local latest_status = "ready"
 	local latest_mtime_signature = mtime_signature
 	local pending = 1
@@ -222,10 +262,8 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 			return
 		end
 
-		local detected_copy = state.copy_string_map(latest_detected)
-		store_detect_runtime_entry(cache_key, detected_copy, latest_status, latest_mtime_signature)
-		local merged_commands = merge_build_commands(filetype, filepath, detected_copy)
-		flush_detect_runtime_callbacks(cache_key, merged_commands)
+		store_detect_runtime_entry(cache_key, latest_commands, latest_status, latest_mtime_signature)
+		flush_detect_runtime_callbacks(cache_key, latest_commands)
 	end
 
 	pending = pending + 1
@@ -240,10 +278,10 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		detect_async = commands.detect_tool_commands_for_filetype_async_cached
 		pending = pending + 1
 		if not backend.prime_c_family_project_commands_async(filepath, function()
-			latest_detected = commands.collect_sync_detected_commands_cached(
+			latest_commands = merge_build_commands(
 				filetype,
 				filepath,
-				is_detection_enabled
+				commands.collect_sync_detected_commands_cached(filetype, filepath, is_detection_enabled)
 			)
 			latest_status = "ready"
 			latest_mtime_signature = systems.get_mtime_signature_for_filetype(filetype, filepath, is_detection_enabled)
@@ -261,10 +299,10 @@ local function request_build_command_refresh(filetype, filepath, on_refresh)
 		function(detected_commands)
 			if detected_commands == nil then
 				latest_status = "failed"
-				latest_detected = cached_detected
+				latest_commands = fallback_commands
 			else
 				latest_status = "ready"
-				latest_detected = detected_commands
+				latest_commands = merge_build_commands(filetype, filepath, detected_commands)
 			end
 			complete_refresh()
 		end,
@@ -332,6 +370,18 @@ end
 ---@param filepath string
 ---@return table<string, string>
 function M.get_build_commands_for_filetype(filetype, filepath)
+	local backend_resolved = commands.resolve_backend_build_commands(filetype, filepath)
+	if backend_resolved then
+		local direct_commands = commands.detect_direct_tool_commands_for_filetype(filetype, is_detection_enabled)
+		local merged = state.copy_string_map(direct_commands)
+		for key, value in pairs(backend_resolved.commands or {}) do
+			if type(key) == "string" and type(value) == "string" then
+				merged[key] = value
+			end
+		end
+		return merged
+	end
+
 	local detected_commands = commands.detect_tool_commands_for_filetype(
 		filetype,
 		filepath,
@@ -345,10 +395,11 @@ end
 ---@param on_refresh fun(commands: table<string, string>):nil
 ---@return table<string, string>, boolean
 function M.get_build_commands_for_cached_lookup(filetype, filepath, on_refresh)
-	local cached_detected = get_cached_detected_commands(filetype, filepath)
-	local merged = commands.merge_build_commands_cached(filetype, filepath, cached_detected)
+	local cached_commands = get_cached_build_commands(filetype, filepath)
+	local immediate_commands = next(cached_commands) ~= nil and cached_commands
+		or commands.merge_build_commands_cached(filetype, filepath, {})
 	local refresh_started = request_build_command_refresh(filetype, filepath, on_refresh)
-	return merged, refresh_started
+	return immediate_commands, refresh_started
 end
 
 ---@param filetype string
