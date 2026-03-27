@@ -1,5 +1,6 @@
 local build = require("zignite.build.runtime_lookup")
 local tooling_query = require("zignite.build.tooling.query")
+local run_resolve = require("zignite.backend.run_resolve")
 local picker_controller = require("zignite.build.picker.controller")
 local build_systems = require("zignite.build.system_runtime")
 local config = require("zignite.config")
@@ -121,7 +122,8 @@ end
 ---@return string, string|nil, string, string|nil
 local function resolve_runner_execution(source, runner, filetype, buffer_path, execution_path)
 	if source == "project" then
-		return runner.command, nil, runner.name, resolve_project_cwd(buffer_path ~= "" and buffer_path or execution_path)
+		return runner.command, runner.cleanup_command, runner.name, runner.cwd
+			or resolve_project_cwd(buffer_path ~= "" and buffer_path or execution_path)
 	end
 
 	local cleanup_command
@@ -134,6 +136,36 @@ local function resolve_runner_execution(source, runner, filetype, buffer_path, e
 	end
 
 	return runtime_command.get_normalized_runner_command(filetype, runner), cleanup_command, filetype, command_cwd
+end
+
+---@param filepath string
+---@param filetype string
+---@return string|string[]|table|nil, string|nil
+local function resolve_backend_runner(filepath, filetype)
+	local project_root = project_utils.get_project_root(filepath, config.options.project)
+	local resolved = run_resolve.resolve_sync(filepath, filetype, project_root)
+	if type(resolved) ~= "table" or type(resolved.command) ~= "string" or resolved.command == "" then
+		return nil, nil
+	end
+
+	if resolved.source == "project" then
+		return {
+			name = resolved.name or string.format("%s Project", filetype:gsub("^%l", string.upper)),
+			command = resolved.command,
+			cleanup_command = resolved.cleanup_command,
+			cwd = resolved.cwd or project_root or resolve_project_cwd(filepath),
+		}, "project"
+	end
+
+	if resolved.cleanup_command or resolved.cwd then
+		return {
+			cmd = resolved.command,
+			cleanup_command = resolved.cleanup_command,
+			cwd = resolved.cwd,
+		}, "filetype"
+	end
+
+	return resolved.command, "filetype"
 end
 
 ---@return string
@@ -356,6 +388,11 @@ function M.get_command(filepath, requested_filetype)
 	ensure_config()
 
 	local source_path, filetype = resolve_source_context(filepath, requested_filetype)
+	local backend_runner, backend_source = resolve_backend_runner(source_path, filetype)
+	if backend_runner then
+		return backend_runner, backend_source, filetype
+	end
+
 	local ft_runner = apply_smart_runner_defaults(filetype, source_path, config.options.runners[filetype])
 	local legacy_project = project_utils.detect_project(source_path, config.options.project)
 
