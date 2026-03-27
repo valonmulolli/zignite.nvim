@@ -120,8 +120,8 @@ local function test_run_live_missing_command()
     assert(#job_results == 0, "RunLive should not start job when no live/watch command exists")
     assert(#output_messages > 0, "RunLive should show guidance when no live/watch command exists")
     assert(
-        output_messages[#output_messages]:match("No live/watch command found"),
-        "RunLive missing-command message should mention live/watch command"
+        output_messages[#output_messages]:match("No live command resolved"),
+        "RunLive missing-command message should come from the backend-driven controller path"
     )
 
     vim.fn.expand = original_expand
@@ -191,8 +191,8 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
     assert(execution_jobs == 0, "RunLive should not use shipped JS defaults when package.json lacks live scripts")
     assert(#output_messages > 0, "RunLive should show guidance when no real JS live script exists")
     assert(
-        output_messages[#output_messages]:match("No live/watch command found"),
-        "RunLive missing-command message should mention live/watch command for JS projects without live scripts"
+        output_messages[#output_messages]:match("No live command resolved"),
+        "RunLive missing-command message should come from the backend-driven controller path for JS projects too"
     )
 
     vim.fn.expand = original_expand
@@ -228,21 +228,10 @@ local function test_run_live_javascript_uses_detected_live_alias()
         end
         return 0
     end
-    vim.fn.systemlist = function(cmd)
-        if type(cmd) == "table" and cmd[2] == "--project-parse" and cmd[3] == "--kind=package-json-auto" then
-            vim.v.shell_error = 0
-            return {
-                "COMMAND\tinstall\tnpm install",
-                "COMMAND\tdev\tnpm run dev",
-                "COMMAND\tlive\tnpm run dev",
-                "COMMAND\tbuild\tnpm run build",
-            }
-        end
-        if original_systemlist then
-            return original_systemlist(cmd)
-        end
-        return {}
-    end
+    os.execute("mkdir -p /tmp/jsliveok >/dev/null 2>&1")
+    local package_json = assert(io.open("/tmp/jsliveok/package.json", "w"))
+    package_json:write("{}\n")
+    package_json:close()
 
     reset_job_results()
     init.run_live("float")
@@ -254,6 +243,8 @@ local function test_run_live_javascript_uses_detected_live_alias()
     vim.fn.executable = original_executable
     vim.fn.systemlist = original_systemlist
     vim.v.shell_error = 0
+    os.remove("/tmp/jsliveok/package.json")
+    os.execute("rmdir /tmp/jsliveok >/dev/null 2>&1")
     reset_job_results()
 
     print("✓ RunLive JavaScript live-alias test passed")

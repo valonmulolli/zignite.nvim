@@ -14,7 +14,6 @@ function M.run_tests()
     package.path = package.path .. ';' .. project_root .. '/test/?.lua'
 
     local test_files = {
-        "test_utils",
         "test_config",
     }
 

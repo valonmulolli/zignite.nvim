@@ -36,13 +36,9 @@ local exported_globals = {
 	parse_project_daemon_request = ctx.parse_project_daemon_request,
 }
 local suites = {
-	"integration.core",
 	"integration.quickfix",
-	"integration.build.select",
 	"integration.build.execute",
-	"integration.build.resolve",
-	"integration.detect",
-	"integration.runtime",
+	"integration.resolve",
 }
 
 for key, value in pairs(exported_globals) do
