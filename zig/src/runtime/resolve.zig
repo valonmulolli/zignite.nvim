@@ -1,16 +1,14 @@
 const std = @import("std");
-const build_resolve = @import("../build/resolve.zig");
-const build_types = @import("../build/system/types.zig");
 const config = @import("../config.zig");
 const config_store = @import("../config/store.zig");
 const frame = @import("../protocol/frame.zig");
 const protocol_stdio = @import("../protocol/stdio.zig");
+const runner = @import("resolve/runner.zig");
+const types = @import("resolve/types.zig");
 
-pub const Options = struct {
-    path: []const u8,
-    filetype: []const u8,
-    project_root: ?[]const u8 = null,
-};
+pub const Options = types.Options;
+pub const ResolvedRunner = types.ResolvedRunner;
+pub const resolveRunner = runner.resolveRunner;
 
 pub const RUN_RESOLVE_REQ_BEGIN = "@@ZRUN_REQ_BEGIN";
 pub const RUN_RESOLVE_REQ_END = "@@ZRUN_REQ_END";
@@ -23,24 +21,10 @@ const ResolveDaemonRequestHeader = struct {
     request_id: u64,
 };
 
-pub const ResolvedRunner = struct {
-    source: []const u8 = "filetype",
-    command: ?[]u8 = null,
-    cleanup_command: ?[]u8 = null,
-    cwd: ?[]u8 = null,
-    name: ?[]u8 = null,
-
-    pub fn deinit(self: *ResolvedRunner, allocator: std.mem.Allocator) void {
-        if (self.command) |command| allocator.free(command);
-        if (self.cleanup_command) |cleanup| allocator.free(cleanup);
-        if (self.cwd) |cwd| allocator.free(cwd);
-        if (self.name) |name| allocator.free(name);
-    }
-};
-
 pub fn parseArgs(args: []const []const u8) !Options {
     var path: ?[]const u8 = null;
     var filetype: ?[]const u8 = null;
+    var context_path: ?[]const u8 = null;
     var project_root: ?[]const u8 = null;
 
     for (args) |arg| {
@@ -50,6 +34,8 @@ pub fn parseArgs(args: []const []const u8) !Options {
             path = arg["--path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--filetype=")) {
             filetype = arg["--filetype=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--context-path=")) {
+            context_path = arg["--context-path=".len..];
         } else if (std.mem.startsWith(u8, arg, "--project-root=")) {
             project_root = arg["--project-root=".len..];
         } else {
@@ -60,6 +46,7 @@ pub fn parseArgs(args: []const []const u8) !Options {
     return .{
         .path = path orelse return error.MissingRunResolvePath,
         .filetype = filetype orelse return error.MissingRunResolveFiletype,
+        .context_path = context_path,
         .project_root = project_root,
     };
 }
@@ -138,200 +125,28 @@ pub fn handleDaemonFrame(
     try stdout.flush();
 }
 
-pub fn resolveRunner(allocator: std.mem.Allocator, options: Options) !ResolvedRunner {
-    var build_output = try build_resolve.resolveOutput(allocator, .{
-        .path = options.path,
-        .filetype = options.filetype,
-        .project_root = options.project_root,
-    });
-    defer build_output.deinit(allocator);
-
-    if (std.mem.eql(u8, options.filetype, "zig")) {
-        if (try buildProjectRunner(allocator, options.filetype, &build_output)) |runner| {
-            return runner;
-        }
-    }
-
-    if (try collectConfiguredRunner(allocator, options.filetype)) |configured| {
-        var runner = configured;
-        errdefer runner.deinit(allocator);
-        try applySmartRunnerDefaults(allocator, options.filetype, &build_output, &runner);
-        return runner;
-    }
-
-    if (try buildProjectRunner(allocator, options.filetype, &build_output)) |runner| {
-        return runner;
-    }
-
-    return .{};
-}
-
 fn writeResolvedOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
-    var runner = try resolveRunner(allocator, options);
-    defer runner.deinit(allocator);
+    var resolved = try resolveRunner(allocator, options);
+    defer resolved.deinit(allocator);
 
-    if (runner.command) |command| {
+    if (resolved.command) |command| {
         try stdout.print("COMMAND\t{s}\n", .{command});
     }
-    try stdout.print("SOURCE\t{s}\n", .{runner.source});
-    try stdout.print("FILETYPE\t{s}\n", .{options.filetype});
+    for (resolved.argv.items) |arg| {
+        try stdout.print("ARGV\t{s}\n", .{arg});
+    }
+    try stdout.print("SOURCE\t{s}\n", .{resolved.source});
+    try stdout.print("FILETYPE\t{s}\n", .{resolved.filetype orelse options.filetype});
     try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
-    if (runner.cleanup_command) |cleanup| {
+    if (resolved.cleanup_command) |cleanup| {
         try stdout.print("CLEANUP_COMMAND\t{s}\n", .{cleanup});
     }
-    if (runner.cwd) |cwd| {
+    if (resolved.cwd) |cwd| {
         try stdout.print("CWD\t{s}\n", .{cwd});
     }
-    if (runner.name) |name| {
+    if (resolved.name) |name| {
         try stdout.print("NAME\t{s}\n", .{name});
     }
-}
-
-fn collectConfiguredRunner(allocator: std.mem.Allocator, filetype: []const u8) !?ResolvedRunner {
-    const raw = config.getSyncedConfigJson() orelse return null;
-
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch return null;
-    defer parsed.deinit();
-
-    if (parsed.value != .object) return null;
-    const runners = parsed.value.object.get("runners") orelse return null;
-    if (runners != .object) return null;
-    const runner_value = runners.object.get(filetype) orelse return null;
-
-    return try parseRunnerValue(allocator, runner_value);
-}
-
-fn parseRunnerValue(allocator: std.mem.Allocator, value: std.json.Value) !?ResolvedRunner {
-    switch (value) {
-        .string => |command| {
-            if (command.len == 0) return null;
-            return .{ .command = try allocator.dupe(u8, command) };
-        },
-        .array => {
-            const joined = try joinCommandArray(allocator, value.array.items);
-            if (joined == null) return null;
-            return .{ .command = joined };
-        },
-        .object => {
-            const cmd_value = value.object.get("cmd") orelse return null;
-            const command = try parseRunnerCommand(allocator, cmd_value) orelse return null;
-            var runner = ResolvedRunner{ .command = command };
-            errdefer runner.deinit(allocator);
-
-            if (value.object.get("cleanup_command")) |cleanup| {
-                if (cleanup == .string and cleanup.string.len > 0) {
-                    runner.cleanup_command = try allocator.dupe(u8, cleanup.string);
-                }
-            }
-            if (value.object.get("cwd")) |cwd| {
-                if (cwd == .string and cwd.string.len > 0) {
-                    runner.cwd = try allocator.dupe(u8, cwd.string);
-                }
-            }
-            return runner;
-        },
-        else => return null,
-    }
-}
-
-fn parseRunnerCommand(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
-    return switch (value) {
-        .string => |command| if (command.len == 0) null else try allocator.dupe(u8, command),
-        .array => try joinCommandArray(allocator, value.array.items),
-        else => null,
-    };
-}
-
-fn joinCommandArray(allocator: std.mem.Allocator, items: []const std.json.Value) !?[]u8 {
-    var joined: std.ArrayList(u8) = .empty;
-    defer joined.deinit(allocator);
-
-    var appended = false;
-    for (items) |item| {
-        if (item != .string or item.string.len == 0) continue;
-        if (appended) try joined.appendSlice(allocator, " && ");
-        try joined.appendSlice(allocator, item.string);
-        appended = true;
-    }
-
-    if (!appended) return null;
-    return joined.toOwnedSlice(allocator);
-}
-
-fn applySmartRunnerDefaults(
-    allocator: std.mem.Allocator,
-    filetype: []const u8,
-    build_output: *const build_resolve.ResolvedOutput,
-    runner: *ResolvedRunner,
-) !void {
-    const command = runner.command orelse return;
-
-    if (std.mem.eql(u8, filetype, "python") and std.mem.eql(u8, command, "python3 -u $file")) {
-        if (findCommand(build_output.commands.items, "run")) |project_run| {
-            if (std.mem.startsWith(u8, project_run, "uv run ")) {
-                allocator.free(command);
-                runner.command = try allocator.dupe(u8, project_run);
-            }
-        }
-        return;
-    }
-
-    if (std.mem.eql(u8, filetype, "go") and std.mem.eql(u8, command, "go run $file")) {
-        if (findCommand(build_output.commands.items, "run")) |project_run| {
-            allocator.free(command);
-            runner.command = try allocator.dupe(u8, project_run);
-            if (runner.cwd == null) {
-                runner.cwd = try allocator.dupe(u8, "$dir");
-            }
-        }
-    }
-}
-
-fn buildProjectRunner(
-    allocator: std.mem.Allocator,
-    filetype: []const u8,
-    build_output: *const build_resolve.ResolvedOutput,
-) !?ResolvedRunner {
-    const command = findPreferredProjectCommand(build_output) orelse return null;
-
-    var runner = ResolvedRunner{
-        .source = "project",
-        .command = try allocator.dupe(u8, command),
-        .name = try formatProjectName(allocator, filetype),
-    };
-    errdefer runner.deinit(allocator);
-
-    if (build_output.root) |root| {
-        runner.cwd = try allocator.dupe(u8, root);
-    }
-    return runner;
-}
-
-fn findPreferredProjectCommand(build_output: *const build_resolve.ResolvedOutput) ?[]const u8 {
-    const names = [_][]const u8{ "run", "live", "dev", "watch", "serve", "start", "preview", "build" };
-    for (names) |name| {
-        if (findCommand(build_output.preferred.items, name)) |command| return command;
-    }
-    for (names) |name| {
-        if (findCommand(build_output.commands.items, name)) |command| return command;
-    }
-    return null;
-}
-
-fn findCommand(commands: []const build_types.CommandEntry, name: []const u8) ?[]const u8 {
-    for (commands) |entry| {
-        if (std.mem.eql(u8, entry.name, name)) return entry.command;
-    }
-    return null;
-}
-
-fn formatProjectName(allocator: std.mem.Allocator, filetype: []const u8) ![]u8 {
-    var text = try allocator.dupe(u8, filetype);
-    errdefer allocator.free(text);
-    if (text.len > 0 and std.ascii.isLower(text[0])) {
-        text[0] = std.ascii.toUpper(text[0]);
-    }
-    return std.fmt.allocPrint(allocator, "{s} Project", .{text});
 }
 
 fn parseResolveDaemonBegin(line: []const u8) !ResolveDaemonRequestHeader {
@@ -384,14 +199,17 @@ test "resolveRunner returns configured filetype runner" {
         1,
     );
 
-    var runner = try resolveRunner(allocator, .{
+    var resolved = try resolveRunner(allocator, .{
         .path = "/tmp/test.py",
         .filetype = "python",
     });
-    defer runner.deinit(allocator);
+    defer resolved.deinit(allocator);
 
-    try std.testing.expectEqualStrings("filetype", runner.source);
-    try std.testing.expectEqualStrings("python3 -u $file", runner.command.?);
+    try std.testing.expectEqualStrings("filetype", resolved.source);
+    try std.testing.expectEqualStrings("python3 -u '/tmp/test.py'", resolved.command.?);
+    try std.testing.expectEqualStrings("python3", resolved.argv.items[0]);
+    try std.testing.expectEqualStrings("-u", resolved.argv.items[1]);
+    try std.testing.expectEqualStrings("/tmp/test.py", resolved.argv.items[2]);
 }
 
 test "handleDaemonFrame writes run resolve error frame for malformed header with request id" {
@@ -411,4 +229,44 @@ test "handleDaemonFrame writes run resolve error frame for malformed header with
         "@@ZRUN_RES_BEGIN 7\n@@ZRUN_RES_ERR 7 InvalidRunResolveDaemonHeader\n@@ZRUN_RES_END 7\n",
         out.items,
     );
+}
+
+test "resolveRunner prefers zig build run when build.zig exists" {
+    const allocator = std.testing.allocator;
+    defer config_store.reset();
+
+    try config_store.setSyncedConfigJson(
+        "{" ++
+            "\"runners\":{" ++
+                "\"zig\":\"zig run $file\"" ++
+            "}," ++
+            "\"build_commands\":{}," ++
+            "\"detect\":{}," ++
+            "\"revision\":3" ++
+        "}",
+        3,
+    );
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("src");
+    try tmp.dir.writeFile(.{ .sub_path = "build.zig", .data = "pub fn build(b: *std.Build) void { _ = b; }\n" });
+
+    const root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.zig" });
+    defer allocator.free(filepath);
+
+    var resolved = try resolveRunner(allocator, .{
+        .path = filepath,
+        .filetype = "zig",
+        .project_root = root,
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("project", resolved.source);
+    try std.testing.expectEqualStrings("zig build run", resolved.command.?);
+    try std.testing.expectEqualStrings(root, resolved.cwd.?);
+    try std.testing.expectEqualStrings("Zig Project", resolved.name.?);
 }

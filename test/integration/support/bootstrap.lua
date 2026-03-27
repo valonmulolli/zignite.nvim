@@ -78,6 +78,16 @@ function M.setup()
 	vim.tbl_deep_extend = vim.tbl_deep_extend or function(behavior, ...)
 		return vim.tbl_extend(behavior, ...)
 	end
+	vim.deepcopy = vim.deepcopy or function(value)
+		if type(value) ~= "table" then
+			return value
+		end
+		local copied = {}
+		for key, item in pairs(value) do
+			copied[key] = vim.deepcopy(item)
+		end
+		return copied
+	end
 	vim.keymap = vim.keymap or { set = function() end }
 	vim.fs = vim.fs or {
 		normalize = function(path)
@@ -170,6 +180,15 @@ function M.setup()
 	end
 	vim.defer_fn = function(func, _delay)
 		func()
+	end
+	vim.wait = vim.wait or function(timeout, condition, _interval)
+		local deadline = os.clock() + ((tonumber(timeout) or 0) / 1000)
+		repeat
+			if condition() then
+				return true
+			end
+		until os.clock() >= deadline
+		return condition()
 	end
 
 	return project_root

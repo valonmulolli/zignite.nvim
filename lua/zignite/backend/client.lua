@@ -4,6 +4,72 @@ local M = {}
 ---@type table<string, table>
 local shared_workers = {}
 
+---@return string
+local function get_plugin_path()
+	local source = debug.getinfo(1, "S").source
+	if source:sub(1, 1) == "@" then
+		source = source:sub(2)
+	end
+
+	local normalize = vim.fs and vim.fs.normalize
+	if source:sub(1, 1) ~= "/" then
+		local cwd
+		if vim.uv and type(vim.uv.cwd) == "function" then
+			cwd = vim.uv.cwd()
+		elseif vim.loop and type(vim.loop.cwd) == "function" then
+			cwd = vim.loop.cwd()
+		elseif vim.fn and type(vim.fn.getcwd) == "function" then
+			cwd = vim.fn.getcwd()
+		else
+			cwd = os.getenv("PWD") or "."
+		end
+		source = cwd .. "/" .. source
+	end
+	if normalize then
+		source = normalize(source)
+	end
+
+	for _ = 1, 4 do
+		source = source:gsub("/[^/]+$", "")
+	end
+	return source
+end
+
+M.ZIG_EXECUTABLE = get_plugin_path() .. "/zig/zig-out/bin/zignite"
+
+---@return boolean
+function M.has_backend()
+	return type(vim.fn.executable) == "function" and vim.fn.executable(M.ZIG_EXECUTABLE) == 1
+end
+
+---@param final_command string|string[]
+---@param argv_command string[]|nil
+---@return string|string[]
+function M.build_system_command(final_command, argv_command)
+	if M.has_backend() then
+		---@type string[]
+		local system_command = { M.ZIG_EXECUTABLE }
+		local config = require("zignite.config")
+		if config.options.timeout and type(config.options.timeout) == "number" then
+			system_command[#system_command + 1] = "--timeout=" .. config.options.timeout
+		end
+		if argv_command and #argv_command > 0 then
+			system_command[#system_command + 1] = "--argv"
+			for _, arg in ipairs(argv_command) do
+				system_command[#system_command + 1] = arg
+			end
+		else
+			system_command[#system_command + 1] = final_command
+		end
+		return system_command
+	end
+
+	if argv_command and #argv_command > 0 then
+		return argv_command
+	end
+	return final_command
+end
+
 ---@param value string
 ---@return string
 local function trim_text(value)

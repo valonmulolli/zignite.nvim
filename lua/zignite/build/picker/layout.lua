@@ -66,7 +66,7 @@ end
 ---@param cmd table
 ---@param layout_mode "compact"|"detailed"
 ---@param width_cap integer
----@param command_for_display fun(command: string): string
+---@param command_for_display fun(cmd: table): string
 ---@return string
 local function format_command_line(cmd, layout_mode, width_cap, command_for_display)
 	if layout_mode == "compact" then
@@ -74,7 +74,7 @@ local function format_command_line(cmd, layout_mode, width_cap, command_for_disp
 		return "  " .. truncate_text(cmd.name, name_limit)
 	end
 
-	local display_command = command_for_display(cmd.command)
+	local display_command = command_for_display(cmd)
 	local name_width = math.max(12, math.min(18, math.floor(width_cap * 0.28)))
 	local preview_limit = math.max(14, width_cap - name_width - 8)
 	return string.format(
@@ -138,7 +138,7 @@ local function build_lines(args)
 
 	local preview_text = args.preview_text
 	if preview_text == nil and #args.filtered_commands > 0 and args.selected_index >= 1 then
-		preview_text = args.command_for_display(args.filtered_commands[args.selected_index].command)
+		preview_text = args.command_for_display(args.filtered_commands[args.selected_index])
 	end
 	preview_text = truncate_text(preview_text or "(none)", math.max(12, args.width_cap - 8))
 	lines[#lines + 1] = " cmd: " .. preview_text

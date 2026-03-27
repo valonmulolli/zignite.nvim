@@ -1,38 +1,24 @@
 ---@type table
 local M = {}
 
-local BUILD_ARG_PLACEHOLDER = "$zignite_args"
 local BUILD_ARG_DISPLAY_PLACEHOLDER = "<args>"
 
----@param command string
+---@param display_command string
 ---@param value string|nil
 ---@return string
-function M.command_for_argument_display(command, value)
+function M.command_for_argument_display(display_command, value)
 	local replacement = value ~= nil and value ~= "" and value or BUILD_ARG_DISPLAY_PLACEHOLDER
-	local escaped = BUILD_ARG_PLACEHOLDER:gsub("(%W)", "%%%1")
-	return command:gsub(escaped, function()
+	return tostring(display_command or ""):gsub("<args>", function()
 		return replacement
 	end)
 end
 
----@param filetype string
----@param command_name string
+---@param selected table
 ---@return string
-function M.get_argument_help_text(filetype, command_name)
-	if filetype == "zig" and command_name == "fetch" then
-		return "Paste GitHub URL only | Enter: run | Esc: cancel | Backspace: edit"
-	end
-	return "Type URL/path | Enter: run | Esc: cancel | Backspace: edit"
-end
-
----@param filetype string
----@param command_name string
----@return string
-local function get_prompt_buffer_help_line(filetype, command_name)
-	if filetype == "zig" and command_name == "fetch" then
-		return " Paste GitHub URL only and press Enter "
-	end
-	return " Type URL/path and press Enter "
+local function get_prompt_buffer_help_line(selected)
+	return " " .. tostring(
+		selected.argument_help or "Type arguments | Enter: run | Esc: cancel | Backspace: edit"
+	) .. " "
 end
 
 ---@param opts table
@@ -135,9 +121,9 @@ function M.open_prompt_buffer_argument_entry(opts)
 	end
 
 	local prompt_buf = vim.api.nvim_create_buf(false, true)
-	local prompt_label = opts.get_command_argument_prompt(opts.filetype, opts.selected.name)
-	local help_line = get_prompt_buffer_help_line(opts.filetype, opts.selected.name)
-	local preview_line = " cmd: " .. opts.command_for_display(opts.selected.command)
+	local prompt_label = tostring(opts.selected.argument_prompt or (opts.selected.name .. " args"))
+	local help_line = get_prompt_buffer_help_line(opts.selected)
+	local preview_line = " cmd: " .. tostring(opts.selected.display_command or opts.selected.command or "")
 
 	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = prompt_buf })
 	vim.api.nvim_set_option_value("buftype", "prompt", { buf = prompt_buf })
@@ -192,10 +178,11 @@ function M.run_inline_argument_entry(opts)
 
 	local current_value = ""
 	opts.set_argument_state({
-		prompt = opts.get_command_argument_prompt(opts.filetype, opts.selected.name),
+		prompt = tostring(opts.selected.argument_prompt or (opts.selected.name .. " args")),
 		value = current_value,
-		command = opts.selected.command,
+		display_command = tostring(opts.selected.display_command or opts.selected.command or ""),
 		name = opts.selected.name,
+		help_text = opts.selected.argument_help,
 	})
 
 	while true do

@@ -12,18 +12,14 @@ local M = {}
 ---@field filepath string
 ---@field mode string
 ---@field config_options table
----@field command_for_display fun(command: string): string
----@field get_detect_runtime_options fun(): table
+---@field detect_runtime_opts table
 ---@field get_build_commands_for_picker fun(
 --- filetype: string,
 --- filepath: string,
---- on_refresh: fun(commands: table<string, string>):nil
----): table<string, string>
----@field can_detect_build_commands_for_filetype fun(filetype: string): boolean
+--- on_refresh: fun(result: table):nil
+---): table
 ---@field run_build_command fun(command_name: string, mode: string, provided_args?: string): nil
 ---@field get_last_build_command fun(filetype: string): string|nil
----@field command_requires_arguments fun(command_template: string): boolean
----@field get_command_argument_prompt fun(filetype: string, command_name: string): string
 
 ---@param opts ZigniteBuildPickerOpts
 ---@return nil
@@ -32,7 +28,7 @@ function M.open(opts)
 	local filetype = opts.filetype
 	local mode = opts.mode
 	local config_options = opts.config_options
-	local detect_runtime_opts = opts.get_detect_runtime_options()
+	local detect_runtime_opts = opts.detect_runtime_opts or {}
 	local float_config = config_options.float or {}
 	local picker_config = config_options.picker or {}
 
@@ -79,10 +75,12 @@ function M.open(opts)
 	end
 
 	---@param command_map table<string, string>|nil
+	---@param command_meta table<string, table>|nil
 	---@return table[]
-	local function build_command_list(command_map)
+	local function build_command_list(command_map, command_meta)
 		return command_helpers.build_command_list(
 			command_map,
+			command_meta,
 			is_c_family,
 			last_selected_name,
 			common_command_order,
@@ -98,12 +96,18 @@ function M.open(opts)
 	local selected_index = 1
 	local filter_query = ""
 	local picker_ready = false
-	---@type table<string, string>|nil
+	---@type table|nil
 	local pending_refresh_commands = nil
 	---@type table<integer, integer>
 	local command_lines
-	---@type { prompt: string, value: string, command: string, name: string }|nil
+	---@type { prompt: string, value: string, display_command: string, name: string, help_text: string|nil }|nil
 	local argument_state = nil
+
+	---@param cmd table
+	---@return string
+	local function command_for_display(cmd)
+		return tostring(cmd and (cmd.display_command or cmd.command) or "")
+	end
 
 	---@return nil
 	local function apply_filter()
@@ -111,15 +115,16 @@ function M.open(opts)
 			all_commands,
 			filter_query,
 			selected_index,
-			opts.command_for_display
+			command_for_display
 		)
 	end
 
 	---@param command_map table<string, string>
+	---@param command_meta table<string, table>|nil
 	---@param preferred_name string|nil
 	---@return nil
-	local function replace_command_map(command_map, preferred_name)
-		all_commands = build_command_list(command_map)
+	local function replace_command_map(command_map, command_meta, preferred_name)
+		all_commands = build_command_list(command_map, command_meta)
 		apply_filter()
 		if preferred_name and #filtered_commands > 0 then
 			local preferred_idx = filter_helpers.find_command_index(filtered_commands, preferred_name)
@@ -133,17 +138,20 @@ function M.open(opts)
 	---@type fun():nil|nil
 	local render_picker = nil
 
-	---@param updated_commands table<string, string>
+	---@param updated table
 	---@return nil
-	local function on_picker_refresh(updated_commands)
+	local function on_picker_refresh(updated)
 		if detect_runtime_opts.live_merge == false then
 			return
 		end
-		if type(updated_commands) ~= "table" then
+		if type(updated) ~= "table" then
 			return
 		end
 		if not picker_ready then
-			pending_refresh_commands = vim.tbl_extend("force", {}, updated_commands)
+			pending_refresh_commands = {
+				commands = vim.tbl_extend("force", {}, updated.commands or {}),
+				command_meta = vim.tbl_extend("force", {}, updated.command_meta or {}),
+			}
 			return
 		end
 
@@ -152,24 +160,29 @@ function M.open(opts)
 			local selected = filtered_commands[selected_index]
 			preferred_name = selected and selected.name or nil
 		end
-		replace_command_map(updated_commands, preferred_name)
+		replace_command_map(updated.commands or {}, updated.command_meta or {}, preferred_name)
 		if type(render_picker) == "function" and win and vim.api.nvim_win_is_valid(win) then
 			render_picker()
 		end
 	end
 
-	local build_cmds = opts.get_build_commands_for_picker(filetype, filepath, on_picker_refresh)
+	local resolved = opts.get_build_commands_for_picker(filetype, filepath, on_picker_refresh)
+	local build_cmds = type(resolved) == "table" and resolved.commands or {}
+	local command_meta = type(resolved) == "table" and resolved.command_meta or {}
 	local can_refresh_from_detection = detect_runtime_opts.async_picker ~= false
-		and opts.can_detect_build_commands_for_filetype(filetype)
 
 	if vim.tbl_isempty(build_cmds) and not can_refresh_from_detection then
 		vim.notify(string.format("No build commands available for filetype: %s", filetype), vim.log.levels.WARN)
 		return
 	end
 
-	replace_command_map(build_cmds, last_selected_name)
+	replace_command_map(build_cmds, command_meta, last_selected_name)
 	if pending_refresh_commands then
-		replace_command_map(pending_refresh_commands, last_selected_name)
+		replace_command_map(
+			pending_refresh_commands.commands or {},
+			pending_refresh_commands.command_meta or {},
+			last_selected_name
+		)
 		pending_refresh_commands = nil
 	end
 
@@ -192,13 +205,14 @@ function M.open(opts)
 		selected_index = selected_index,
 		command_section = command_section,
 		section_labels = section_labels,
-		command_for_display = opts.command_for_display,
+		command_for_display = command_for_display,
 		header_label = argument_state and argument_state.prompt or nil,
 		header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
 		argument_mode = argument_state ~= nil,
-		help_text = argument_state and input.get_argument_help_text(filetype, argument_state.name) or nil,
-		preview_text = argument_state and opts.command_for_display(
-			input.command_for_argument_display(argument_state.command, argument_state.value)
+		help_text = argument_state and argument_state.help_text or nil,
+		preview_text = argument_state and input.command_for_argument_display(
+			argument_state.display_command,
+			argument_state.value
 		) or nil,
 	})
 	command_lines = initial_command_lines
@@ -229,13 +243,14 @@ function M.open(opts)
 			selected_index = selected_index,
 			command_section = command_section,
 			section_labels = section_labels,
-			command_for_display = opts.command_for_display,
+			command_for_display = command_for_display,
 			header_label = argument_state and argument_state.prompt or nil,
 			header_value = argument_state and (argument_state.value ~= "" and argument_state.value or "(required)") or nil,
 			argument_mode = argument_state ~= nil,
-			help_text = argument_state and input.get_argument_help_text(filetype, argument_state.name) or nil,
-			preview_text = argument_state and opts.command_for_display(
-				input.command_for_argument_display(argument_state.command, argument_state.value)
+			help_text = argument_state and argument_state.help_text or nil,
+			preview_text = argument_state and input.command_for_argument_display(
+				argument_state.display_command,
+				argument_state.value
 			) or nil,
 		})
 		command_lines = updated_command_lines
@@ -325,7 +340,7 @@ function M.open(opts)
 		if not selected then
 			return
 		end
-		if opts.command_requires_arguments(selected.command) and input.open_prompt_buffer_argument_entry({
+		if selected.requires_arguments and input.open_prompt_buffer_argument_entry({
 			selected = selected,
 			filetype = filetype,
 			win = win,
@@ -334,19 +349,16 @@ function M.open(opts)
 			render_picker = render_picker,
 			close_picker = close_picker,
 			run_build_command = opts.run_build_command,
-			command_for_display = opts.command_for_display,
-			get_command_argument_prompt = opts.get_command_argument_prompt,
 		}) then
 			return
 		end
-		if opts.command_requires_arguments(selected.command) and input.run_inline_argument_entry({
+		if selected.requires_arguments and input.run_inline_argument_entry({
 			selected = selected,
 			filetype = filetype,
 			mode = mode,
 			render_picker = render_picker,
 			close_picker = close_picker,
 			run_build_command = opts.run_build_command,
-			get_command_argument_prompt = opts.get_command_argument_prompt,
 			get_argument_state = function()
 				return argument_state
 			end,

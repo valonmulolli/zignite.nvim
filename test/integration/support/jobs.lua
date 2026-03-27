@@ -200,6 +200,20 @@ function M.attach(ctx, simulation)
 				end
 				return 1
 			end
+
+			if
+				text:match("^@@ZCFG_REQ_BEGIN%s+")
+				or text:match("^@@ZBR_REQ_BEGIN%s+")
+				or text:match("^@@ZRUN_REQ_BEGIN%s+")
+			then
+				local response = simulation.parse_unified_daemon_request(text)
+				if response and job.opts and job.opts.on_stdout then
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, to_stdout_payload(response))
+					end, 10)
+				end
+				return 1
+			end
 		end
 
 		if simulation.is_quickfix_daemon_cmd(job.cmd) then

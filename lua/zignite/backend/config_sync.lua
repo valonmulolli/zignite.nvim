@@ -1,5 +1,4 @@
 local backend_client = require("zignite.backend.client")
-local state = require("zignite.runtime.state")
 
 ---@type table
 local M = {}
@@ -45,8 +44,8 @@ local function build_config_payload(request_id, params)
 end
 
 local config_client = backend_client.new({
-	executable = state.ZIG_EXECUTABLE,
-	worker_argv = { state.ZIG_EXECUTABLE, "--daemon" },
+	executable = backend_client.ZIG_EXECUTABLE,
+	worker_argv = { backend_client.ZIG_EXECUTABLE, "--daemon" },
 	protocol = CONFIG_PROTOCOL,
 	worker_wait_ms = 1200,
 	request_timeout_ms = 3000,
@@ -61,7 +60,7 @@ local config_client = backend_client.new({
 ---@return string|nil
 local function encode_synced_config(options, revision)
 	if type(vim.json) ~= "table" or type(vim.json.encode) ~= "function" then
-		return nil
+		return string.format('{"revision":%d}', revision)
 	end
 
 	return vim.json.encode({
