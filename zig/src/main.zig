@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_resolve = @import("build/resolve.zig");
 const command = @import("command.zig");
 const daemon = @import("daemon.zig");
 const quickfix = @import("quickfix.zig");
@@ -63,6 +64,15 @@ pub fn main() !void {
         return;
     }
 
+    if (hasFlag(args[1..], "--build-resolve")) {
+        const options = build_resolve.parseArgs(args[1..]) catch |err| {
+            std.log.err("Invalid build-resolve options: {}", .{err});
+            std.process.exit(1);
+        };
+        try build_resolve.runMode(allocator, options);
+        return;
+    }
+
     try command.run(allocator, args);
 }
 
@@ -79,6 +89,7 @@ fn printUsage() void {
         \\  zignite --detect-daemon
         \\  zignite --project-parse-daemon
         \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|bazel-workspace|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
+        \\  zignite --build-resolve --filetype=<ft> --path=/abs/path
     , .{});
 }
 
