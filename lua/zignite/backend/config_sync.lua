@@ -67,6 +67,8 @@ local function encode_synced_config(options, revision)
 	return vim.json.encode({
 		build_commands = type(options) == "table" and options.build_commands or {},
 		detect = type(options) == "table" and options.detect or {},
+		runners = type(options) == "table" and options.runners or {},
+		project = type(options) == "table" and options.project or {},
 		revision = revision,
 	})
 end
