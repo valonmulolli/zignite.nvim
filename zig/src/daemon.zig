@@ -1,4 +1,6 @@
 const std = @import("std");
+const build_resolve = @import("build/resolve.zig");
+const config = @import("config.zig");
 const detect = @import("detect.zig");
 const frame = @import("protocol/frame.zig");
 const protocol_stdio = @import("protocol/stdio.zig");
@@ -14,6 +16,16 @@ const PROJECT_REQ_BEGIN = "@@ZPRJ_REQ_BEGIN";
 const PROJECT_RES_BEGIN = "@@ZPRJ_RES_BEGIN";
 const PROJECT_RES_END = "@@ZPRJ_RES_END";
 const PROJECT_RES_ERR = "@@ZPRJ_RES_ERR";
+
+const CONFIG_REQ_BEGIN = "@@ZCFG_REQ_BEGIN";
+const CONFIG_RES_BEGIN = "@@ZCFG_RES_BEGIN";
+const CONFIG_RES_END = "@@ZCFG_RES_END";
+const CONFIG_RES_ERR = "@@ZCFG_RES_ERR";
+
+const BUILD_RESOLVE_REQ_BEGIN = "@@ZBR_REQ_BEGIN";
+const BUILD_RESOLVE_RES_BEGIN = "@@ZBR_RES_BEGIN";
+const BUILD_RESOLVE_RES_END = "@@ZBR_RES_END";
+const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
 const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
@@ -86,6 +98,40 @@ fn runWithIO(
             };
             continue;
         }
+        if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
+            config.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, CONFIG_REQ_BEGIN)) |request_id| {
+                    try frame.writeErrorResponse(
+                        stdout,
+                        CONFIG_RES_BEGIN,
+                        CONFIG_RES_ERR,
+                        CONFIG_RES_END,
+                        request_id,
+                        @errorName(err),
+                    );
+                    try stdout.flush();
+                }
+            };
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
+            build_resolve.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, BUILD_RESOLVE_REQ_BEGIN)) |request_id| {
+                    try frame.writeErrorResponse(
+                        stdout,
+                        BUILD_RESOLVE_RES_BEGIN,
+                        BUILD_RESOLVE_RES_ERR,
+                        BUILD_RESOLVE_RES_END,
+                        request_id,
+                        @errorName(err),
+                    );
+                    try stdout.flush();
+                }
+            };
+            continue;
+        }
     }
 }
 
@@ -140,4 +186,68 @@ test "runWithIO writes detect error frame for malformed header with request id" 
         "@@ZDET_RES_BEGIN 9\n@@ZDET_RES_ERR 9 InvalidDetectTool\n@@ZDET_RES_END 9\n",
         out.items,
     );
+}
+
+test "runWithIO writes config error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZCFG_REQ_BEGIN 4 nope",
+        "@@ZCFG_REQ_END 4",
+    } };
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try runWithIO(allocator, &reader, out.writer(allocator));
+
+    try std.testing.expectEqualStrings(
+        "@@ZCFG_RES_BEGIN 4\n@@ZCFG_RES_ERR 4 InvalidCharacter\n@@ZCFG_RES_END 4\n",
+        out.items,
+    );
+}
+
+test "runWithIO syncs config and resolves build commands through daemon" {
+    const allocator = std.testing.allocator;
+    defer @import("config/store.zig").reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data = "project(demo)\nadd_executable(demo main.cpp)\n" });
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "main.cpp" });
+    defer allocator.free(filepath);
+
+    const path_arg = try std.fmt.allocPrint(allocator, "\t--path={s}", .{filepath});
+    defer allocator.free(path_arg);
+    const root_arg = try std.fmt.allocPrint(allocator, "\t--project-root={s}", .{root});
+    defer allocator.free(root_arg);
+
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(allocator);
+    try lines.appendSlice(allocator, &.{
+        "@@ZCFG_REQ_BEGIN 1 11",
+        "\t{\"build_commands\":{\"c\":{\"custom\":\"make custom\"}},\"detect\":{\"c_cpp_make\":true}}",
+        "@@ZCFG_REQ_END 1",
+        "@@ZBR_REQ_BEGIN 2",
+        "\t--build-resolve",
+        "\t--filetype=c",
+    });
+    try lines.append(allocator, path_arg);
+    try lines.append(allocator, root_arg);
+    try lines.append(allocator, "@@ZBR_REQ_END 2");
+
+    var reader = TestReader{ .lines = try lines.toOwnedSlice(allocator) };
+    defer allocator.free(reader.lines);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try runWithIO(allocator, &reader, out.writer(allocator));
+
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "@@ZCFG_RES_BEGIN 1\nREVISION\t11\n@@ZCFG_RES_END 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "@@ZBR_RES_BEGIN 2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "CONFIG_REVISION\t11\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tcustom\tmake custom\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tcmake --build build\n") != null);
 }

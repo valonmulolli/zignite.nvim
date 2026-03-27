@@ -305,6 +305,7 @@ M.defaults = {
 -- This will hold the merged user and default configuration
 ---@type table
 M.options = {}
+M.revision = 0
 
 -- Validate configuration options
 ---@param opts table
@@ -418,12 +419,19 @@ function M.setup(opts)
 	opts = opts or {}
 	validate_config(opts)
 	M.options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
+	M.revision = (tonumber(M.revision) or 0) + 1
 	local ok, project_utils = pcall(require, "zignite.utils.project")
 	if ok and project_utils.clear_project_cache then
 		project_utils.clear_project_cache()
 	end
 
 	M.setup_keymaps()
+	if type(vim.fn) == "table" and type(vim.fn.fnamemodify) == "function" then
+		local sync_ok, config_sync = pcall(require, "zignite.backend.config_sync")
+		if sync_ok and type(config_sync.sync_async) == "function" then
+			pcall(config_sync.sync_async, M.options, M.revision)
+		end
+	end
 end
 
 -- Ensure defaults are available without applying side effects (e.g. keymaps).
