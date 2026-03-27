@@ -85,6 +85,7 @@ local function command_sort_rank(cmd, last_selected_name, common_command_order, 
 end
 
 ---@param command_map table<string, string>|nil
+---@param command_meta table<string, table>|nil
 ---@param is_c_family boolean
 ---@param last_selected_name string|nil
 ---@param common_command_order table<string, integer>
@@ -93,6 +94,7 @@ end
 ---@return table[]
 function M.build_command_list(
 	command_map,
+	command_meta,
 	is_c_family,
 	last_selected_name,
 	common_command_order,
@@ -103,7 +105,15 @@ function M.build_command_list(
 	local entries = {}
 	for cmd_name, cmd_string in pairs(command_map or {}) do
 		if not is_redundant_system_alias(command_map, cmd_name, cmd_string, is_c_family) then
-			entries[#entries + 1] = { name = cmd_name, command = cmd_string }
+			local meta = type(command_meta) == "table" and command_meta[cmd_name] or nil
+			entries[#entries + 1] = {
+				name = cmd_name,
+				command = cmd_string,
+				display_command = type(meta) == "table" and meta.display_command or cmd_string,
+				requires_arguments = type(meta) == "table" and meta.requires_arguments == true or false,
+				argument_prompt = type(meta) == "table" and meta.argument_prompt or nil,
+				argument_help = type(meta) == "table" and meta.argument_help or nil,
+			}
 		end
 	end
 

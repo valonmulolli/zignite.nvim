@@ -420,10 +420,6 @@ function M.setup(opts)
 	validate_config(opts)
 	M.options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
 	M.revision = (tonumber(M.revision) or 0) + 1
-	local ok, project_utils = pcall(require, "zignite.utils.project")
-	if ok and project_utils.clear_project_cache then
-		project_utils.clear_project_cache()
-	end
 
 	M.setup_keymaps()
 	if type(vim.fn) == "table" and type(vim.fn.fnamemodify) == "function" then

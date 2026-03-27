@@ -16,14 +16,14 @@ end
 ---@param all_commands table[]
 ---@param filter_query string
 ---@param selected_index integer
----@param command_for_display fun(command: string): string
+---@param command_for_display fun(cmd: table): string
 ---@return table[], integer
 function M.apply_filter(all_commands, filter_query, selected_index, command_for_display)
 	local query = tostring(filter_query or ""):lower()
 	---@type table[]
 	local filtered_commands = {}
 	for _, cmd in ipairs(all_commands) do
-		local display_command = command_for_display(cmd.command)
+		local display_command = command_for_display(cmd)
 		local name_match = cmd.name:lower():find(query, 1, true) ~= nil
 		local command_match = display_command:lower():find(query, 1, true) ~= nil
 		if query == "" or name_match or command_match then

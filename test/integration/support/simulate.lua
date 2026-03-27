@@ -186,6 +186,21 @@ local function split_lines(text)
 end
 
 ---@param path string
+---@return string[]|nil
+local function read_file_lines_direct(path)
+	local file = io.open(path, "r")
+	if not file then
+		return nil
+	end
+	local contents = file:read("*a")
+	file:close()
+	if type(contents) ~= "string" then
+		return nil
+	end
+	return split_lines(contents)
+end
+
+---@param path string
 ---@return string
 local function dirname(path)
 	return vim.fn.fnamemodify(path, ":h")
@@ -194,7 +209,15 @@ end
 ---@param path string
 ---@return boolean
 local function filereadable(path)
-	return type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1
+	if type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1 then
+		return true
+	end
+	local file = io.open(path, "r")
+	if file then
+		file:close()
+		return true
+	end
+	return false
 end
 
 ---@param root string
@@ -577,9 +600,7 @@ local function build_system_backend_lines(path, query, project_root)
 		if not found then
 			return {}
 		end
-		local pyproject_payload = type(vim.fn.readfile) == "function"
-			and vim.fn.readfile(vim.fs.joinpath(found, "pyproject.toml"))
-			or nil
+		local pyproject_payload = read_file_lines_direct(vim.fs.joinpath(found, "pyproject.toml"))
 		local uses_uv = filereadable(vim.fs.joinpath(found, "uv.lock"))
 			or (type(pyproject_payload) == "table" and vim.tbl_contains(pyproject_payload, "[tool.uv]"))
 		local lines = {
@@ -750,6 +771,552 @@ local function canonicalize_diag(line)
 	end
 
 	return nil
+end
+
+---@param request_text string
+---@param begin_marker string
+---@param end_marker string
+---@return table<string, string>|nil
+local function parse_flag_request_args(request_text, begin_marker, end_marker)
+	local req_lines = split_lines(request_text or "")
+	if #req_lines < 3 then
+		return nil
+	end
+
+	local begin_line = req_lines[1]
+	local request_id = begin_line:match("^" .. begin_marker .. "%s+(%d+)$")
+	if not request_id then
+		return nil
+	end
+
+	local end_line = req_lines[#req_lines]
+	local end_id = end_line:match("^" .. end_marker .. "%s+(%d+)$")
+	if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+		return nil
+	end
+
+	---@type table<string, string>
+	local args = { request_id = request_id }
+	for index = 2, #req_lines - 1 do
+		local line = req_lines[index]
+		if line:sub(1, 1) == "\t" then
+			line = line:sub(2)
+		end
+		local key, value = line:match("^%-%-([^=]+)=(.+)$")
+		if key and value and value ~= "" then
+			args[key] = value
+		end
+	end
+	return args
+end
+
+---@param lines string[]
+---@return table, table, table
+local function decode_build_resolve_lines(lines)
+	local meta = {}
+	local commands = {}
+	local preferred = {}
+	for _, line in ipairs(lines or {}) do
+		local kind, name, value = line:match("^([^\t]+)\t([^\t]+)\t(.+)$")
+		if kind == "COMMAND" then
+			commands[name] = value
+		elseif kind == "PREFERRED" then
+			preferred[name] = value
+		else
+			kind, value = line:match("^([^\t]+)\t(.+)$")
+			if kind == "ROOT" then
+				meta.root = value
+			elseif kind == "SYSTEM" then
+				meta.system = value
+			elseif kind == "BUILD_READY" then
+				meta.build_ready = value
+			end
+		end
+	end
+	return meta, commands, preferred
+end
+
+---@param preferred table<string, string>
+---@param commands table<string, string>
+---@return nil
+local function append_implicit_preferred(preferred, commands)
+	for _, key in ipairs({ "build", "run", "live", "test", "clean" }) do
+		if preferred[key] == nil and type(commands[key]) == "string" then
+			preferred[key] = commands[key]
+		end
+	end
+end
+
+---@param value string|nil
+---@return string
+local function trim_text(value)
+	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+---@param value string
+---@return string
+local function quote_shell_arg(value)
+	return "'" .. tostring(value or ""):gsub("'", "'\"'\"'") .. "'"
+end
+
+---@param command string
+---@return boolean
+local function command_requires_arguments(command)
+	return type(command) == "string" and command:find("$zignite_args", 1, true) ~= nil
+end
+
+---@param command string
+---@return string
+local function command_display(command)
+	return tostring(command or ""):gsub("%$zignite_args", "<args>")
+end
+
+---@param filetype string
+---@param command_name string
+---@return string
+local function command_arg_prompt(filetype, command_name)
+	if filetype == "zig" and command_name == "fetch" then
+		return "zig fetch url/path"
+	end
+	return string.format("%s %s args", filetype, command_name)
+end
+
+---@param filetype string
+---@param command_name string
+---@return string
+local function command_arg_help(filetype, command_name)
+	if filetype == "zig" and command_name == "fetch" then
+		return "Paste GitHub URL only | Enter: run | Esc: cancel | Backspace: edit"
+	end
+	return "Type arguments | Enter: run | Esc: cancel | Backspace: edit"
+end
+
+---@param value string
+---@return string
+local function normalize_github_repo_reference(value)
+	local trimmed = trim_text(value)
+	if trimmed == "" or trimmed:match("^%-%-") then
+		return trimmed
+	end
+
+	local shorthand_repo, shorthand_ref = trimmed:match("^([%w%._%-]+/[%w%._%-]+)#(.+)$")
+	if shorthand_repo then
+		return string.format("--save git+https://github.com/%s#%s", shorthand_repo:gsub("%.git$", ""), shorthand_ref)
+	end
+
+	local shorthand = trimmed:match("^([%w%._%-]+/[%w%._%-]+)$")
+	if shorthand then
+		return string.format("--save git+https://github.com/%s", shorthand:gsub("%.git$", ""))
+	end
+
+	local url_repo, url_ref = trimmed:match("^https?://github%.com/([%w%._%-]+/[%w%._%-]+)[/#]?tree/?(.+)$")
+	if url_repo then
+		return string.format("--save git+https://github.com/%s#%s", url_repo:gsub("%.git$", ""), url_ref)
+	end
+
+	local url_plain = trimmed:match("^https?://github%.com/([%w%._%-]+/[%w%._%-]+)/*$")
+	if url_plain then
+		return string.format("--save git+https://github.com/%s", url_plain:gsub("%.git$", ""))
+	end
+
+	if trimmed:match("^git%+https://github%.com/") then
+		return "--save " .. trimmed
+	end
+
+	return trimmed
+end
+
+---@param filetype string
+---@param command_name string
+---@param template string
+---@param command_args string|nil
+---@return string|nil
+local function resolve_command_template(filetype, command_name, template, command_args)
+	if not command_requires_arguments(template) then
+		return template
+	end
+
+	local trimmed = trim_text(command_args)
+	if trimmed == "" then
+		return nil
+	end
+
+	local replacement
+	if filetype == "zig" and command_name == "fetch" then
+		replacement = normalize_github_repo_reference(trimmed)
+	else
+		replacement = quote_shell_arg(trimmed)
+	end
+
+	return template:gsub("%$zignite_args", replacement)
+end
+
+---@param path string
+---@param cwd string|nil
+---@param shell_escape boolean
+---@return string
+local function substitute_runner_variables(template, path, cwd, shell_escape)
+	local file = path
+	local dir = dirname(path)
+	local file_name = vim.fn.fnamemodify(path, ":t")
+	local file_name_without_ext = vim.fn.fnamemodify(path, ":t:r")
+	local file_ext = vim.fn.fnamemodify(path, ":e")
+	local root = cwd or dir
+	local dir_name = vim.fn.fnamemodify(root, ":t")
+
+	local replacements = {
+		["%%"] = file,
+		["$dir"] = dir,
+		["$file"] = file,
+		["$fileName"] = file_name,
+		["$fileNameWithoutExt"] = file_name_without_ext,
+		["$fileExt"] = file_ext,
+		["$dirName"] = dir_name,
+	}
+
+	local result = tostring(template or "")
+	for key, value in pairs(replacements) do
+		local replacement = shell_escape and quote_shell_arg(value) or value
+		result = result:gsub(key:gsub("%%", "%%%%"), replacement)
+	end
+	return result
+end
+
+---@param command string
+---@return boolean
+local function has_unsupported_shell_syntax(command)
+	if type(command) ~= "string" or command == "" then
+		return true
+	end
+	return command:find("[`|;&<>]") ~= nil
+		or command:find("%$%(") ~= nil
+		or command:find("%$[%a_][%w_]*") ~= nil
+		or command:find("%$%b{}") ~= nil
+end
+
+---@param command string
+---@return string[]
+local function tokenize_command(command)
+	if has_unsupported_shell_syntax(command) then
+		return {}
+	end
+
+	local tokens = {}
+	local i = 1
+	local len = #command
+	while i <= len do
+		while i <= len and command:sub(i, i):match("%s") do
+			i = i + 1
+		end
+		if i > len then
+			break
+		end
+
+		local ch = command:sub(i, i)
+		if ch == "'" or ch == '"' then
+			local quote = ch
+			local j = i + 1
+			while j <= len and command:sub(j, j) ~= quote do
+				j = j + 1
+			end
+			if j > len then
+				return {}
+			end
+			tokens[#tokens + 1] = command:sub(i + 1, j - 1)
+			i = j + 1
+		else
+			local j = i
+			while j <= len and not command:sub(j, j):match("%s") do
+				j = j + 1
+			end
+			tokens[#tokens + 1] = command:sub(i, j - 1)
+			i = j
+		end
+	end
+
+	return tokens
+end
+
+---@param filetype string
+---@param name string
+---@param configured string
+---@param commands table<string, string>
+---@return boolean
+local function should_overlay_configured_command(filetype, name, configured, commands)
+	if type(commands[name]) ~= "string" then
+		return true
+	end
+	local config = require("zignite.config")
+	local defaults = type(config.defaults.build_commands) == "table" and config.defaults.build_commands[filetype] or nil
+	if type(defaults) ~= "table" then
+		return true
+	end
+	return defaults[name] ~= configured
+end
+
+---@param filetype string
+---@param path string
+---@param project_root string|nil
+---@param include_configured boolean|nil
+---@return string[]
+local function collect_build_resolve_lines(filetype, path, project_root, include_configured)
+	local lines = {}
+	if filetype == "c" or filetype == "cpp" then
+		lines = build_c_family_auto_lines(path, project_root)
+	elseif filetype == "rust" then
+		lines = M.project_backend_lines.cargo or {}
+	elseif filetype == "go" then
+		lines = M.project_backend_lines.go or {}
+	elseif filetype == "java" or filetype == "kotlin" then
+		local system_lines = build_system_backend_lines(path, "jvm-root", project_root)
+		local detected_system = nil
+		for _, line in ipairs(system_lines) do
+			detected_system = line:match("^SYSTEM\t(.+)$") or detected_system
+		end
+		if detected_system == "maven" then
+			lines = M.project_backend_lines.maven or {}
+		elseif detected_system == "gradle" then
+			lines = M.project_backend_lines.gradle or {}
+		else
+			lines = system_lines
+		end
+	elseif filetype == "javascript" or filetype == "typescript" then
+		local system_lines = build_system_backend_lines(path, "node-root", project_root)
+		if #system_lines > 0 then
+			lines = vim.deepcopy(system_lines)
+			for _, line in ipairs(M.project_backend_lines["package-json-auto"] or {}) do
+				lines[#lines + 1] = line
+			end
+		end
+	elseif filetype == "python" then
+		lines = build_system_backend_lines(path, "python-root", project_root)
+	elseif filetype == "bzl" then
+		lines = M.project_backend_lines["bazel-auto"] or {}
+	end
+
+	local config = require("zignite.config")
+	local configured = include_configured ~= false
+		and type(config.options.build_commands) == "table"
+		and config.options.build_commands[filetype]
+		or nil
+	if type(configured) == "table" then
+		local meta, commands, preferred = decode_build_resolve_lines(lines)
+		for name, command in pairs(configured) do
+			if should_overlay_configured_command(filetype, name, command, commands) then
+				commands[name] = command
+			end
+		end
+
+		local merged = {}
+		if type(meta.root) == "string" then
+			merged[#merged + 1] = "ROOT\t" .. meta.root
+		end
+		if type(meta.system) == "string" then
+			merged[#merged + 1] = "SYSTEM\t" .. meta.system
+		end
+		if type(meta.build_ready) == "string" then
+			merged[#merged + 1] = "BUILD_READY\t" .. meta.build_ready
+		end
+		for name, command in pairs(commands) do
+			merged[#merged + 1] = string.format("COMMAND\t%s\t%s", name, command)
+		end
+		for name, command in pairs(preferred) do
+			merged[#merged + 1] = string.format("PREFERRED\t%s\t%s", name, command)
+		end
+		return merged
+	end
+
+	return lines
+end
+
+---@param request_text string
+---@return string[]|nil
+local function parse_config_daemon_request(request_text)
+	local req_lines = split_lines(request_text or "")
+	if #req_lines < 2 then
+		return nil
+	end
+	local begin_line = req_lines[1]
+	local request_id = begin_line:match("^@@ZCFG_REQ_BEGIN%s+(%d+)%s+%d+$")
+	if not request_id then
+		return nil
+	end
+	local end_line = req_lines[#req_lines]
+	local end_id = end_line:match("^@@ZCFG_REQ_END%s+(%d+)$")
+	if not end_id or tonumber(end_id) ~= tonumber(request_id) then
+		return nil
+	end
+	return {
+		"@@ZCFG_RES_BEGIN " .. request_id,
+		"@@ZCFG_RES_END " .. request_id,
+	}
+end
+
+---@param request_text string
+---@return string[]|nil
+local function parse_build_resolve_daemon_request(request_text)
+	local args = parse_flag_request_args(request_text, "@@ZBR_REQ_BEGIN", "@@ZBR_REQ_END")
+	if not args or not args.path or not args.filetype then
+		return nil
+	end
+
+	local config = require("zignite.config")
+	local response = { "@@ZBR_RES_BEGIN " .. args.request_id }
+	local lines = collect_build_resolve_lines(args.filetype, args.path, args["project-root"], true)
+	local meta, commands, preferred = decode_build_resolve_lines(lines)
+	append_implicit_preferred(preferred, commands)
+
+	if type(args["command-name"]) == "string" and args["command-name"] ~= "" then
+		local command_name = args["command-name"]
+		local command_template = commands[command_name]
+		if type(command_template) == "string" and command_template ~= "" then
+			local resolved = resolve_command_template(
+				args.filetype,
+				command_name,
+				command_template,
+				args["command-args"]
+			)
+			if type(resolved) == "string" and resolved ~= "" then
+				response[#response + 1] = "\tFILETYPE\t" .. args.filetype
+				response[#response + 1] = "\tCWD\t" .. (meta.root or dirname(args.path))
+				response[#response + 1] = "\tNAME\t" .. string.format("%s: %s", args.filetype, command_name)
+				response[#response + 1] = "\tEXEC_COMMAND\t" .. resolved
+			end
+		end
+	else
+		for _, line in ipairs(lines) do
+			response[#response + 1] = "\t" .. line
+			local kind, name, value = line:match("^([^\t]+)\t([^\t]+)\t(.+)$")
+			if kind == "COMMAND" then
+				response[#response + 1] = "\tCOMMAND_DISPLAY\t" .. name .. "\t" .. command_display(value)
+				if command_requires_arguments(value) then
+					response[#response + 1] = "\tCOMMAND_ARGS_REQUIRED\t" .. name .. "\t1"
+					response[#response + 1] = "\tCOMMAND_ARG_PROMPT\t" .. name .. "\t" .. command_arg_prompt(args.filetype, name)
+					response[#response + 1] = "\tCOMMAND_ARG_HELP\t" .. name .. "\t" .. command_arg_help(args.filetype, name)
+				end
+			end
+		end
+		for name, command in pairs(preferred) do
+			response[#response + 1] = "\tPREFERRED\t" .. name .. "\t" .. command
+		end
+	end
+	response[#response + 1] = "\tCONFIG_REVISION\t" .. tostring(config.revision or 0)
+	response[#response + 1] = "@@ZBR_RES_END " .. args.request_id
+	return response
+end
+
+---@param runner any
+---@return string|nil, string|nil, string|nil
+local function parse_runner_value(runner)
+	if type(runner) == "string" and runner ~= "" then
+		return runner, nil, nil
+	end
+	if type(runner) ~= "table" then
+		return nil, nil, nil
+	end
+	if type(runner.cmd) == "string" and runner.cmd ~= "" then
+		return runner.cmd, runner.cleanup_command, runner.cwd
+	end
+	if type(runner.cmd) == "table" and #runner.cmd > 0 then
+		return table.concat(runner.cmd, " && "), runner.cleanup_command, runner.cwd
+	end
+	if #runner > 0 then
+		return table.concat(runner, " && "), nil, nil
+	end
+	return nil, nil, nil
+end
+
+---@param request_text string
+---@return string[]|nil
+local function parse_run_resolve_daemon_request(request_text)
+	local args = parse_flag_request_args(request_text, "@@ZRUN_REQ_BEGIN", "@@ZRUN_REQ_END")
+	if not args or not args.path or not args.filetype then
+		return nil
+	end
+
+	local config = require("zignite.config")
+	local defaults = config.defaults or {}
+	local options = config.options or {}
+	local filetype = args.filetype
+	local filepath = args.path
+	local project_root = args["project-root"]
+	local resolved_build_lines = collect_build_resolve_lines(filetype, filepath, project_root, false)
+	local meta, commands, preferred = decode_build_resolve_lines(resolved_build_lines)
+
+	local response = { "@@ZRUN_RES_BEGIN " .. args.request_id }
+	local runner = type(options.runners) == "table" and options.runners[filetype] or nil
+	local default_runner = type(defaults.runners) == "table" and defaults.runners[filetype] or nil
+
+	if filetype == "zig" then
+		local root = meta.root or project_root or find_root_for_markers(filepath, { "build.zig" }, 12)
+		if type(root) == "string" and filereadable(vim.fs.joinpath(root, "build.zig")) then
+			response[#response + 1] = "\tCOMMAND\tzig build run"
+			response[#response + 1] = "\tARGV\tzig"
+			response[#response + 1] = "\tARGV\tbuild"
+			response[#response + 1] = "\tARGV\trun"
+			response[#response + 1] = "\tSOURCE\tproject"
+			response[#response + 1] = "\tFILETYPE\t" .. filetype
+			response[#response + 1] = "\tCONFIG_REVISION\t" .. tostring(config.revision or 0)
+			response[#response + 1] = "\tCWD\t" .. root
+			response[#response + 1] = "\tNAME\tZig Project"
+			response[#response + 1] = "@@ZRUN_RES_END " .. args.request_id
+			return response
+		end
+	end
+
+	local command, cleanup_command, cwd = parse_runner_value(runner)
+	if type(command) == "string" and filetype == "python" and command == default_runner then
+		local project_run = preferred.run or commands.run
+		if type(project_run) == "string" and project_run:match("^uv run ") then
+			command = project_run
+		end
+	end
+	if type(command) == "string" and filetype == "go" and command == default_runner then
+		local project_run = preferred.run or commands.run
+		if type(project_run) == "string" and project_run ~= "" then
+			command = project_run
+			cwd = cwd or "$dir"
+		end
+	end
+
+	if type(command) == "string" and command ~= "" then
+		local resolved_command = substitute_runner_variables(command, filepath, cwd, true)
+		local argv = tokenize_command(substitute_runner_variables(command, filepath, cwd, false))
+		response[#response + 1] = "\tCOMMAND\t" .. resolved_command
+		for _, arg in ipairs(argv) do
+			response[#response + 1] = "\tARGV\t" .. arg
+		end
+		response[#response + 1] = "\tSOURCE\tfiletype"
+		response[#response + 1] = "\tFILETYPE\t" .. filetype
+		response[#response + 1] = "\tCONFIG_REVISION\t" .. tostring(config.revision or 0)
+		if type(cleanup_command) == "string" and cleanup_command ~= "" then
+			response[#response + 1] = "\tCLEANUP_COMMAND\t" .. substitute_runner_variables(cleanup_command, filepath, cwd, true)
+		end
+		if type(cwd) == "string" and cwd ~= "" then
+			response[#response + 1] = "\tCWD\t" .. substitute_runner_variables(cwd, filepath, nil, false)
+		end
+		response[#response + 1] = "\tNAME\t" .. filetype
+		response[#response + 1] = "@@ZRUN_RES_END " .. args.request_id
+		return response
+	end
+
+	local project_run = preferred.run or commands.run or preferred.live or commands.live or commands.build
+	if type(project_run) == "string" and project_run ~= "" then
+		response[#response + 1] = "\tCOMMAND\t" .. project_run
+		for _, arg in ipairs(tokenize_command(project_run)) do
+			response[#response + 1] = "\tARGV\t" .. arg
+		end
+		response[#response + 1] = "\tSOURCE\tproject"
+		response[#response + 1] = "\tFILETYPE\t" .. filetype
+		response[#response + 1] = "\tCONFIG_REVISION\t" .. tostring(config.revision or 0)
+		if type(meta.root) == "string" and meta.root ~= "" then
+			response[#response + 1] = "\tCWD\t" .. meta.root
+		end
+		response[#response + 1] = "\tNAME\t" .. (filetype:gsub("^%l", string.upper) .. " Project")
+	end
+
+	response[#response + 1] = "@@ZRUN_RES_END " .. args.request_id
+	return response
 end
 
 ---@param input string
@@ -1022,6 +1589,15 @@ end
 ---@return string[]|nil
 function M.parse_unified_daemon_request(request_text)
 	local begin_line = split_lines(request_text or "")[1] or ""
+	if begin_line:match("^@@ZCFG_REQ_BEGIN%s+") then
+		return parse_config_daemon_request(request_text)
+	end
+	if begin_line:match("^@@ZBR_REQ_BEGIN%s+") then
+		return parse_build_resolve_daemon_request(request_text)
+	end
+	if begin_line:match("^@@ZRUN_REQ_BEGIN%s+") then
+		return parse_run_resolve_daemon_request(request_text)
+	end
 	if begin_line:match("^@@ZQF_BEGIN%s+") then
 		return M.parse_daemon_request(request_text)
 	end
