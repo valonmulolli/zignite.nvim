@@ -1,4 +1,6 @@
 local config = require("zignite.config")
+local build_resolve = require("zignite.backend.build_resolve")
+local config_sync = require("zignite.backend.config_sync")
 local tooling_query = require("zignite.build.tooling.query")
 local project_query = require("zignite.build.project_query")
 local cache_state = require("zignite.build.cache_state")
@@ -187,6 +189,73 @@ local function append_sync_tool_detector_commands(commands, filetype, is_detecti
 		extend_string_map(commands, detector.sync())
 	end
 	return commands
+end
+
+---@param filetype string
+---@param is_detection_enabled fun(flag: string): boolean
+---@return table<string, string>
+function M.detect_direct_tool_commands_for_filetype(filetype, is_detection_enabled)
+	return append_sync_tool_detector_commands({}, filetype, is_detection_enabled)
+end
+
+---@param filepath string
+---@return boolean
+local function can_use_backend_build_resolve(filepath)
+	if type(filepath) ~= "string" or filepath == "" then
+		return false
+	end
+	return tonumber(config_sync.get_last_synced_revision and config_sync.get_last_synced_revision() or 0)
+		== tonumber(config.revision or 0)
+end
+
+---@param filepath string
+---@return string|nil
+local function resolve_backend_project_root(filepath)
+	return project_utils.get_project_root(filepath, config.options.project)
+end
+
+---@param resolved table|nil
+---@return table|nil
+local function normalize_backend_resolved_commands(resolved)
+	if type(resolved) ~= "table" or type(resolved.commands) ~= "table" or vim.tbl_isempty(resolved.commands) then
+		return nil
+	end
+	return resolved
+end
+
+---@param filetype string
+---@param filepath string
+---@return boolean
+function M.can_resolve_backend_build_commands(filetype, filepath)
+	local _ = filetype
+	return can_use_backend_build_resolve(filepath)
+end
+
+---@param filetype string
+---@param filepath string
+---@return table|nil
+function M.resolve_backend_build_commands(filetype, filepath)
+	if not M.can_resolve_backend_build_commands(filetype, filepath) then
+		return nil
+	end
+
+	return normalize_backend_resolved_commands(
+		build_resolve.resolve_sync(filepath, filetype, resolve_backend_project_root(filepath))
+	)
+end
+
+---@param filetype string
+---@param filepath string
+---@param on_done fun(resolved: table|nil):nil
+---@return boolean
+function M.resolve_backend_build_commands_async(filetype, filepath, on_done)
+	if not M.can_resolve_backend_build_commands(filetype, filepath) then
+		return false
+	end
+
+	return build_resolve.resolve_async(filepath, filetype, resolve_backend_project_root(filepath), function(resolved)
+		on_done(normalize_backend_resolved_commands(resolved))
+	end)
 end
 
 ---@param sync_commands table<string, string>
@@ -439,27 +508,45 @@ end
 ---@return table|nil
 function M.get_preferred_project_command(filetype, filepath)
 	local is_detection_enabled = config_detection_enabled()
-	local build_cmds = M.merge_build_commands(
-		filetype,
-		filepath,
-		M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
-	)
+	local backend_resolved = M.resolve_backend_build_commands(filetype, filepath)
+	local build_cmds
+	if backend_resolved then
+		build_cmds = M.detect_direct_tool_commands_for_filetype(filetype, is_detection_enabled)
+		extend_string_map(build_cmds, backend_resolved.commands)
+	else
+		build_cmds = M.merge_build_commands(
+			filetype,
+			filepath,
+			M.detect_tool_commands_for_filetype(filetype, filepath, is_detection_enabled)
+		)
+	end
 	local root = project_utils.get_project_root(filepath, config.options.project)
 	if not root then
 		root = vim.fn.fnamemodify(filepath, ":h")
 	end
 
-	local preferred_name = build_cmds.run and "run"
+	local preferred_commands = type(backend_resolved) == "table" and backend_resolved.preferred_commands or nil
+	local preferred_name = type(preferred_commands) == "table" and preferred_commands.run and "run"
+		or M.select_live_command_name_for_filetype(
+			filetype,
+			filepath,
+			type(preferred_commands) == "table" and preferred_commands or build_cmds,
+			is_detection_enabled
+		)
+		or (type(preferred_commands) == "table" and preferred_commands.start and "start")
+		or (type(preferred_commands) == "table" and preferred_commands.build and "build")
+		or build_cmds.run and "run"
 		or M.select_live_command_name_for_filetype(filetype, filepath, build_cmds, is_detection_enabled)
 		or build_cmds.start and "start"
 		or build_cmds.build and "build"
 		or nil
-	if not preferred_name or type(build_cmds[preferred_name]) ~= "string" then
+	local preferred_source = type(preferred_commands) == "table" and preferred_commands or build_cmds
+	if not preferred_name or type(preferred_source[preferred_name]) ~= "string" then
 		return nil
 	end
 	return {
 		name = string.format("%s Project", filetype:gsub("^%l", string.upper)),
-		command = build_cmds[preferred_name],
+		command = preferred_source[preferred_name],
 		root = root,
 	}
 end
