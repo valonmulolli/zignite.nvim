@@ -6,6 +6,7 @@ const frame = @import("protocol/frame.zig");
 const protocol_stdio = @import("protocol/stdio.zig");
 const project = @import("project.zig");
 const quickfix = @import("quickfix.zig");
+const run_resolve = @import("runtime/resolve.zig");
 
 const DETECT_REQ_BEGIN = "@@ZDET_REQ_BEGIN";
 const DETECT_RES_BEGIN = "@@ZDET_RES_BEGIN";
@@ -26,6 +27,11 @@ const BUILD_RESOLVE_REQ_BEGIN = "@@ZBR_REQ_BEGIN";
 const BUILD_RESOLVE_RES_BEGIN = "@@ZBR_RES_BEGIN";
 const BUILD_RESOLVE_RES_END = "@@ZBR_RES_END";
 const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
+
+const RUN_RESOLVE_REQ_BEGIN = "@@ZRUN_REQ_BEGIN";
+const RUN_RESOLVE_RES_BEGIN = "@@ZRUN_RES_BEGIN";
+const RUN_RESOLVE_RES_END = "@@ZRUN_RES_END";
+const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
 const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
@@ -124,6 +130,23 @@ fn runWithIO(
                         BUILD_RESOLVE_RES_BEGIN,
                         BUILD_RESOLVE_RES_ERR,
                         BUILD_RESOLVE_RES_END,
+                        request_id,
+                        @errorName(err),
+                    );
+                    try stdout.flush();
+                }
+            };
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
+            run_resolve.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
+                if (err == error.UnexpectedEof) return err;
+                if (frame.parseRequestId(line, RUN_RESOLVE_REQ_BEGIN)) |request_id| {
+                    try frame.writeErrorResponse(
+                        stdout,
+                        RUN_RESOLVE_RES_BEGIN,
+                        RUN_RESOLVE_RES_ERR,
+                        RUN_RESOLVE_RES_END,
                         request_id,
                         @errorName(err),
                     );

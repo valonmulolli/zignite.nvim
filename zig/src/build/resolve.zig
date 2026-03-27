@@ -23,14 +23,14 @@ pub const BUILD_RESOLVE_RES_END = "@@ZBR_RES_END";
 pub const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
 const BUILD_RESOLVE_MAX_LINE = 16384;
 
-const ParsedOutput = struct {
+pub const ResolvedOutput = struct {
     root: ?[]u8 = null,
     system: ?[]u8 = null,
     build_ready: ?bool = null,
     commands: std.ArrayList(build_types.CommandEntry) = .empty,
     preferred: std.ArrayList(build_types.CommandEntry) = .empty,
 
-    fn deinit(self: *ParsedOutput, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ResolvedOutput, allocator: std.mem.Allocator) void {
         if (self.root) |root| allocator.free(root);
         if (self.system) |system| allocator.free(system);
         freeOwnedCommands(allocator, self.commands.items);
@@ -144,12 +144,8 @@ fn writeResolvedOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
     const configured = try collectConfiguredCommands(allocator, options.filetype);
     defer freeOwnedCommands(allocator, configured);
 
-    var parsed_output = try collectAutoProjectOutput(allocator, options);
+    var parsed_output = try resolveOutput(allocator, options);
     defer parsed_output.deinit(allocator);
-
-    for (configured) |entry| {
-        try upsertOwnedCommand(&parsed_output.commands, allocator, entry.name, entry.command);
-    }
 
     if (parsed_output.root) |root| {
         try stdout.print("ROOT\t{s}\n", .{root});
@@ -172,6 +168,19 @@ fn writeResolvedOutput(stdout: anytype, allocator: std.mem.Allocator, options: O
     for (parsed_output.preferred.items) |entry| {
         try stdout.print("PREFERRED\t{s}\t{s}\n", .{ entry.name, entry.command });
     }
+}
+
+pub fn resolveOutput(allocator: std.mem.Allocator, options: Options) !ResolvedOutput {
+    const configured = try collectConfiguredCommands(allocator, options.filetype);
+    defer freeOwnedCommands(allocator, configured);
+
+    var parsed_output = try collectAutoProjectOutput(allocator, options);
+    errdefer parsed_output.deinit(allocator);
+
+    for (configured) |entry| {
+        try upsertOwnedCommand(&parsed_output.commands, allocator, entry.name, entry.command);
+    }
+    return parsed_output;
 }
 
 fn collectConfiguredCommands(allocator: std.mem.Allocator, filetype: []const u8) ![]build_types.CommandEntry {
@@ -208,7 +217,7 @@ fn collectConfiguredCommands(allocator: std.mem.Allocator, filetype: []const u8)
     return try commands.toOwnedSlice(allocator);
 }
 
-fn collectAutoProjectOutput(allocator: std.mem.Allocator, options: Options) !ParsedOutput {
+fn collectAutoProjectOutput(allocator: std.mem.Allocator, options: Options) !ResolvedOutput {
     const kind = autoKindForFiletype(options.filetype);
     if (kind == null or !isDetectionEnabled(allocator, options.filetype)) {
         return .{};
@@ -231,8 +240,8 @@ fn collectAutoProjectOutput(allocator: std.mem.Allocator, options: Options) !Par
     return try parseProjectOutput(allocator, output.items);
 }
 
-fn parseProjectOutput(allocator: std.mem.Allocator, output: []const u8) !ParsedOutput {
-    var parsed: ParsedOutput = .{};
+fn parseProjectOutput(allocator: std.mem.Allocator, output: []const u8) !ResolvedOutput {
+    var parsed: ResolvedOutput = .{};
     errdefer parsed.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');

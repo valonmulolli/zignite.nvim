@@ -5,6 +5,7 @@ const daemon = @import("daemon.zig");
 const quickfix = @import("quickfix.zig");
 const detect = @import("detect.zig");
 const project = @import("project.zig");
+const run_resolve = @import("runtime/resolve.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -73,6 +74,15 @@ pub fn main() !void {
         return;
     }
 
+    if (hasFlag(args[1..], "--run-resolve")) {
+        const options = run_resolve.parseArgs(args[1..]) catch |err| {
+            std.log.err("Invalid run-resolve options: {}", .{err});
+            std.process.exit(1);
+        };
+        try run_resolve.runMode(allocator, options);
+        return;
+    }
+
     try command.run(allocator, args);
 }
 
@@ -90,6 +100,7 @@ fn printUsage() void {
         \\  zignite --project-parse-daemon
         \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|bazel-workspace|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
         \\  zignite --build-resolve --filetype=<ft> --path=/abs/path
+        \\  zignite --run-resolve --filetype=<ft> --path=/abs/path
     , .{});
 }
 
