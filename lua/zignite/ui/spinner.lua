@@ -1,4 +1,4 @@
-local frame = require("zignite.ui.frame")
+local frame = require("zignite.ui.common")
 
 ---@type table
 local M = {}
@@ -85,10 +85,11 @@ function M.set_exit_status(win_id, exit_code)
 	local title = string.format(" %s %s (Code: %d) ", icon, status_text, exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { title = title })
 
-	local footer = string.format(" Process exited with %d ", exit_code)
+	local float_config = frame.get_config().float
+	local close_key = frame.format_key_for_display(float_config.close_key or "<Esc>")
+	local footer = string.format(" %s: close ", close_key)
 	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
 
-	local float_config = frame.get_config().float
 	local new_border_hl = success and (float_config.border_hl_success or "DiagnosticOk")
 		or (float_config.border_hl_error or "DiagnosticError")
 	pcall(vim.api.nvim_set_option_value, "winhl", "Normal:Normal,FloatBorder:" .. new_border_hl, { win = win_id })

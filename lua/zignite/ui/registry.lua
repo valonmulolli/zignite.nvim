@@ -71,6 +71,8 @@ function M.clean_invalid()
 	for _, runner in ipairs(runners) do
 		if vim.api.nvim_win_is_valid(runner.win_id) then
 			table.insert(valid, runner)
+		elseif vim.api.nvim_buf_is_valid(runner.buf_id) then
+			pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
 		end
 	end
 	runners = valid

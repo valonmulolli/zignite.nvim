@@ -30,6 +30,7 @@ pub fn parseTargets(allocator: std.mem.Allocator, contents: []const u8) ![]Targe
         if (capture_rule == null) {
             const rule_name = parseRuleName(line) orelse continue;
             var list: std.ArrayList(u8) = .empty;
+            errdefer list.deinit(allocator);
             try list.appendSlice(allocator, line);
             depth = countParenDelta(line);
             if (depth <= 0) {
@@ -77,18 +78,57 @@ fn commitBlock(
     }
     try collectRuleSourceEntries(allocator, block, &source_entries);
 
-    try targets.append(allocator, .{
-        .rule_name = try allocator.dupe(u8, rule_name),
-        .name = try allocator.dupe(u8, target_name),
+    const owned_rule_name = try allocator.dupe(u8, rule_name);
+    const owned_target_name = allocator.dupe(u8, target_name) catch |err| {
+        allocator.free(owned_rule_name);
+        return err;
+    };
+    const owned_source_entries = source_entries.toOwnedSlice(allocator) catch |err| {
+        allocator.free(owned_rule_name);
+        allocator.free(owned_target_name);
+        return err;
+    };
+    source_entries = .empty;
+
+    targets.append(allocator, .{
+        .rule_name = owned_rule_name,
+        .name = owned_target_name,
         .supports_run = ruleSupportsRun(rule_name, block),
-        .supports_test = ruleSupportsTest(rule_name, target_name, source_entries.items),
-        .source_entries = try source_entries.toOwnedSlice(allocator),
-    });
+        .supports_test = ruleSupportsTest(rule_name, target_name, owned_source_entries),
+        .source_entries = owned_source_entries,
+    }) catch |err| {
+        allocator.free(owned_rule_name);
+        allocator.free(owned_target_name);
+        common.freeOwnedNameList(allocator, owned_source_entries);
+        return err;
+    };
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
-    const hash_idx = std.mem.indexOfScalar(u8, line, '#') orelse return line;
-    return line[0..hash_idx];
+    var quote: ?u8 = null;
+    var escaped = false;
+
+    for (line, 0..) |ch, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null and ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '#') return line[0..index];
+    }
+
+    return line;
 }
 
 fn parseRuleName(line: []const u8) ?[]const u8 {
@@ -143,7 +183,9 @@ fn collectQuotedValues(
         if (quote != '"' and quote != '\'') continue;
         const start = index + 1;
         index = start;
-        while (index < text.len and text[index] != quote) : (index += 1) {}
+        while (index < text.len and text[index] != quote) : (index += 1) {
+            if (text[index] == '\\' and index + 1 < text.len) index += 1;
+        }
         if (index > start and index < text.len and text[index] == quote) {
             try common.pushUniqueName(allocator, source_entries, text[start..index]);
         }
@@ -157,7 +199,9 @@ fn parseNamedString(block: []const u8, key: []const u8) ?[]const u8 {
     if (quote != '"' and quote != '\'') return null;
 
     var index = start + 1;
-    while (index < block.len and block[index] != quote) : (index += 1) {}
+    while (index < block.len and block[index] != quote) : (index += 1) {
+        if (block[index] == '\\' and index + 1 < block.len) index += 1;
+    }
     if (index <= start + 1 or index >= block.len or block[index] != quote) return null;
     return block[start + 1 .. index];
 }
@@ -220,8 +264,8 @@ fn ruleSupportsRun(rule_name: []const u8, block: []const u8) bool {
 
     const lower = std.ascii.allocLowerString(std.heap.page_allocator, rule_name) catch return false;
     defer std.heap.page_allocator.free(lower);
-    if (std.mem.indexOf(u8, lower, "test") != null) return false;
-    if (std.mem.indexOf(u8, lower, "binary") != null or std.mem.indexOf(u8, lower, "_bin") != null) return true;
+    if (std.mem.find(u8, lower, "test") != null) return false;
+    if (std.mem.find(u8, lower, "binary") != null or std.mem.find(u8, lower, "_bin") != null) return true;
     return parseNamedString(block, "main") != null or parseNamedString(block, "entry_point") != null;
 }
 
@@ -232,7 +276,7 @@ fn ruleSupportsTest(rule_name: []const u8, target_name: []const u8, source_entri
 
     const lower_rule = std.ascii.allocLowerString(std.heap.page_allocator, rule_name) catch return false;
     defer std.heap.page_allocator.free(lower_rule);
-    if (std.mem.indexOf(u8, lower_rule, "test") != null or std.mem.indexOf(u8, lower_rule, "spec") != null) {
+    if (std.mem.find(u8, lower_rule, "test") != null or std.mem.find(u8, lower_rule, "spec") != null) {
         return true;
     }
     if (looksLikeTestName(target_name)) return true;
@@ -245,7 +289,7 @@ fn ruleSupportsTest(rule_name: []const u8, target_name: []const u8, source_entri
 fn looksLikeTestName(value: []const u8) bool {
     const lower = std.ascii.allocLowerString(std.heap.page_allocator, value) catch return false;
     defer std.heap.page_allocator.free(lower);
-    return std.mem.indexOf(u8, lower, "test") != null or std.mem.indexOf(u8, lower, "spec") != null;
+    return std.mem.find(u8, lower, "test") != null or std.mem.find(u8, lower, "spec") != null;
 }
 
 fn isWhitespace(ch: u8) bool {
@@ -296,4 +340,33 @@ test "parse bazel targets" {
     try std.testing.expectEqualStrings("main_test", targets[2].name);
     try std.testing.expect(targets[2].supports_test);
     try std.testing.expectEqualStrings("*_test.cc", targets[2].source_entries[0]);
+}
+
+test "stripHashComment ignores hashes inside strings" {
+    const line = "    srcs = [\"main#debug.cc\", 'lib#test.cc'], # real comment";
+    try std.testing.expectEqualStrings("    srcs = [\"main#debug.cc\", 'lib#test.cc'], ", stripHashComment(line));
+}
+
+test "stripHashComment handles escaped quotes before comment" {
+    const line = "    srcs = [\"main\\\"#debug.cc\"], # real comment";
+    try std.testing.expectEqualStrings("    srcs = [\"main\\\"#debug.cc\"], ", stripHashComment(line));
+}
+
+test "parse bazel targets preserves hashes inside quoted sources" {
+    const allocator = std.testing.allocator;
+    const contents =
+        \\py_binary(
+        \\    name = "tool",
+        \\    srcs = ["tool#dev.py"], # comment outside string
+        \\)
+    ;
+
+    const targets = try parseTargets(allocator, contents);
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("tool", targets[0].name);
+    try std.testing.expect(targets[0].supports_run);
+    try std.testing.expectEqual(@as(usize, 1), targets[0].source_entries.len);
+    try std.testing.expectEqualStrings("tool#dev.py", targets[0].source_entries[0]);
 }

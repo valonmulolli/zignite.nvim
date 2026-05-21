@@ -1,32 +1,49 @@
 const std = @import("std");
-const config = @import("config.zig");
+const config_view = @import("config/view.zig");
 
 pub fn resolveSupportedAlloc(
     allocator: std.mem.Allocator,
     requested_filetype: []const u8,
     filepath: []const u8,
 ) ![]u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return resolveSupportedAllocWithIO(threaded.io(), allocator, requested_filetype, filepath);
+}
+
+pub fn resolveSupportedAllocWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    requested_filetype: []const u8,
+    filepath: []const u8,
+) ![]u8 {
     const requested = std.mem.trim(u8, requested_filetype, " \t\r\n");
     const aliased = aliasFiletype(requested);
+    const named_filetype = filenameFiletype(filepath);
     const ext_filetype = extensionFiletype(filepath);
 
     if (aliased.len != 0) {
-        if (hasConfiguredEntryForFiletype(allocator, aliased)) {
+        if (config_view.hasConfiguredEntryForFiletype(aliased)) {
             return allocator.dupe(u8, aliased);
+        }
+        if (named_filetype) |value| {
+            return allocator.dupe(u8, value);
         }
         if (ext_filetype) |value| {
             return allocator.dupe(u8, value);
         }
-        if (try shebangFiletypeAlloc(allocator, filepath)) |value| {
+        if (try shebangFiletypeAllocWithIO(io, allocator, filepath)) |value| {
             return value;
         }
         return allocator.dupe(u8, aliased);
     }
 
+    if (named_filetype) |value| {
+        return allocator.dupe(u8, value);
+    }
     if (ext_filetype) |value| {
         return allocator.dupe(u8, value);
     }
-    if (try shebangFiletypeAlloc(allocator, filepath)) |value| {
+    if (try shebangFiletypeAllocWithIO(io, allocator, filepath)) |value| {
         return value;
     }
     return allocator.dupe(u8, requested);
@@ -40,7 +57,43 @@ fn aliasFiletype(requested: []const u8) []const u8 {
     if (std.mem.eql(u8, requested, "jsx")) return "javascript";
     if (std.mem.eql(u8, requested, "typescriptreact")) return "typescript";
     if (std.mem.eql(u8, requested, "tsx")) return "typescript";
+    if (std.mem.eql(u8, requested, "cmake")) return "cpp";
+    if (std.mem.eql(u8, requested, "make")) return "cpp";
+    if (std.mem.eql(u8, requested, "meson")) return "cpp";
+    if (std.mem.eql(u8, requested, "groovy")) return "java";
+    if (std.mem.eql(u8, requested, "objcpp")) return "cpp";
+    if (std.mem.eql(u8, requested, "objc")) return "c";
+    if (std.mem.eql(u8, requested, "cuda")) return "cpp";
     return requested;
+}
+
+fn filenameFiletype(filepath: []const u8) ?[]const u8 {
+    const base = std.fs.path.basename(filepath);
+    if (std.mem.eql(u8, base, "BUILD")) return "bzl";
+    if (std.mem.eql(u8, base, "BUILD.bazel")) return "bzl";
+    if (std.mem.eql(u8, base, "Cargo.toml")) return "rust";
+    if (std.mem.eql(u8, base, "CMakeLists.txt")) return "cpp";
+    if (std.mem.eql(u8, base, "GNUmakefile")) return "cpp";
+    if (std.mem.eql(u8, base, "MODULE.bazel")) return "bzl";
+    if (std.mem.eql(u8, base, "Makefile")) return "cpp";
+    if (std.mem.eql(u8, base, "WORKSPACE")) return "bzl";
+    if (std.mem.eql(u8, base, "WORKSPACE.bazel")) return "bzl";
+    if (std.mem.eql(u8, base, "build.gradle")) return "java";
+    if (std.mem.eql(u8, base, "build.gradle.kts")) return "kotlin";
+    if (std.mem.eql(u8, base, "go.mod")) return "go";
+    if (std.mem.eql(u8, base, "go.work")) return "go";
+    if (std.mem.eql(u8, base, "makefile")) return "cpp";
+    if (std.mem.eql(u8, base, "meson.build")) return "cpp";
+    if (std.mem.eql(u8, base, "package.json")) return "javascript";
+    if (std.mem.eql(u8, base, "pnpm-lock.yaml")) return "javascript";
+    if (std.mem.eql(u8, base, "pom.xml")) return "java";
+    if (std.mem.eql(u8, base, "pyproject.toml")) return "python";
+    if (std.mem.eql(u8, base, "requirements.txt")) return "python";
+    if (std.mem.eql(u8, base, "settings.gradle")) return "java";
+    if (std.mem.eql(u8, base, "settings.gradle.kts")) return "kotlin";
+    if (std.mem.eql(u8, base, "uv.lock")) return "python";
+    if (std.mem.eql(u8, base, "yarn.lock")) return "javascript";
+    return null;
 }
 
 fn extensionFiletype(filepath: []const u8) ?[]const u8 {
@@ -54,6 +107,8 @@ fn extensionFiletype(filepath: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, ext, "cjs")) return "javascript";
     if (std.mem.eql(u8, ext, "cpp")) return "cpp";
     if (std.mem.eql(u8, ext, "cts")) return "typescript";
+    if (std.mem.eql(u8, ext, "cu")) return "cpp";
+    if (std.mem.eql(u8, ext, "cuh")) return "cpp";
     if (std.mem.eql(u8, ext, "cxx")) return "cpp";
     if (std.mem.eql(u8, ext, "dart")) return "dart";
     if (std.mem.eql(u8, ext, "ex")) return "elixir";
@@ -65,9 +120,13 @@ fn extensionFiletype(filepath: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, ext, "f95")) return "fortran";
     if (std.mem.eql(u8, ext, "for")) return "fortran";
     if (std.mem.eql(u8, ext, "go")) return "go";
+    if (std.mem.eql(u8, ext, "h")) return "c";
+    if (std.mem.eql(u8, ext, "hh")) return "cpp";
     if (std.mem.eql(u8, ext, "hs")) return "haskell";
     if (std.mem.eql(u8, ext, "htm")) return "html";
     if (std.mem.eql(u8, ext, "html")) return "html";
+    if (std.mem.eql(u8, ext, "hpp")) return "cpp";
+    if (std.mem.eql(u8, ext, "hxx")) return "cpp";
     if (std.mem.eql(u8, ext, "java")) return "java";
     if (std.mem.eql(u8, ext, "jl")) return "julia";
     if (std.mem.eql(u8, ext, "js")) return "javascript";
@@ -97,29 +156,33 @@ fn extensionFiletype(filepath: []const u8) ?[]const u8 {
 }
 
 fn shebangFiletypeAlloc(allocator: std.mem.Allocator, filepath: []const u8) !?[]u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return shebangFiletypeAllocWithIO(threaded.io(), allocator, filepath);
+}
+
+fn shebangFiletypeAllocWithIO(io: std.Io, allocator: std.mem.Allocator, filepath: []const u8) !?[]u8 {
     if (filepath.len == 0) return null;
 
-    var file = if (std.fs.path.isAbsolute(filepath))
-        std.fs.openFileAbsolute(filepath, .{}) catch return null
-    else
-        std.fs.cwd().openFile(filepath, .{}) catch return null;
-    defer file.close();
+    var file = std.Io.Dir.cwd().openFile(io, filepath, .{}) catch return null;
+    defer file.close(io);
 
+    var reader_buf: [1]u8 = undefined;
+    var file_reader = file.reader(io, &reader_buf);
     var buffer: [256]u8 = undefined;
-    const bytes_read = try file.readAll(buffer[0..]);
+    const bytes_read = file_reader.interface.readSliceShort(buffer[0..]) catch return file_reader.err.?;
     if (bytes_read == 0) return null;
 
     const text = buffer[0..bytes_read];
-    const line_end = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
-    const first_line = std.mem.trimRight(u8, text[0..line_end], "\r");
+    const line_end = std.mem.findScalar(u8, text, '\n') orelse text.len;
+    const first_line = std.mem.trimEnd(u8, text[0..line_end], "\r");
     if (!std.mem.startsWith(u8, first_line, "#!")) return null;
 
-    const rest = std.mem.trimLeft(u8, first_line[2..], " \t");
+    const rest = std.mem.trimStart(u8, first_line[2..], " \t");
     var interpreter: ?[]const u8 = null;
     if (std.mem.startsWith(u8, rest, "/usr/bin/env")) {
-        const env_rest = std.mem.trimLeft(u8, rest["/usr/bin/env".len..], " \t");
+        const env_rest = std.mem.trimStart(u8, rest["/usr/bin/env".len..], " \t");
         if (std.mem.startsWith(u8, env_rest, "-S")) {
-            interpreter = nextToken(std.mem.trimLeft(u8, env_rest["-S".len..], " \t"));
+            interpreter = nextToken(std.mem.trimStart(u8, env_rest["-S".len..], " \t"));
         } else {
             interpreter = nextToken(env_rest);
         }
@@ -129,13 +192,13 @@ fn shebangFiletypeAlloc(allocator: std.mem.Allocator, filepath: []const u8) !?[]
     }
 
     const mapped = mapShebangInterpreter(interpreter orelse return null) orelse return null;
-    return allocator.dupe(u8, mapped);
+    return @as(?[]u8, try allocator.dupe(u8, mapped));
 }
 
 fn nextToken(text: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trimLeft(u8, text, " \t");
+    const trimmed = std.mem.trimStart(u8, text, " \t");
     if (trimmed.len == 0) return null;
-    const end = std.mem.indexOfAny(u8, trimmed, " \t") orelse trimmed.len;
+    const end = std.mem.findAny(u8, trimmed, " \t") orelse trimmed.len;
     return trimmed[0..end];
 }
 
@@ -160,22 +223,6 @@ fn mapShebangInterpreter(interpreter: []const u8) ?[]const u8 {
     return null;
 }
 
-fn hasConfiguredEntryForFiletype(allocator: std.mem.Allocator, filetype: []const u8) bool {
-    const raw = config.getSyncedConfigJson() orelse return false;
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch return false;
-    defer parsed.deinit();
-
-    if (parsed.value != .object) return false;
-    const root = parsed.value.object;
-    if (root.get("runners")) |runners| {
-        if (runners == .object and runners.object.get(filetype) != null) return true;
-    }
-    if (root.get("build_commands")) |commands| {
-        if (commands == .object and commands.object.get(filetype) != null) return true;
-    }
-    return false;
-}
-
 test "resolveSupportedAlloc prefers extension over unconfigured aliased filetype" {
     const allocator = std.testing.allocator;
 
@@ -197,4 +244,29 @@ test "resolveSupportedAlloc preserves configured aliased filetype" {
     defer allocator.free(resolved);
 
     try std.testing.expectEqualStrings("javascript", resolved);
+}
+
+test "resolveSupportedAlloc maps project manifest filenames to backend filetypes" {
+    const allocator = std.testing.allocator;
+
+    const cases = [_]struct {
+        requested: []const u8,
+        path: []const u8,
+        expected: []const u8,
+    }{
+        .{ .requested = "json", .path = "/tmp/app/package.json", .expected = "javascript" },
+        .{ .requested = "toml", .path = "/tmp/app/Cargo.toml", .expected = "rust" },
+        .{ .requested = "toml", .path = "/tmp/app/pyproject.toml", .expected = "python" },
+        .{ .requested = "cmake", .path = "/tmp/app/CMakeLists.txt", .expected = "cpp" },
+        .{ .requested = "meson", .path = "/tmp/app/meson.build", .expected = "cpp" },
+        .{ .requested = "xml", .path = "/tmp/app/pom.xml", .expected = "java" },
+        .{ .requested = "groovy", .path = "/tmp/app/build.gradle", .expected = "java" },
+        .{ .requested = "gomod", .path = "/tmp/app/go.mod", .expected = "go" },
+    };
+
+    for (cases) |case| {
+        const resolved = try resolveSupportedAlloc(allocator, case.requested, case.path);
+        defer allocator.free(resolved);
+        try std.testing.expectEqualStrings(case.expected, resolved);
+    }
 }

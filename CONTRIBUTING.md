@@ -4,8 +4,8 @@
 
 This repo uses a split architecture:
 
-- Lua for Neovim runtime, UI, caching, and config policy
-- Zig for backend parsing, command inference, detection, and quickfix processing
+- Lua for Neovim integration, UI, prompting, and transport glue
+- Zig for backend parsing, command inference, detection, quickfix processing, and execution planning
 
 Before adding new logic, check whether it belongs in the Lua runtime layer or the Zig backend layer.
 
@@ -51,32 +51,25 @@ Usually add it here:
 
 - `zig/src/build/system.zig`
 
-Then wire the Lua runtime side:
+Then wire the Lua bridge side:
 
-- `lua/zignite/build/system_runtime.lua`
-- `lua/zignite/build/project_query.lua`
-- `lua/zignite/build/command_policy.lua` only if user-facing merge policy is required
+- `lua/zignite/rpc/*`
+- `lua/zignite/init.lua` only if a Neovim-facing command or UI flow needs to call it
+- prefer extending backend response contracts instead of adding new Lua-side reconstruction logic
 
 ### New Neovim UI behavior
 
 Usually add it here:
 
 - `lua/zignite/ui/*`
-- `lua/zignite/build/picker*`
+- `lua/zignite/ui/build_picker/*`
 - `lua/zignite/init.lua`
-
-### New command policy
-
-Usually add it here:
-
-- `lua/zignite/build/command_policy.lua`
-
-But if Zig can emit a better final command contract, prefer that instead of adding another Lua-side reconstruction path.
 
 ## Expectations
 
 - Prefer Zig for parsing and command inference
-- Prefer Lua for editor integration and nonblocking runtime behavior
+- Prefer Lua for editor integration, prompting, and runtime behavior that depends on Neovim APIs
+- When a behavior can live in Zig without needing Neovim APIs, prefer pushing it into the backend
 - Keep public module surfaces stable unless there is a strong reason to break them
 - Add regression coverage for:
   - warmed cache behavior
@@ -89,5 +82,5 @@ Examples of changes that fit the current direction:
 
 - moving command synthesis from Lua into Zig records
 - adding system queries that warm cached command sets
-- simplifying Lua runtime code without breaking the public module surface
+- simplifying Lua bridge code without breaking the public module surface
 - expanding real integration coverage for supported build systems

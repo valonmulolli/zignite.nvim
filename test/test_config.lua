@@ -45,6 +45,7 @@ _G.vim = {
 }
 
 local config = require('zignite.config')
+local ui_common = require('zignite.ui.common')
 
 -- Test configuration setup
 local function test_config_setup()
@@ -54,14 +55,12 @@ local function test_config_setup()
     -- Test default setup
     config.setup()
     assert(config.options.runners, "Default runners not set")
-    assert(config.options.runners.python, "Python runner not set")
+    assert(next(config.options.runners) == nil, "Runner overrides should default to empty")
     assert(config.options.float, "Float config not set")
     assert(config.options.picker.layout == "auto", "Picker should default to auto layout")
     assert(config.options.picker.compact_breakpoint == 96, "Picker compact breakpoint default should be set")
-    assert(config.options.build_commands.fortran.run == "./main", "Fortran run should be direct by default")
-    assert(config.options.build_commands.zig.check == "zig build check", "Zig check should be available by default")
-    assert(config.options.build_commands.cpp["cmake-build"] == "cmake --build build", "CMake build should be direct by default")
-    assert(config.options.build_commands.cpp["meson-build"] == "meson compile -C build", "Meson build should be direct by default")
+    assert(type(config.options.build_commands) == "table", "Build command overrides table should exist")
+    assert(next(config.options.build_commands) == nil, "Build command overrides should default to empty")
 
     -- Test custom setup
     config.setup({
@@ -73,7 +72,8 @@ local function test_config_setup()
 
     assert(config.options.runners.custom_lang == "custom_command", "Custom runner not set")
     assert(config.options.mode == "tab", "Custom mode not set")
-    assert(config.options.runners.python, "Default runners should still exist")
+    assert(config.options.runners.python == nil, "Builtin runners should no longer live in Lua config")
+    assert(next(config.options.build_commands) == nil, "Custom setup should not invent builtin build command overrides")
 
     print("✓ Config setup test passed")
 end
@@ -91,11 +91,32 @@ local function test_keymap_setup()
     config.setup_keymaps()
     assert(#keymaps_set > 0, "Keymaps not set")
 
-    print("✓ Keymap setup test passed")
+	print("✓ Keymap setup test passed")
+end
+
+local function test_ui_command_activity_helpers()
+	local wrapped_zig = {
+		"/tmp/zignite",
+		"--argv",
+		"zig",
+		"run",
+		"/tmp/example/main.zig",
+	}
+	assert(ui_common.describe_command_activity(wrapped_zig, "zig") == "Compiling Zig",
+		"Wrapped zig run should show a compile-focused title")
+	assert(ui_common.summarize_command(wrapped_zig) == "zig run main.zig",
+		"Wrapped zig run should expose a short command preview")
+
+	local footer = ui_common.build_float_footer({ close_key = "<Esc>", startinsert = true }, true, "zig run main.zig")
+	assert(footer:find("zig run main%.zig", 1, false) ~= nil,
+		"Float footer should include the command preview when provided")
+
+	print("✓ UI command helper test passed")
 end
 
 -- Run all tests
 test_config_setup()
 test_keymap_setup()
+test_ui_command_activity_helpers()
 
 print("All config tests passed!")

@@ -1,14 +1,17 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
+const pathing = @import("../../pathing.zig");
 
 pub const Target = struct {
     name: []u8,
     matched: bool,
+    artifact_path: ?[]u8 = null,
 };
 
 pub fn freeOwnedTargets(allocator: std.mem.Allocator, items: []Target) void {
     for (items) |item| {
         allocator.free(item.name);
+        if (item.artifact_path) |artifact_path| allocator.free(artifact_path);
     }
     allocator.free(items);
 }
@@ -19,7 +22,7 @@ pub fn parseTargets(
     meson_build_path: []const u8,
     match_path: ?[]const u8,
 ) ![]Target {
-    const root = std.fs.path.dirname(meson_build_path) orelse "";
+    const root = pathing.dirOrDot(meson_build_path);
     const normalized_root = try common.normalizePathAlloc(allocator, root);
     defer allocator.free(normalized_root);
 
@@ -51,6 +54,7 @@ pub fn parseTargets(
         if (capture == null) {
             const start_idx = indexOfExecutable(line) orelse continue;
             var list: std.ArrayList(u8) = .empty;
+            errdefer list.deinit(allocator);
             try list.appendSlice(allocator, line[start_idx..]);
             depth = countParenDelta(line[start_idx..]);
             if (depth <= 0) {
@@ -125,14 +129,19 @@ fn commitBlock(
         }
     }
 
-    try targets.append(allocator, .{
-        .name = try allocator.dupe(u8, target),
+    const owned_name = try allocator.dupe(u8, target);
+    targets.append(allocator, .{
+        .name = owned_name,
         .matched = matched,
-    });
+        .artifact_path = null,
+    }) catch |err| {
+        allocator.free(owned_name);
+        return err;
+    };
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
-    const hash_idx = std.mem.indexOfScalar(u8, line, '#') orelse return line;
+    const hash_idx = std.mem.findScalar(u8, line, '#') orelse return line;
     return line[0..hash_idx];
 }
 
@@ -150,7 +159,7 @@ fn indexOfExecutable(line: []const u8) ?usize {
 }
 
 fn extractExecutableArgs(block: []const u8) ?[]const u8 {
-    const open_idx = std.mem.indexOfScalar(u8, block, '(') orelse return null;
+    const open_idx = std.mem.findScalar(u8, block, '(') orelse return null;
     const close_idx = std.mem.lastIndexOfScalar(u8, block, ')') orelse return null;
     if (close_idx <= open_idx) return null;
     return block[open_idx + 1 .. close_idx];
@@ -167,7 +176,7 @@ fn countParenDelta(text: []const u8) isize {
 
 fn tokenizeQuotedArgsAlloc(allocator: std.mem.Allocator, text: []const u8) ![][]u8 {
     var tokens: std.ArrayList([]u8) = .empty;
-    errdefer common.freeOwnedNameList(allocator, tokens.items);
+    errdefer common.deinitOwnedNameList(allocator, &tokens);
 
     var index: usize = 0;
     while (index < text.len) : (index += 1) {

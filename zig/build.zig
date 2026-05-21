@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const test_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("../zig_backend_tests.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -46,14 +46,25 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&exe.step);
     check_step.dependOn(&exe_unit_tests.step);
 
-    const bench_step = b.step("bench", "Run the benchmark harness against the built backend");
-    bench_step.dependOn(&addBenchmarkRun(b, exe, "3000", false).step);
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("src/bench.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
-    const bench_fast_step = b.step("bench-fast", "Run a fast benchmark pass against the built backend");
-    bench_fast_step.dependOn(&addBenchmarkRun(b, exe, "1000", false).step);
+    const bench_exe = b.addExecutable(.{
+        .name = "zignite-bench",
+        .root_module = bench_module,
+    });
 
-    const bench_ci_step = b.step("bench-ci", "Run the benchmark harness with hard-fail guardrails");
-    bench_ci_step.dependOn(&addBenchmarkRun(b, exe, "3000", true).step);
+    const bench_step = b.step("bench", "Run the Zig backend benchmark harness");
+    bench_step.dependOn(&addBenchmarkRun(b, bench_exe, "3000", false).step);
+
+    const bench_fast_step = b.step("bench-fast", "Run a fast Zig backend benchmark pass");
+    bench_fast_step.dependOn(&addBenchmarkRun(b, bench_exe, "1000", false).step);
+
+    const bench_ci_step = b.step("bench-ci", "Run the Zig backend benchmark with hard-fail guardrails");
+    bench_ci_step.dependOn(&addBenchmarkRun(b, bench_exe, "3000", true).step);
 }
 
 fn addBenchmarkRun(
@@ -62,10 +73,7 @@ fn addBenchmarkRun(
     default_iterations: []const u8,
     hard_fail: bool,
 ) *std.Build.Step.Run {
-    const bench_cmd = b.addSystemCommand(&.{"lua"});
-    bench_cmd.addFileArg(b.path("../test/benchmark.lua"));
-    bench_cmd.addDirectoryArg(b.path(".."));
-    bench_cmd.step.dependOn(b.getInstallStep());
+    const bench_cmd = b.addRunArtifact(exe);
     bench_cmd.step.dependOn(&exe.step);
 
     if (hard_fail) {

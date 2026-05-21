@@ -1,77 +1,81 @@
 const std = @import("std");
-const config = @import("../config.zig");
+const protocol_args = @import("../protocol/args.zig");
 const frame = @import("../protocol/frame.zig");
 const protocol_stdio = @import("../protocol/stdio.zig");
 const command = @import("resolve/command.zig");
 const detected = @import("resolve/detected.zig");
+const protocol = @import("resolve/protocol.zig");
+const selected = @import("resolve/selected.zig");
+const serialize = @import("resolve/serialize.zig");
 const types = @import("resolve/types.zig");
+const action_state = @import("action/state.zig");
 
 pub const Options = types.Options;
 pub const ResolvedOutput = types.ResolvedOutput;
 pub const resolveOutput = detected.resolveOutput;
+pub const resolveOutputWithIO = detected.resolveOutputWithIO;
 pub const resolveDetectedOutput = detected.resolveDetectedOutput;
+pub const resolveDetectedOutputWithIO = detected.resolveDetectedOutputWithIO;
 pub const findCommand = detected.findCommand;
-
-const ResolveDaemonRequestHeader = struct {
-    request_id: u64,
-};
-
-pub const BUILD_RESOLVE_REQ_BEGIN = "@@ZBR_REQ_BEGIN";
-pub const BUILD_RESOLVE_REQ_END = "@@ZBR_REQ_END";
-pub const BUILD_RESOLVE_RES_BEGIN = "@@ZBR_RES_BEGIN";
-pub const BUILD_RESOLVE_RES_END = "@@ZBR_RES_END";
-pub const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
-const BUILD_RESOLVE_MAX_LINE = 16384;
+pub const BUILD_RESOLVE_REQ_BEGIN = protocol.BUILD_RESOLVE_REQ_BEGIN;
+pub const BUILD_RESOLVE_REQ_END = protocol.BUILD_RESOLVE_REQ_END;
+pub const BUILD_RESOLVE_RES_BEGIN = protocol.BUILD_RESOLVE_RES_BEGIN;
+pub const BUILD_RESOLVE_RES_END = protocol.BUILD_RESOLVE_RES_END;
+pub const BUILD_RESOLVE_RES_ERR = protocol.BUILD_RESOLVE_RES_ERR;
 
 pub fn parseArgs(args: []const []const u8) !Options {
-    var path: ?[]const u8 = null;
-    var filetype: ?[]const u8 = null;
+    var common: protocol_args.CommonPathArgs = .{};
     var command_name: ?[]const u8 = null;
     var command_args: ?[]const u8 = null;
-    var project_root: ?[]const u8 = null;
 
     for (args) |arg| {
-        if (std.mem.eql(u8, arg, "--build-resolve")) {
+        if (try protocol_args.parseCommonPathArg(&common, arg, "--build-resolve")) {
             continue;
-        } else if (std.mem.startsWith(u8, arg, "--path=")) {
-            path = arg["--path=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--filetype=")) {
-            filetype = arg["--filetype=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--command-name=")) {
+        }
+        if (std.mem.startsWith(u8, arg, "--command-name=")) {
             command_name = arg["--command-name=".len..];
         } else if (std.mem.startsWith(u8, arg, "--command-args=")) {
             command_args = arg["--command-args=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--project-root=")) {
-            project_root = arg["--project-root=".len..];
         } else {
             return error.InvalidBuildResolveFlag;
         }
     }
 
     return .{
-        .path = path orelse return error.MissingBuildResolvePath,
-        .filetype = filetype orelse return error.MissingBuildResolveFiletype,
+        .path = common.path orelse return error.MissingBuildResolvePath,
+        .filetype = common.filetype orelse return error.MissingBuildResolveFiletype,
         .command_name = command_name,
         .command_args = command_args,
-        .project_root = project_root,
+        .project_root = common.project_root,
     };
 }
 
-pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
+pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    return runModeWithEnviron(allocator, io, null, options);
+}
+
+pub fn runModeWithEnviron(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+    options: Options,
+) !void {
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
-    try writeResolvedOutput(stdout, allocator, options);
+    try writeResolvedOutput(stdout, allocator, io, environ_map, options);
     try stdout.flush();
 }
 
 pub fn handleDaemonFrame(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
     reader: anytype,
     stdout: anytype,
     begin_line: []const u8,
 ) !void {
-    const header = parseResolveDaemonBegin(begin_line) catch |err| {
+    const header = protocol.parseResolveDaemonBegin(begin_line) catch |err| {
         if (frame.parseRequestId(begin_line, BUILD_RESOLVE_REQ_BEGIN)) |request_id| {
             try frame.writeErrorResponse(
                 stdout,
@@ -87,41 +91,26 @@ pub fn handleDaemonFrame(
         return err;
     };
 
-    var request_args: std.ArrayList([]u8) = .empty;
-    defer {
-        for (request_args.items) |arg| allocator.free(arg);
-        request_args.deinit(allocator);
-    }
-
-    const ParseArgsLine = struct {
-        allocator: std.mem.Allocator,
-        request_args: *std.ArrayList([]u8),
-
-        fn onLine(self: @This(), line: []const u8) !void {
-            const value = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-            if (value.len == 0) return;
-            try self.request_args.append(self.allocator, try self.allocator.dupe(u8, value));
-        }
-    };
-    const parse_args_line = ParseArgsLine{
-        .allocator = allocator,
-        .request_args = &request_args,
-    };
-
-    const completed = try frame.readUntilEnd(
+    const request_args = try frame.collectOwnedLinesUntilEnd(
         allocator,
         reader,
-        BUILD_RESOLVE_MAX_LINE,
+        protocol.BUILD_RESOLVE_MAX_LINE,
         BUILD_RESOLVE_REQ_END,
         header.request_id,
-        parse_args_line.onLine,
+        .{
+            .strip_leading_tab = true,
+            .skip_empty = true,
+        },
     );
-    if (!completed) return error.UnexpectedEof;
+    defer {
+        for (request_args) |arg| allocator.free(arg);
+        allocator.free(request_args);
+    }
 
     try stdout.print("{s} {d}\n", .{ BUILD_RESOLVE_RES_BEGIN, header.request_id });
-    const options = parseArgs(request_args.items);
+    const options = parseArgs(request_args);
     if (options) |parsed| {
-        writeResolvedOutput(stdout, allocator, parsed) catch |err| {
+        writeResolvedOutput(stdout, allocator, io, environ_map, parsed) catch |err| {
             try stdout.print("{s} {d} {s}\n", .{ BUILD_RESOLVE_RES_ERR, header.request_id, @errorName(err) });
         };
     } else |err| {
@@ -131,86 +120,66 @@ pub fn handleDaemonFrame(
     try stdout.flush();
 }
 
-fn writeResolvedOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
+fn writeResolvedOutput(
+    stdout: anytype,
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+    options: Options,
+) !void {
     if (options.command_name != null) {
-        try writeResolvedCommandOutput(stdout, allocator, options);
+        try writeResolvedCommandOutput(stdout, allocator, io, options);
         return;
     }
 
-    var parsed_output = try detected.resolveOutput(allocator, options);
+    var parsed_output = try detected.resolveOutputWithIO(io, allocator, options);
     defer parsed_output.deinit(allocator);
-
-    if (parsed_output.root) |root| {
-        try stdout.print("ROOT\t{s}\n", .{root});
-    }
-    if (parsed_output.filetype) |filetype| {
-        try stdout.print("FILETYPE\t{s}\n", .{filetype});
-    }
-    if (parsed_output.system) |system| {
-        try stdout.print("SYSTEM\t{s}\n", .{system});
-    }
-    if (parsed_output.build_ready) |ready| {
-        try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
-    }
-    try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
-
-    for (parsed_output.commands.items) |entry| {
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
-        try command.writeCommandUiMetadata(stdout, allocator, parsed_output.filetype orelse options.filetype, entry);
-    }
 
     if (parsed_output.preferred.items.len == 0) {
         try detected.appendImplicitPreferred(allocator, &parsed_output.preferred, parsed_output.commands.items);
     }
-    for (parsed_output.preferred.items) |entry| {
-        try stdout.print("PREFERRED\t{s}\t{s}\n", .{ entry.name, entry.command });
-    }
-}
-
-fn writeResolvedCommandOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
-    var parsed_output = try detected.resolveOutput(allocator, options);
-    defer parsed_output.deinit(allocator);
-
     const resolved_filetype = parsed_output.filetype orelse options.filetype;
-    const command_name = options.command_name orelse return error.MissingBuildResolveCommandName;
-    const command_template = detected.findCommand(parsed_output.commands.items, command_name) orelse return error.UnknownBuildResolveCommand;
-    const resolved_command = try command.resolveCommandTemplate(
+    const live_names = [_][]const u8{"live"};
+    const live_name = detected.findPreferredCommandName(parsed_output.preferred.items, parsed_output.commands.items, &live_names);
+    const last_command_name = try action_state.getLastCommand(io, allocator, environ_map, resolved_filetype);
+    try serialize.writeResolvedOutputJson(
+        stdout,
         allocator,
+        parsed_output,
         resolved_filetype,
-        command_name,
-        command_template,
-        options.command_args,
+        live_name,
+        last_command_name,
     );
-    defer allocator.free(resolved_command);
-
-    if (command.isReservedArgvCommand(resolved_command)) {
-        return error.ReservedBuildResolveArgvCommand;
-    }
-
-    const cwd = parsed_output.root orelse (std.fs.path.dirname(options.path) orelse options.path);
-    try stdout.print("FILETYPE\t{s}\n", .{resolved_filetype});
-    try stdout.print("CWD\t{s}\n", .{cwd});
-    try stdout.print("NAME\t{s}: {s}\n", .{ resolved_filetype, command_name });
-    try stdout.print("EXEC_COMMAND\t{s}\n", .{resolved_command});
-    try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
+    try serialize.writeResolvedOutputLegacyHeader(stdout, parsed_output, resolved_filetype, last_command_name);
+    try serialize.writeResolvedOutputLegacyCommands(stdout, allocator, resolved_filetype, parsed_output.commands.items);
+    try serialize.writeResolvedOutputLegacyPreferred(stdout, parsed_output.preferred.items, live_name);
 }
 
-fn parseResolveDaemonBegin(line: []const u8) !ResolveDaemonRequestHeader {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return error.InvalidBuildResolveDaemonHeader;
-    if (!std.mem.eql(u8, marker, BUILD_RESOLVE_REQ_BEGIN)) {
-        return error.InvalidBuildResolveDaemonHeader;
-    }
+fn writeResolvedCommandOutput(stdout: anytype, allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    var resolved = try selected.resolveCommandExecutionWithIO(io, allocator, options);
+    defer resolved.deinit(allocator);
 
-    const request_id = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidBuildResolveDaemonHeader, 10);
-    if (it.next() != null) {
-        return error.InvalidBuildResolveDaemonHeader;
-    }
-    return .{ .request_id = request_id };
+    try serialize.writeResolvedCommandOutputJson(
+        stdout,
+        allocator,
+        resolved.filetype,
+        resolved.cwd,
+        resolved.command_name,
+        resolved.exec_command,
+        resolved.exec_argv.items,
+    );
+    try serialize.writeResolvedCommandOutputLegacy(
+        stdout,
+        resolved.filetype,
+        resolved.cwd,
+        resolved.command_name,
+        resolved.exec_command,
+        resolved.exec_argv.items,
+    );
 }
 
 const TestReader = struct {
-    fn readUntilDelimiterOrEofAlloc(
+    pub fn readUntilDelimiterOrEofAlloc(
         self: *TestReader,
         allocator: std.mem.Allocator,
         delimiter: u8,
@@ -228,30 +197,33 @@ test "runMode merges synced configured build commands with backend commands" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();
     try @import("../config/store.zig").setSyncedConfigJson(
-        \\{"build_commands":{"c":{"build":"make","custom":"make custom"},"rust":{"build":"cargo build"}},"detect":{"c_cpp_make":true}}
+        \\{"build_commands":{"c":{"custom":"make custom"}},"detect":{"c_cpp_make":true}}
     , 7);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(.{ .sub_path = "CMakeLists.txt", .data = "project(demo)\nadd_executable(demo main.cpp)\n" });
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "CMakeLists.txt", .data = "project(demo)\nadd_executable(demo main.cpp)\n" });
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "main.cpp" });
     defer allocator.free(filepath);
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
-    try writeResolvedOutput(out.writer(allocator), allocator, .{
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
         .path = filepath,
         .filetype = "c",
         .project_root = root,
     });
 
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "CONFIG_REVISION\t7\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tcustom\tmake custom\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tbuild\tcmake --build build\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "CONFIG_REVISION\t7\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tcustom\tmake custom\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
+    const json_idx = std.mem.find(u8, out.written(), "RESULT_JSON\t") orelse unreachable;
+    const legacy_idx = std.mem.find(u8, out.written(), "COMMAND\tcustom\tmake custom\n") orelse unreachable;
+    try std.testing.expect(json_idx < legacy_idx);
 }
 
 test "resolveOutput falls back to system commands when project auto output is unavailable" {
@@ -264,10 +236,10 @@ test "resolveOutput falls back to system commands when project auto output is un
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("src");
-    try tmp.dir.writeFile(.{ .sub_path = "uv.lock", .data = "" });
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "uv.lock", .data = "" });
 
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.py" });
     defer allocator.free(filepath);
@@ -285,7 +257,7 @@ test "resolveOutput falls back to system commands when project auto output is un
     try std.testing.expectEqualStrings("uv sync", detected.findCommand(output.commands.items, "install").?);
 }
 
-test "resolveOutput preserves richer detected python commands over generic defaults" {
+test "resolveOutput lets explicit configured python commands override builtin defaults" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();
     try @import("../config/store.zig").setSyncedConfigJson(
@@ -295,10 +267,10 @@ test "resolveOutput preserves richer detected python commands over generic defau
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("src");
-    try tmp.dir.writeFile(.{ .sub_path = "uv.lock", .data = "" });
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "uv.lock", .data = "" });
 
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.py" });
     defer allocator.free(filepath);
@@ -310,8 +282,264 @@ test "resolveOutput preserves richer detected python commands over generic defau
     });
     defer output.deinit(allocator);
 
-    try std.testing.expectEqualStrings("uv run -m main", detected.findCommand(output.commands.items, "run").?);
-    try std.testing.expectEqualStrings("uv run pytest", detected.findCommand(output.commands.items, "test").?);
+    try std.testing.expectEqualStrings("python -m main", detected.findCommand(output.commands.items, "run").?);
+    try std.testing.expectEqualStrings("pytest", detected.findCommand(output.commands.items, "test").?);
+}
+
+test "resolveOutput prefers Makefile commands for go projects" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{},"revision":13}
+    , 13);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "go.mod", .data =
+        \\module github.com/example/hello
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.go", .data =
+        \\package main
+        \\
+        \\func main() {}
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data =
+        \\.PHONY: build run test clean fmt
+        \\build:
+        \\\tgo build -o hello .
+        \\run:
+        \\\tgo run .
+        \\test:
+        \\\tgo test ./...
+        \\fmt:
+        \\\tgo fmt ./...
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "main.go", allocator);
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "go",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings(root, output.root.?);
+    try std.testing.expectEqualStrings("make", output.system.?);
+    try std.testing.expectEqualStrings("make build", detected.findCommand(output.commands.items, "build").?);
+    try std.testing.expectEqualStrings("make run", detected.findCommand(output.commands.items, "run").?);
+    try std.testing.expectEqualStrings("make test", detected.findCommand(output.commands.items, "test").?);
+    try std.testing.expectEqualStrings("make fmt", detected.findCommand(output.commands.items, "fmt").?);
+    try std.testing.expectEqualStrings("go mod tidy", detected.findCommand(output.commands.items, "mod").?);
+}
+
+test "resolveOutput preserves explicit make targets from auto output" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{},"revision":23}
+    , 23);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = "build:\n\t@echo build\nbench:\n\t@echo bench\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "cpp",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings("make", output.system.?);
+    try std.testing.expectEqualStrings("make build", detected.findCommand(output.commands.items, "build").?);
+    try std.testing.expectEqualStrings("make bench", detected.findCommand(output.commands.items, "bench").?);
+}
+
+test "resolveOutput suppresses configured c family commands for non-matching detected systems" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{"c":{"build":"make","cmake-build":"cmake --build build","meson-build":"meson compile -C build"}},"detect":{"c_cpp_make":true},"revision":25}
+    , 25);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = "build:\n\t@echo build\nclean:\n\t@echo clean\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.c" });
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "c",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings("make", output.system.?);
+    try std.testing.expectEqualStrings("make", detected.findCommand(output.commands.items, "build").?);
+    try std.testing.expect(detected.findCommand(output.commands.items, "cmake-build") == null);
+    try std.testing.expect(detected.findCommand(output.commands.items, "meson-build") == null);
+}
+
+test "resolveOutput does not invent make run when no run target exists" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"c_cpp_make":true},"revision":24}
+    , 24);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = "build:\n\t@echo build\nclean:\n\t@echo clean\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "cpp",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings("make", output.system.?);
+    try std.testing.expectEqualStrings("make build", detected.findCommand(output.commands.items, "build").?);
+    try std.testing.expectEqualStrings("make clean", detected.findCommand(output.commands.items, "clean").?);
+    try std.testing.expect(detected.findCommand(output.commands.items, "run") == null);
+}
+
+test "resolveOutput does not offer generic c family system commands without detected system" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"c_cpp_make":true},"revision":26}
+    , 26);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.cpp", .data = "int main() { return 0; }\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "src/main.cpp", allocator);
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "cpp",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expect(output.system == null);
+    try std.testing.expectEqual(@as(usize, 0), output.commands.items.len);
+    try std.testing.expect(detected.findCommand(output.commands.items, "build") == null);
+    try std.testing.expect(detected.findCommand(output.commands.items, "cmake-build") == null);
+    try std.testing.expect(detected.findCommand(output.commands.items, "meson-build") == null);
+}
+
+test "resolveOutput suppresses non-bazel c/cpp defaults in bazel workspaces" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"c_cpp_make":true,"bazel_project":true},"revision":14}
+    , 14);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "app");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "MODULE.bazel", .data = "bazel_dep(name = \"rules_cc\", version = \"0.0.9\")\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/BUILD.bazel", .data =
+        \\cc_binary(
+        \\    name = "main",
+        \\    srcs = ["main.cc"],
+        \\)
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.cc", .data = "int main() { return 0; }\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "app", "main.cc" });
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "cpp",
+        .project_root = root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings("bazel", output.system.?);
+    try std.testing.expectEqualStrings("bazel build //app:main", detected.findCommand(output.commands.items, "build").?);
+
+    for (output.commands.items) |entry| {
+        try std.testing.expect(!std.mem.startsWith(u8, entry.name, "cmake-"));
+        try std.testing.expect(!std.mem.startsWith(u8, entry.name, "meson-"));
+    }
+}
+
+test "resolveOutput prefers nested cmake project over outer bazel workspace" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"c_cpp_make":true,"bazel_project":true},"revision":15}
+    , 15);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "third_party/demo/src");
+    try tmp.dir.createDirPath(std.testing.io, "third_party/demo/build");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "MODULE.bazel", .data = "" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "third_party/demo/CMakeLists.txt", .data =
+        \\project(demo)
+        \\add_executable(demo src/main.cpp)
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "third_party/demo/build/CMakeCache.txt", .data = "" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "third_party/demo/src/main.cpp", .data = "int main() { return 0; }\n" });
+
+    const workspace_root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(workspace_root);
+    const nested_root = try tmp.dir.realPathFileAlloc(std.testing.io, "third_party/demo", allocator);
+    defer allocator.free(nested_root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "third_party/demo/src/main.cpp", allocator);
+    defer allocator.free(filepath);
+
+    var output = try detected.resolveOutput(allocator, .{
+        .path = filepath,
+        .filetype = "cpp",
+        .project_root = workspace_root,
+    });
+    defer output.deinit(allocator);
+
+    try std.testing.expectEqualStrings(nested_root, output.root.?);
+    try std.testing.expectEqualStrings("cmake", output.system.?);
+    try std.testing.expectEqualStrings("cmake --build build", detected.findCommand(output.commands.items, "build").?);
+    try std.testing.expect(detected.findCommand(output.commands.items, "bazel-build-all") == null);
 }
 
 test "writeResolvedOutput emits implicit live preference when live command exists" {
@@ -324,27 +552,27 @@ test "writeResolvedOutput emits implicit live preference when live command exist
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("src");
-    try tmp.dir.writeFile(.{ .sub_path = "package.json", .data =
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "package.json", .data =
         \\{"scripts":{"dev":"vite","build":"vite build"}}
     });
 
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.ts" });
     defer allocator.free(filepath);
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
-    try writeResolvedOutput(out.writer(allocator), allocator, .{
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
         .path = filepath,
         .filetype = "typescript",
         .project_root = root,
     });
 
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND\tlive\t") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "PREFERRED\tlive\t") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tlive\t") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tlive\t") != null);
 }
 
 test "writeResolvedOutput emits command ui metadata for placeholder commands" {
@@ -357,24 +585,91 @@ test "writeResolvedOutput emits command ui metadata for placeholder commands" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(.{ .sub_path = "build.zig", .data = "pub fn build(_: *anyopaque) void {}\n" });
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data = "pub fn build(_: *anyopaque) void {}\n" });
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "build.zig" });
     defer allocator.free(filepath);
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
-    try writeResolvedOutput(out.writer(allocator), allocator, .{
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
         .path = filepath,
         .filetype = "zig",
         .project_root = root,
     });
 
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND_DISPLAY\tfetch\tzig fetch <args>\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND_ARGS_REQUIRED\tfetch\t1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "COMMAND_ARG_PROMPT\tfetch\tzig fetch url/path\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND_DISPLAY\tfetch\tzig fetch <args>\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND_ARGS_REQUIRED\tfetch\t1\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND_ARG_PROMPT\tfetch\tzig fetch url/path\n") != null);
+}
+
+test "writeResolvedOutput emits custom zig build steps and project root" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"zig":true},"revision":23}
+    , 23);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.zig", .data =
+        \\pub fn main() void {}
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data =
+        \\const std = @import("std");
+        \\
+        \\pub fn build(b: *std.Build) void {
+        \\    const target = b.standardTargetOptions(.{});
+        \\    const optimize = b.standardOptimizeOption(.{});
+        \\    const module = b.createModule(.{
+        \\        .root_source_file = b.path("src/main.zig"),
+        \\        .target = target,
+        \\        .optimize = optimize,
+        \\    });
+        \\    const exe = b.addExecutable(.{
+        \\        .name = "demo",
+        \\        .root_module = module,
+        \\    });
+        \\    b.installArtifact(exe);
+        \\
+        \\    const run_cmd = b.addRunArtifact(exe);
+        \\    const run_step = b.step("run", "Run the app");
+        \\    run_step.dependOn(&run_cmd.step);
+        \\
+        \\    const watch_step = b.step("watch", "Watch sources");
+        \\    watch_step.dependOn(&run_cmd.step);
+        \\
+        \\    const bundle_step = b.step("bundle", "Build release bundle");
+        \\    bundle_step.dependOn(&run_cmd.step);
+        \\}
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.zig" });
+    defer allocator.free(filepath);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
+        .path = filepath,
+        .filetype = "zig",
+    });
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "ROOT\t") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tzig build\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tzig build run\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\twatch\tzig build watch\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbundle\tzig build bundle\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tlive\tzig build watch\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trelease\tzig build bundle\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tlive\tzig build watch\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED_NAME\tlive\tlive\n") != null);
 }
 
 test "writeResolvedOutput emits selected command execution metadata" {
@@ -387,47 +682,53 @@ test "writeResolvedOutput emits selected command execution metadata" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("src");
-    try tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data =
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Cargo.toml", .data =
         \\[package]
         \\name = "demo"
         \\version = "0.1.0"
     });
-    try tmp.dir.writeFile(.{ .sub_path = "src/main.rs", .data = "fn main() {}\n" });
-    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.rs", .data = "fn main() {}\n" });
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
     const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.rs" });
     defer allocator.free(filepath);
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
-    try writeResolvedOutput(out.writer(allocator), allocator, .{
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
         .path = filepath,
         .filetype = "rust",
         .project_root = root,
         .command_name = "build",
     });
 
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "NAME\trust: build\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.items, "EXEC_COMMAND\tcargo build\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "NAME\trust: build\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "EXEC_COMMAND\tcargo build\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"exec_command\":\"cargo build\"") != null);
+    const json_idx = std.mem.find(u8, out.written(), "RESULT_JSON\t") orelse unreachable;
+    const legacy_idx = std.mem.find(u8, out.written(), "EXEC_COMMAND\tcargo build\n") orelse unreachable;
+    try std.testing.expect(json_idx < legacy_idx);
 }
 
 test "handleDaemonFrame writes build resolve error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{};
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try handleDaemonFrame(
         allocator,
+        std.testing.io,
+        null,
         &reader,
-        out.writer(allocator),
+        &out.writer,
         "@@ZBR_REQ_BEGIN 9 extra",
     );
 
     try std.testing.expectEqualStrings(
         "@@ZBR_RES_BEGIN 9\n@@ZBR_RES_ERR 9 InvalidBuildResolveDaemonHeader\n@@ZBR_RES_END 9\n",
-        out.items,
+        out.written(),
     );
 }

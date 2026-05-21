@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types.zig");
 
 const page_allocator = std.heap.page_allocator;
+const max_cache_entries = 256;
 const Options = types.Options;
 
 const CacheEntry = struct {
@@ -9,9 +10,13 @@ const CacheEntry = struct {
     output: []u8,
 };
 
-var auto_output_cache: std.StringHashMap(CacheEntry) = .init(page_allocator);
+var cache_arena = std.heap.ArenaAllocator.init(page_allocator);
+var auto_output_cache: std.StringHashMap(CacheEntry) = undefined;
+var cache_initialized = false;
 
 pub fn getAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
+    ensureCacheInit();
+
     const cache_key = try cacheKeyAlloc(page_allocator, options);
     defer page_allocator.free(cache_key);
 
@@ -21,36 +26,31 @@ pub fn getAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
 }
 
 pub fn storeAutoOutput(options: Options, signature: []const u8, output: []const u8) !void {
+    ensureCacheInit();
+
     const cache_key = try cacheKeyAlloc(page_allocator, options);
     errdefer page_allocator.free(cache_key);
 
-    const owned_signature = try page_allocator.dupe(u8, signature);
-    errdefer page_allocator.free(owned_signature);
-    const owned_output = try page_allocator.dupe(u8, output);
-    errdefer page_allocator.free(owned_output);
-
-    const gop = try auto_output_cache.getOrPut(cache_key);
-    if (gop.found_existing) {
-        page_allocator.free(cache_key);
-        page_allocator.free(gop.value_ptr.signature);
-        page_allocator.free(gop.value_ptr.output);
-    } else {
-        gop.key_ptr.* = cache_key;
+    if (auto_output_cache.get(cache_key) == null and auto_output_cache.count() >= max_cache_entries) {
+        resetCache();
+        ensureCacheInit();
     }
-    gop.value_ptr.* = .{
+
+    const cache_allocator = cache_arena.allocator();
+    const owned_key = try cache_allocator.dupe(u8, cache_key);
+    const owned_signature = try cache_allocator.dupe(u8, signature);
+    const owned_output = try cache_allocator.dupe(u8, output);
+
+    try auto_output_cache.put(owned_key, .{
         .signature = owned_signature,
         .output = owned_output,
-    };
+    });
+
+    page_allocator.free(cache_key);
 }
 
 pub fn resetForTests() void {
-    var iterator = auto_output_cache.iterator();
-    while (iterator.next()) |entry| {
-        page_allocator.free(entry.key_ptr.*);
-        page_allocator.free(entry.value_ptr.signature);
-        page_allocator.free(entry.value_ptr.output);
-    }
-    auto_output_cache.clearRetainingCapacity();
+    resetCache();
 }
 
 fn cacheKeyAlloc(allocator: std.mem.Allocator, options: Options) ![]u8 {
@@ -60,4 +60,19 @@ fn cacheKeyAlloc(allocator: std.mem.Allocator, options: Options) ![]u8 {
         options.match_path orelse "",
         options.project_root orelse "",
     });
+}
+
+fn ensureCacheInit() void {
+    if (cache_initialized) return;
+    auto_output_cache = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    cache_initialized = true;
+}
+
+fn resetCache() void {
+    if (!cache_initialized) return;
+    auto_output_cache.deinit();
+    cache_arena.deinit();
+    cache_arena = std.heap.ArenaAllocator.init(page_allocator);
+    auto_output_cache = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    cache_initialized = true;
 }

@@ -4,10 +4,10 @@ pub const buffer_size = 4096;
 
 pub const Stdin = struct {
     buffer: [buffer_size]u8 = undefined,
-    reader: std.fs.File.Reader = undefined,
+    reader: std.Io.File.Reader = undefined,
 
-    pub fn init(self: *Stdin) void {
-        self.reader = std.fs.File.stdin().reader(&self.buffer);
+    pub fn init(self: *Stdin, io_impl: std.Io) void {
+        self.reader = std.Io.File.stdin().reader(io_impl, &self.buffer);
     }
 
     pub fn io(self: *Stdin) *std.Io.Reader {
@@ -17,14 +17,13 @@ pub const Stdin = struct {
 
 pub const Stdout = struct {
     buffer: [buffer_size]u8 = undefined,
-    writer: std.fs.File.Writer = undefined,
+    writer: std.Io.File.Writer = undefined,
 
-    pub fn init(self: *Stdout) void {
-        self.writer = std.fs.File.stdout().writer(&self.buffer);
+    pub fn init(self: *Stdout, io_impl: std.Io) void {
+        self.writer = std.Io.File.stdout().writer(io_impl, &self.buffer);
     }
 
     pub fn io(self: *Stdout) *std.Io.Writer {
         return &self.writer.interface;
     }
 };
-

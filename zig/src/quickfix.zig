@@ -21,27 +21,27 @@ const DAEMON_RES_ERR = "@@ZQF_RES_ERR";
 const DAEMON_RES_END = "@@ZQF_RES_END";
 const DAEMON_MAX_LINE = 16 * 1024 * 1024;
 
-pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    const input = try readStdinAll(allocator);
+pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    const input = try readStdinAll(allocator, io);
     defer allocator.free(input);
 
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
     try processQuickfixPayload(allocator, input, options, false, stdout);
     try stdout.flush();
 }
 
-pub fn runDaemon(allocator: std.mem.Allocator) !void {
+pub fn runDaemon(allocator: std.mem.Allocator, io: std.Io) !void {
     var stdin_ctx: protocol_stdio.Stdin = .{};
-    stdin_ctx.init();
+    stdin_ctx.init(io);
     const reader = stdin_ctx.io();
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
 
     while (true) {
-        const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DAEMON_MAX_LINE);
+        const maybe_begin = try frame.readLineAlloc(allocator, reader, DAEMON_MAX_LINE);
         if (maybe_begin == null) break;
 
         const begin_owned = maybe_begin.?;
@@ -72,14 +72,15 @@ pub fn handleDaemonFrame(
     };
     var payload: std.ArrayList(u8) = .empty;
     defer payload.deinit(allocator);
-    var payload_writer = payload.writer(allocator);
+    var payload_writer: std.Io.Writer.Allocating = .fromArrayList(allocator, &payload);
+    defer payload = payload_writer.toArrayList();
     const WritePayloadLine = struct {
-        payload_writer: *@TypeOf(payload.writer(allocator)),
+        payload_writer: *std.Io.Writer.Allocating,
 
         fn onLine(self: @This(), line: []const u8) !void {
             const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
-            try self.payload_writer.writeAll(content);
-            try self.payload_writer.writeByte('\n');
+            try self.payload_writer.writer.writeAll(content);
+            try self.payload_writer.writer.writeByte('\n');
         }
     };
     const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
@@ -91,7 +92,8 @@ pub fn handleDaemonFrame(
             DAEMON_MAX_LINE,
             DAEMON_REQ_END,
             header.request_id,
-            write_payload_line.onLine,
+            write_payload_line,
+            WritePayloadLine.onLine,
         ) catch |err| {
             response_err = err;
             break :blk false;
@@ -103,9 +105,10 @@ pub fn handleDaemonFrame(
 
     var out_buf: std.ArrayList(u8) = .empty;
     defer out_buf.deinit(allocator);
-    const out_writer = out_buf.writer(allocator);
+    var out_writer: std.Io.Writer.Allocating = .fromArrayList(allocator, &out_buf);
+    defer out_buf = out_writer.toArrayList();
     if (response_err == null) {
-        processQuickfixPayload(allocator, payload.items, header.options, false, out_writer) catch |err| {
+        processQuickfixPayload(allocator, payload.items, header.options, false, &out_writer.writer) catch |err| {
             response_err = err;
         };
     }
@@ -216,15 +219,18 @@ fn parseDaemonBegin(line: []const u8) !DaemonRequestHeader {
     };
 }
 
-fn readStdinAll(allocator: std.mem.Allocator) ![]u8 {
+fn readStdinAll(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
     var stdin_ctx: protocol_stdio.Stdin = .{};
-    stdin_ctx.init();
-    return try stdin_ctx.io().readAllAlloc(allocator, std.math.maxInt(usize));
+    stdin_ctx.init(io);
+    var input: std.ArrayList(u8) = .empty;
+    errdefer input.deinit(allocator);
+    try stdin_ctx.io().appendRemainingUnlimited(allocator, &input);
+    return try input.toOwnedSlice(allocator);
 }
 test "quickfix max_bytes keeps newest lines" {
     const allocator = std.testing.allocator;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try processQuickfixPayload(allocator, "first-line\nsecond-line\nnewest-line\n", .{
         .max_lines = 10,
@@ -232,18 +238,18 @@ test "quickfix max_bytes keeps newest lines" {
         .strip_ansi = false,
         .strip_max_lines = 10,
         .parse_diagnostics = false,
-    }, false, out.writer(allocator));
+    }, false, &out.writer);
 
     try std.testing.expectEqualStrings(
         "[zignite] quickfix output truncated\nnewest-line\n",
-        out.items,
+        out.written(),
     );
 }
 
 test "quickfix strips ansi and canonicalizes arrow diagnostics" {
     const allocator = std.testing.allocator;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try processQuickfixPayload(
         allocator,
@@ -256,19 +262,19 @@ test "quickfix strips ansi and canonicalizes arrow diagnostics" {
             .parse_diagnostics = true,
         },
         false,
-        out.writer(allocator),
+        &out.writer,
     );
 
     try std.testing.expectEqualStrings(
         "src/main.zig:12:4: unexpected token\nplain error\n",
-        out.items,
+        out.written(),
     );
 }
 
 test "quickfix canonicalizes paren diagnostics" {
     const allocator = std.testing.allocator;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try processQuickfixPayload(
         allocator,
@@ -281,24 +287,24 @@ test "quickfix canonicalizes paren diagnostics" {
             .parse_diagnostics = true,
         },
         false,
-        out.writer(allocator),
+        &out.writer,
     );
 
     try std.testing.expectEqualStrings(
         "src/main.c:7:2: missing semicolon\n",
-        out.items,
+        out.written(),
     );
 }
 
 test "quickfix daemon response emits error frame" {
     const allocator = std.testing.allocator;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
-    try writeDaemonResponse(out.writer(allocator), 42, "", error.OutOfMemory);
+    try writeDaemonResponse(&out.writer, 42, "", error.OutOfMemory);
 
     try std.testing.expectEqualStrings(
         "@@ZQF_RES_BEGIN 42\n@@ZQF_RES_ERR 42 OutOfMemory\n@@ZQF_RES_END 42\n",
-        out.items,
+        out.written(),
     );
 }

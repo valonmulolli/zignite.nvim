@@ -1,13 +1,13 @@
 const std = @import("std");
 
 pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return try readFileAllocWithIO(threaded.io(), allocator, path);
+}
+
+pub fn readFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const max_bytes = 4 * 1024 * 1024;
-    if (std.fs.path.isAbsolute(path)) {
-        var file = try std.fs.openFileAbsolute(path, .{});
-        defer file.close();
-        return try file.readToEndAlloc(allocator, max_bytes);
-    }
-    return try std.fs.cwd().readFileAlloc(allocator, path, max_bytes);
+    return try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_bytes));
 }
 
 pub fn freeOwnedNameList(allocator: std.mem.Allocator, names: [][]u8) void {
@@ -15,6 +15,13 @@ pub fn freeOwnedNameList(allocator: std.mem.Allocator, names: [][]u8) void {
         allocator.free(name);
     }
     allocator.free(names);
+}
+
+pub fn deinitOwnedNameList(allocator: std.mem.Allocator, names: *std.ArrayList([]u8)) void {
+    for (names.items) |name| {
+        allocator.free(name);
+    }
+    names.deinit(allocator);
 }
 
 pub fn pushUniqueName(
@@ -26,7 +33,11 @@ pub fn pushUniqueName(
     for (names.items) |existing| {
         if (std.mem.eql(u8, existing, value)) return;
     }
-    try names.append(allocator, try allocator.dupe(u8, value));
+    const owned_value = try allocator.dupe(u8, value);
+    names.append(allocator, owned_value) catch |err| {
+        allocator.free(owned_value);
+        return err;
+    };
 }
 
 pub fn trimSpaces(text: []const u8) []const u8 {
@@ -41,21 +52,35 @@ pub fn stripTrailingCR(text: []const u8) []const u8 {
 }
 
 pub fn normalizePathAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    if (value.len == 0) return allocator.dupe(u8, "");
+
+    const absolute = value[0] == '/' or value[0] == '\\';
+    var parts: std.ArrayList([]const u8) = .empty;
+    defer parts.deinit(allocator);
+
+    var it = std.mem.tokenizeAny(u8, value, "/\\");
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            if (parts.items.len > 0 and !std.mem.eql(u8, parts.items[parts.items.len - 1], "..")) {
+                _ = parts.pop();
+            } else if (!absolute) {
+                try parts.append(allocator, part);
+            }
+            continue;
+        }
+        try parts.append(allocator, part);
+    }
+
     var normalized: std.ArrayList(u8) = .empty;
     errdefer normalized.deinit(allocator);
-    var prev_was_slash = false;
-    for (value) |ch| {
-        const mapped = if (ch == '\\') '/' else ch;
-        if (mapped == '/') {
-            if (prev_was_slash) continue;
-            prev_was_slash = true;
-        } else {
-            prev_was_slash = false;
-        }
-        try normalized.append(allocator, mapped);
+    if (absolute) try normalized.append(allocator, '/');
+    for (parts.items, 0..) |part, index| {
+        if (index > 0) try normalized.append(allocator, '/');
+        try normalized.appendSlice(allocator, part);
     }
-    while (normalized.items.len > 1 and normalized.items[normalized.items.len - 1] == '/') {
-        _ = normalized.pop();
+    if (normalized.items.len == 0) {
+        try normalized.append(allocator, if (absolute) '/' else '.');
     }
     return try normalized.toOwnedSlice(allocator);
 }
@@ -88,12 +113,43 @@ pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     return try quoted.toOwnedSlice(allocator);
 }
 
+pub fn quoteShellArgIfNeededAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    if (isShellSafeArg(value)) {
+        return try allocator.dupe(u8, value);
+    }
+    return try quoteShellArgAlloc(allocator, value);
+}
+
+fn isShellSafeArg(value: []const u8) bool {
+    if (value.len == 0) return false;
+    for (value) |ch| {
+        if (std.ascii.isAlphanumeric(ch)) continue;
+        switch (ch) {
+            '/', '.', '_', '-', ':', '+', '=', ',', '@' => continue,
+            else => return false,
+        }
+    }
+    return true;
+}
+
 test "quoteShellArgAlloc escapes embedded single quotes" {
     const allocator = std.testing.allocator;
     const quoted = try quoteShellArgAlloc(allocator, "cmd/app's");
     defer allocator.free(quoted);
 
     try std.testing.expectEqualStrings("'cmd/app'\"'\"'s'", quoted);
+}
+
+test "quoteShellArgIfNeededAlloc preserves safe args and quotes spaces" {
+    const allocator = std.testing.allocator;
+
+    const safe = try quoteShellArgIfNeededAlloc(allocator, "build-debug/bin");
+    defer allocator.free(safe);
+    try std.testing.expectEqualStrings("build-debug/bin", safe);
+
+    const spaced = try quoteShellArgIfNeededAlloc(allocator, "build debug");
+    defer allocator.free(spaced);
+    try std.testing.expectEqualStrings("'build debug'", spaced);
 }
 
 test "normalizePathAlloc collapses separators and trims trailing slash" {

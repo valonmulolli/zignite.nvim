@@ -1,6 +1,7 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
 const model = @import("model.zig");
+const pathing = @import("../../pathing.zig");
 
 const Target = model.Target;
 const CommandEntry = model.CommandEntry;
@@ -22,7 +23,7 @@ pub fn buildCommandInfo(
         commands.deinit(allocator);
     }
 
-    const package_dir = std.fs.path.dirname(build_path) orelse "";
+    const package_dir = pathing.dirOrDot(build_path);
     var relative_filepath: ?[]u8 = null;
     defer if (relative_filepath) |value| allocator.free(value);
     var basename: ?[]const u8 = null;
@@ -45,30 +46,32 @@ pub fn buildCommandInfo(
     for (items) |item| {
         const label = try bazelLabelAlloc(allocator, package_path, item.name);
         defer allocator.free(label);
+        const command_suffix = try commandSuffixAlloc(allocator, package_path, item.name);
+        defer allocator.free(command_suffix);
 
-        try appendCommandEntry(
-            allocator,
-            &commands,
-            try std.fmt.allocPrint(allocator, "bazel-build-{s}", .{item.name}),
-            try std.fmt.allocPrint(allocator, "bazel build {s}", .{label}),
-        );
+        const build_name = try std.fmt.allocPrint(allocator, "bazel-build-{s}", .{command_suffix});
+        const build_command = std.fmt.allocPrint(allocator, "bazel build {s}", .{label}) catch |err| {
+            allocator.free(build_name);
+            return err;
+        };
+        try appendCommandEntry(allocator, &commands, build_name, build_command);
 
         if (item.supports_run) {
-            try appendCommandEntry(
-                allocator,
-                &commands,
-                try std.fmt.allocPrint(allocator, "bazel-run-{s}", .{item.name}),
-                try std.fmt.allocPrint(allocator, "bazel run {s}", .{label}),
-            );
+            const run_name = try std.fmt.allocPrint(allocator, "bazel-run-{s}", .{command_suffix});
+            const run_command = std.fmt.allocPrint(allocator, "bazel run {s}", .{label}) catch |err| {
+                allocator.free(run_name);
+                return err;
+            };
+            try appendCommandEntry(allocator, &commands, run_name, run_command);
         }
 
         if (item.supports_test) {
-            try appendCommandEntry(
-                allocator,
-                &commands,
-                try std.fmt.allocPrint(allocator, "bazel-test-{s}", .{item.name}),
-                try std.fmt.allocPrint(allocator, "bazel test {s}", .{label}),
-            );
+            const test_name = try std.fmt.allocPrint(allocator, "bazel-test-{s}", .{command_suffix});
+            const test_command = std.fmt.allocPrint(allocator, "bazel test {s}", .{label}) catch |err| {
+                allocator.free(test_name);
+                return err;
+            };
+            try appendCommandEntry(allocator, &commands, test_name, test_command);
         }
 
         const matched = if (relative_filepath != null and basename != null)
@@ -122,6 +125,39 @@ fn bazelLabelAlloc(allocator: std.mem.Allocator, package_path: []const u8, targe
     return std.fmt.allocPrint(allocator, "//{s}:{s}", .{ package_path, target_name });
 }
 
+fn commandSuffixAlloc(allocator: std.mem.Allocator, package_path: []const u8, target_name: []const u8) ![]u8 {
+    var suffix: std.ArrayList(u8) = .empty;
+    defer suffix.deinit(allocator);
+
+    if (package_path.len > 0) {
+        try appendSanitizedPart(allocator, &suffix, package_path);
+        if (suffix.items.len > 0) {
+            try suffix.append(allocator, '-');
+        }
+    }
+    try appendSanitizedPart(allocator, &suffix, target_name);
+    return try suffix.toOwnedSlice(allocator);
+}
+
+fn appendSanitizedPart(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(u8),
+    value: []const u8,
+) !void {
+    for (value) |ch| {
+        if (std.ascii.isAlphanumeric(ch) or ch == '_') {
+            try list.append(allocator, ch);
+            continue;
+        }
+        if (list.items.len == 0 or list.items[list.items.len - 1] != '-') {
+            try list.append(allocator, '-');
+        }
+    }
+    while (list.items.len > 0 and list.items[list.items.len - 1] == '-') {
+        _ = list.pop();
+    }
+}
+
 fn targetMatchesFile(item: Target, relative_filepath: []const u8, basename: []const u8) bool {
     for (item.source_entries) |source_entry| {
         if (sourceMatchesFile(source_entry, relative_filepath, basename)) {
@@ -136,7 +172,7 @@ fn sourceMatchesFile(source_entry: []const u8, relative_filepath: []const u8, ba
     defer std.heap.page_allocator.free(normalized);
 
     if (normalized.len == 0) return false;
-    if (std.mem.indexOf(u8, normalized, "//") != null or std.mem.indexOfScalar(u8, normalized, ':') != null) {
+    if (std.mem.find(u8, normalized, "//") != null or std.mem.findScalar(u8, normalized, ':') != null) {
         return false;
     }
     return std.mem.eql(u8, normalized, relative_filepath) or

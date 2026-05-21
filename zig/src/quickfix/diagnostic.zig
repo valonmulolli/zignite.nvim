@@ -25,7 +25,7 @@ fn parseColonDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
 
         const line_no = std.fmt.parseInt(usize, line[line_start..j], 10) catch continue;
         const path = trimSpaces(line[0..i]);
-        if (path.len == 0 or std.mem.indexOfAny(u8, path, "/\\.") == null) continue;
+        if (path.len == 0 or std.mem.findAny(u8, path, "/\\.") == null) continue;
 
         const after_line = j + 1;
         var k = after_line;
@@ -46,12 +46,12 @@ fn parseColonDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
 }
 
 fn parseParenDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
-    const open_idx = std.mem.indexOfScalar(u8, line, '(') orelse return null;
-    const colon_idx = std.mem.indexOfScalarPos(u8, line, open_idx + 1, ':') orelse return null;
-    const close_idx = std.mem.indexOfScalarPos(u8, line, colon_idx + 1, ')') orelse return null;
+    const open_idx = std.mem.findScalar(u8, line, '(') orelse return null;
+    const colon_idx = std.mem.findScalarPos(u8, line, open_idx + 1, ':') orelse return null;
+    const close_idx = std.mem.findScalarPos(u8, line, colon_idx + 1, ')') orelse return null;
 
     const path = trimSpaces(line[0..open_idx]);
-    if (path.len == 0 or std.mem.indexOfAny(u8, path, "/\\.") == null) return null;
+    if (path.len == 0 or std.mem.findAny(u8, path, "/\\.") == null) return null;
 
     const line_no = std.fmt.parseInt(usize, line[open_idx + 1 .. colon_idx], 10) catch return null;
     const col_no = std.fmt.parseInt(usize, line[colon_idx + 1 .. close_idx], 10) catch return null;

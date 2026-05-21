@@ -1,0 +1,8 @@
+{
+  "name": "demo-node-app",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest"
+  }
+}

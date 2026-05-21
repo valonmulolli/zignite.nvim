@@ -4,6 +4,10 @@ local M = {}
 ---@return string
 function M.setup()
 	local project_root = arg[1] or "."
+	local json = nil
+	pcall(function()
+		json = require("dkjson")
+	end)
 
 	_G.vim = _G.vim or {}
 	vim.fn = vim.fn or {
@@ -96,6 +100,9 @@ function M.setup()
 		joinpath = function(a, b)
 			return a .. "/" .. b
 		end,
+		basename = function(path)
+			return (path:match("([^/]+)$") or path)
+		end,
 	}
 	vim.loop = vim.loop or {
 		new_timer = function()
@@ -108,6 +115,21 @@ function M.setup()
 	}
 	vim.schedule_wrap = vim.schedule_wrap or function(func)
 		return func
+	end
+	if type(vim.json) ~= "table" and json then
+		vim.json = {
+			encode = function(value)
+				return json.encode(value)
+			end,
+			decode = function(value)
+				return json.decode(value)
+			end,
+		}
+	end
+	if type(vim.fn.json_decode) ~= "function" and json then
+		vim.fn.json_decode = function(value)
+			return json.decode(value)
+		end
 	end
 
 	local next_buf_id = 1
@@ -143,6 +165,9 @@ function M.setup()
 			return {}
 		end,
 		nvim_get_current_win = function()
+			return 1
+		end,
+		nvim_get_current_buf = function()
 			return 1
 		end,
 		nvim_win_set_buf = function(win, buf)

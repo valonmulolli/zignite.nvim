@@ -40,12 +40,12 @@ pub fn parseArgs(args: []const []const u8) !Options {
     };
 }
 
-pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    const commands = try detectToolCommands(allocator, options.tool);
+pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    const commands = try detectToolCommandsWithIO(io, allocator, options.tool);
     defer freeOwnedCommandList(allocator, commands);
 
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
     for (commands) |command| {
         try stdout.print("{s}\n", .{command});
@@ -53,16 +53,16 @@ pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
     try stdout.flush();
 }
 
-pub fn runDaemon(allocator: std.mem.Allocator) !void {
+pub fn runDaemon(allocator: std.mem.Allocator, io: std.Io) !void {
     var stdin_ctx: protocol_stdio.Stdin = .{};
-    stdin_ctx.init();
+    stdin_ctx.init(io);
     const reader = stdin_ctx.io();
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
 
     while (true) {
-        const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', DETECT_DAEMON_MAX_LINE);
+        const maybe_begin = try frame.readLineAlloc(allocator, reader, DETECT_DAEMON_MAX_LINE);
         if (maybe_begin == null) break;
 
         const begin_owned = maybe_begin.?;
@@ -70,7 +70,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         const begin_line = frame.stripTrailingCR(begin_owned);
 
         if (!std.mem.startsWith(u8, begin_line, DETECT_DAEMON_REQ_BEGIN)) continue;
-        handleDaemonFrame(allocator, reader, stdout, begin_line) catch |err| {
+        handleDaemonFrame(allocator, io, reader, stdout, begin_line) catch |err| {
             if (err == error.UnexpectedEof) break;
             return err;
         };
@@ -79,6 +79,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
 pub fn handleDaemonFrame(
     allocator: std.mem.Allocator,
+    io: std.Io,
     reader: anytype,
     stdout: anytype,
     begin_line: []const u8,
@@ -109,7 +110,7 @@ pub fn handleDaemonFrame(
     if (!completed) return error.UnexpectedEof;
 
     try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_BEGIN, header.request_id });
-    const detect_result = detectToolCommands(allocator, header.tool);
+    const detect_result = detectToolCommandsWithIO(io, allocator, header.tool);
     if (detect_result) |commands| {
         defer freeOwnedCommandList(allocator, commands);
         for (commands) |command| {
@@ -125,7 +126,12 @@ pub fn handleDaemonFrame(
 }
 
 pub fn detectToolCommands(allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
-    const output = parse.detectToolOutput(allocator, tool) catch |err| switch (err) {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return detectToolCommandsWithIO(threaded.io(), allocator, tool);
+}
+
+pub fn detectToolCommandsWithIO(io: std.Io, allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
+    const output = parse.detectToolOutputWithIO(io, allocator, tool) catch |err| switch (err) {
         error.FileNotFound => return try allocator.alloc([]u8, 0),
         else => return err,
     };
@@ -160,7 +166,7 @@ fn parseDetectDaemonBegin(line: []const u8) !DetectDaemonRequestHeader {
 }
 
 const TestReader = struct {
-    fn readUntilDelimiterOrEofAlloc(
+    pub fn readUntilDelimiterOrEofAlloc(
         self: *TestReader,
         allocator: std.mem.Allocator,
         delimiter: u8,
@@ -177,18 +183,19 @@ const TestReader = struct {
 test "handleDaemonFrame writes detect error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{};
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try handleDaemonFrame(
         allocator,
+        std.testing.io,
         &reader,
-        out.writer(allocator),
+        &out.writer,
         "@@ZDET_REQ_BEGIN 9 nope",
     );
 
     try std.testing.expectEqualStrings(
         "@@ZDET_RES_BEGIN 9\n@@ZDET_RES_ERR 9 InvalidDetectTool\n@@ZDET_RES_END 9\n",
-        out.items,
+        out.written(),
     );
 }

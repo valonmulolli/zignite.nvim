@@ -1,5 +1,6 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
+const pathing = @import("../../pathing.zig");
 
 pub const Target = struct {
     name: []u8,
@@ -19,7 +20,7 @@ pub fn parseTargets(
     cargo_toml_path: []const u8,
     match_path: ?[]const u8,
 ) ![]Target {
-    const root = std.fs.path.dirname(cargo_toml_path) orelse "";
+    const root = pathing.dirOrDot(cargo_toml_path);
     const normalized_root = try common.normalizePathAlloc(allocator, root);
     defer allocator.free(normalized_root);
 
@@ -129,7 +130,7 @@ fn addImplicitBinTargets(
 
     if (std.mem.startsWith(u8, relative_path, "src/bin/") and std.mem.endsWith(u8, relative_path, ".rs")) {
         const suffix = relative_path["src/bin/".len .. relative_path.len - ".rs".len];
-        if (std.mem.indexOfScalar(u8, suffix, '/') == null and suffix.len > 0) {
+        if (std.mem.findScalar(u8, suffix, '/') == null and suffix.len > 0) {
             try addOrMergeTarget(allocator, targets, suffix, true);
         }
     }
@@ -147,10 +148,14 @@ fn addOrMergeTarget(
             return;
         }
     }
-    try targets.append(allocator, .{
-        .name = try allocator.dupe(u8, name),
+    const owned_name = try allocator.dupe(u8, name);
+    targets.append(allocator, .{
+        .name = owned_name,
         .matched = matched,
-    });
+    }) catch |err| {
+        allocator.free(owned_name);
+        return err;
+    };
 }
 
 fn parsePackageName(contents: []const u8) ?[]const u8 {
@@ -202,7 +207,7 @@ fn findAssignmentValueStart(block: []const u8, key: []const u8) ?usize {
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
-    const hash_idx = std.mem.indexOfScalar(u8, line, '#') orelse return line;
+    const hash_idx = std.mem.findScalar(u8, line, '#') orelse return line;
     return line[0..hash_idx];
 }
 

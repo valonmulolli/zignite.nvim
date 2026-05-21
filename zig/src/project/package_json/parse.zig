@@ -42,6 +42,16 @@ pub fn detectPackageManager(
     root: []const u8,
     contents: []const u8,
 ) ![]const u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return detectPackageManagerWithIO(threaded.io(), allocator, root, contents);
+}
+
+pub fn detectPackageManagerWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    contents: []const u8,
+) ![]const u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, contents, .{}) catch null;
     defer if (parsed) |value| value.deinit();
 
@@ -59,9 +69,9 @@ pub fn detectPackageManager(
         }
     }
 
-    if (pathExists(allocator, root, "bun.lockb") or pathExists(allocator, root, "bun.lock")) return "bun";
-    if (pathExists(allocator, root, "pnpm-lock.yaml")) return "pnpm";
-    if (pathExists(allocator, root, "yarn.lock")) return "yarn";
+    if (pathExistsWithIO(io, allocator, root, "bun.lockb") or pathExistsWithIO(io, allocator, root, "bun.lock")) return "bun";
+    if (pathExistsWithIO(io, allocator, root, "pnpm-lock.yaml")) return "pnpm";
+    if (pathExistsWithIO(io, allocator, root, "yarn.lock")) return "yarn";
     return "npm";
 }
 
@@ -76,9 +86,14 @@ pub fn selectLiveScriptName(names: []const []const u8) ?[]const u8 {
 }
 
 fn pathExists(allocator: std.mem.Allocator, root: []const u8, filename: []const u8) bool {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return pathExistsWithIO(threaded.io(), allocator, root, filename);
+}
+
+fn pathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, filename: []const u8) bool {
     const path = std.fs.path.join(allocator, &.{ root, filename }) catch return false;
     defer allocator.free(path);
-    std.fs.cwd().access(path, .{}) catch return false;
+    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
     return true;
 }
 
@@ -102,6 +117,17 @@ pub fn parseScripts(
     }
 }
 
+pub fn parseScriptsLenient(
+    allocator: std.mem.Allocator,
+    contents: []const u8,
+    names: *std.ArrayList([]u8),
+) !void {
+    parseScripts(allocator, contents, names) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => {},
+    };
+}
+
 test "parse package scripts" {
     const allocator = std.testing.allocator;
     var names: std.ArrayList([]u8) = .empty;
@@ -110,12 +136,23 @@ test "parse package scripts" {
         names.deinit(allocator);
     }
 
-    try parseScripts(
-        allocator,
+    try parseScripts(allocator,
         \\{"scripts":{"dev":"vite","build":"vite build","test":"vitest"}}
     , &names);
 
     try std.testing.expectEqual(@as(usize, 3), names.items.len);
+}
+
+test "parseScriptsLenient ignores malformed package json" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |name| allocator.free(name);
+        names.deinit(allocator);
+    }
+
+    try parseScriptsLenient(allocator, "{ invalid json", &names);
+    try std.testing.expectEqual(@as(usize, 0), names.items.len);
 }
 
 test "format package script command respects package manager" {
@@ -164,9 +201,7 @@ test "select live script prefers runtime-oriented scripts" {
 test "detect package manager prefers packageManager field" {
     try std.testing.expectEqualStrings(
         "yarn",
-        try detectPackageManager(
-            std.testing.allocator,
-            "/tmp/unused",
+        try detectPackageManager(std.testing.allocator, "/tmp/unused",
             \\{"packageManager":"yarn@4.6.0"}
         ),
     );
@@ -175,9 +210,9 @@ test "detect package manager prefers packageManager field" {
 test "detect package manager falls back to lockfiles" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "pnpm-lock.yaml", .data = "lockfileVersion: '9.0'" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "pnpm-lock.yaml", .data = "lockfileVersion: '9.0'" });
 
-    const root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(root);
 
     try std.testing.expectEqualStrings("pnpm", try detectPackageManager(std.testing.allocator, root, "{}"));

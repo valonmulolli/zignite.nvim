@@ -12,3 +12,4 @@ pub const freeOwnedCommandInfo = model.freeOwnedCommandInfo;
 pub const parseTargets = parse.parseTargets;
 pub const buildCommandInfo = infer.buildCommandInfo;
 pub const buildWorkspaceCommandInfo = workspace.buildWorkspaceCommandInfo;
+pub const buildWorkspaceCommandInfoWithIO = workspace.buildWorkspaceCommandInfoWithIO;

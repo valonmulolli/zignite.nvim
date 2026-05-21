@@ -38,6 +38,7 @@ local exported_globals = {
 local suites = {
 	"integration.quickfix",
 	"integration.build.execute",
+	"integration.build.select.filter",
 	"integration.resolve",
 }
 
