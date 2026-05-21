@@ -1,4 +1,0 @@
-name: demo-conda-yaml
-dependencies:
-  - python=3.12
-  - pytest
