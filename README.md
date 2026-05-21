@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/Lua%20%2B%20Zig-blueviolet.svg" alt="Lua + Zig"/>
   <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
   <br/>
-  <strong>Fast, asynchronous code execution for Neovim with a Zig backend.</strong>
+  <strong>Async code runner for Neovim. Powered by Zig for near-zero overhead execution with non-blocking output streaming.</strong>
 </p>
 
 ---
