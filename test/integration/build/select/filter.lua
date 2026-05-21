@@ -4,6 +4,35 @@
 -- luacheck: globals count_detect_backend_jobs count_detect_backend_requests
 -- luacheck: globals get_upvalue_by_name detect_backend_tool_commands is_detect_daemon_cmd parse_detect_daemon_request
 
+local command_helpers = require("zignite.ui.build_picker.commands")
+
+local function test_build_picker_respects_backend_picker_metadata()
+	local entries = command_helpers.normalize_command_entries({
+		{
+			name = "build",
+			command = "cmake --build build",
+			display_command = "cmake --build build",
+			picker_section = "common",
+			picker_rank = 1001,
+		},
+		{
+			name = "cmake-build-demo",
+			command = "cmake --build build --target demo",
+			display_command = "cmake --build build --target demo",
+			picker_section = "targets",
+			picker_rank = 2999,
+		},
+	})
+
+	assert(#entries == 2, "Picker should hide backend-pruned aliases")
+	assert(entries[1].name == "build", "Picker should keep the generic command")
+	assert(entries[2].name == "cmake-build-demo", "Picker should keep target-specific commands")
+	assert(command_helpers.command_section(entries[2]) == "targets",
+		"Picker should trust backend section metadata")
+
+	print("✓ Build picker backend metadata test passed")
+end
+
 local function test_build_picker_filter_and_preview()
     local original_expand = vim.fn.expand
     local original_buf_set_lines = vim.api.nvim_buf_set_lines
@@ -232,6 +261,11 @@ local function test_build_picker_inline_argument_entry()
 	}
 
 	config.setup({
+		build_commands = {
+			zig = {
+				fetch = "zig fetch $zignite_args",
+			},
+		},
 		picker = {
 			filter_input = "inline",
 		},
@@ -293,7 +327,41 @@ local function test_build_picker_inline_argument_entry()
 	print("✓ Build picker inline argument entry test passed")
 end
 
+local function test_build_picker_uses_backend_no_command_message()
+	local original_expand = vim.fn.expand
+
+	config.setup({
+		build_commands = {},
+		detect_runtime = {
+			async_picker = false,
+		},
+	})
+
+	vim.bo.filetype = "unknownft"
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then return "/tmp/picker/main.unknown" end
+		return original_expand(expr)
+	end
+
+	reset_notify_results()
+	init.select_build_command("float")
+
+	assert(#notify_results > 0, "Picker should notify when backend reports no build commands")
+	assert(
+		type(notify_results[#notify_results].msg) == "string"
+			and notify_results[#notify_results].msg:match("No build commands available for filetype: unknownft"),
+		"Picker should surface the backend no-command message"
+	)
+
+	vim.fn.expand = original_expand
+	reset_notify_results()
+
+	print("✓ Build picker backend no-command message test passed")
+end
+
+test_build_picker_respects_backend_picker_metadata()
 test_build_picker_filter_and_preview()
 test_build_picker_filter_cmdline_mode()
 test_build_picker_filter_inline_mode()
 test_build_picker_inline_argument_entry()
+test_build_picker_uses_backend_no_command_message()

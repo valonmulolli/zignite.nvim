@@ -24,23 +24,6 @@ return {
         -- Keymaps are managed by Lazy above.
         keymaps = {},
         mode = "float",
-        runners = {
-          c = {
-            cmd = {
-              "gcc $file -o /tmp/$fileNameWithoutExt",
-              "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt",
-          },
-          cpp = {
-            cmd = {
-              "c++ -pipe $file -o /tmp/$fileNameWithoutExt",
-              "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt",
-          },
-        },
-
         -- Optional execution behavior.
         timeout = nil,
         detect_runtime = {

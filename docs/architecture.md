@@ -1,230 +1,152 @@
 # Architecture
 
-`zignite.nvim` is split into two layers:
+Zignite is a Zig-first Neovim plugin.
 
-- Lua owns the Neovim runtime layer
-- Zig owns parsing, backend execution, and build-system intelligence
+The current split is:
+- Lua handles plugin setup, config, RPC transport, picker/window UI, and thin controller flow.
+- Zig handles config interpretation, filetype normalization, build/run resolution, project parsing, system detection, command detection, quickfix processing, and execution support.
 
-That split is intentional. The Lua side should stay focused on editor behavior, caching, and user-facing policy. The Zig side should stay focused on command inference, project parsing, detection, and quickfix processing.
+## Lua Frontend
 
-## Ownership
-
-### Lua
-
-Lua is the Neovim-facing runtime.
-
-Main areas:
-
+Current Lua tree:
+- `lua/zignite/config.lua`
 - `lua/zignite/init.lua`
-  - user commands like `RunFile`, `RunBuild`, `RunLive`
-  - source context resolution
-  - runner setup
-- `lua/zignite/build/`
-  - `project_query.lua`: query/decode/cache adapter for Zig project records
-  - `command_policy.lua`: final merge and override policy
-  - `runtime_lookup.lua`: cached lookup and async refresh
-  - `system_runtime.lua`: hot-path local root checks and warmed system cache reuse
-  - `picker*.lua`: build picker UI
-  - `detect/*.lua`: backend transport and detect caching
-- `lua/zignite/runtime/`
-  - argv shaping
-  - command normalization
-  - runtime execution helpers
-- `lua/zignite/ui/`
-  - windows
-  - spinner
-  - quickfix publishing
+- `lua/zignite/rpc/*`
+- `lua/zignite/ui/*`
+- `lua/zignite/ui/build_picker/*`
 
-Lua should not grow new parser-heavy logic when Zig can own it cleanly.
+Responsibilities:
+- register commands like `:RunFile`, `:RunBuildSelect`, `:RunLive`, and `:StopCode`
+- collect current editor context such as file path, filetype, and visual selections
+- sync config to the Zig daemon
+- send build/run resolve requests to Zig
+- normalize backend payloads at the RPC boundary before handing them to controller/UI code
+- render picker, terminal windows, spinner, and quickfix UI
+- maintain small editor-local state such as the last selected build command
 
-### Zig
+Intentional Lua-only behavior:
+- visual-selection temp file handling
+- Neovim job/window lifecycle
+- picker/filter/input UI
 
-Zig is the backend.
+## Zig Backend
 
-Top-level entrypoints:
-
+Current Zig tree:
 - `zig/src/main.zig`
 - `zig/src/daemon.zig`
-- `zig/src/command.zig`
-- `zig/src/detect.zig`
-- `zig/src/quickfix.zig`
-- `zig/src/project.zig`
+- `zig/src/config/*`
+- `zig/src/filetype.zig`
+- `zig/src/build/resolve/*`
+- `zig/src/runtime/resolve/*`
+- `zig/src/build/system/*`
+- `zig/src/project/*`
+- `zig/src/detect/*`
+- `zig/src/quickfix/*`
 
-Subsystem layout:
+Responsibilities:
+- parse synced config through `zig/src/config/view.zig`, keyed by store generation
+- normalize filetypes from Neovim filetype, extension, and shebang
+- resolve build commands, preferred commands, live command names, and selected-command execution payloads
+- resolve runners, argv, cwd, cleanup commands, and display names
+- detect build systems and project roots
+- parse project files such as `Cargo.toml`, `package.json`, `go.mod`, `go.work`, `pom.xml`, `build.gradle.kts`, `CMakeLists.txt`, `meson.build`, `MODULE.bazel`, and `pyproject.toml`
+- process quickfix output and diagnostics
+- expose direct CLI modes plus a unified framed daemon protocol
 
-- `zig/src/build/`
-  - shared build-system helpers
-  - warmed system/root queries
-- `zig/src/project/core/`
-  - shared project parser infrastructure
-  - auto-kind dispatch
-  - output emission
-- `zig/src/project/<kind>/`
-  - project-specific parser implementations
-- `zig/src/detect/`
-  - detect parsing and template rendering
-- `zig/src/quickfix/`
-  - ANSI stripping, tailing, diagnostic normalization
+## Request Flow
 
-## Runtime flow
+### Run file
+1. Lua collects the current file path and filetype.
+2. Lua syncs config if needed.
+3. Lua sends `--run-resolve` to the Zig backend.
+4. Zig returns a JSON-first resolved runner payload containing the final command, argv, cwd, cleanup command, source, and display name.
+5. Lua opens a terminal window and executes the resolved command.
 
-### RunFile
-
-`RunFile` stays mostly Lua-owned.
-
-Flow:
-
-1. `lua/zignite/init.lua` resolves the source path and filetype
-2. Lua chooses the filetype runner
-3. smart runner defaults may consult warmed Zig system state
-4. `lua/zignite/runtime/*` normalizes argv/shell execution
-5. `zig/src/command.zig` executes the final process
-
-### RunBuild / RunLive
-
-`RunBuild` and `RunLive` are mixed Lua/Zig flows.
-
-Flow:
-
-1. `lua/zignite/build/runtime_lookup.lua` asks for cached commands first
-2. `lua/zignite/build/project_query.lua` decodes warmed Zig project/system records
-3. `lua/zignite/build/command_policy.lua` merges:
-   - defaults
-   - configured overrides
-   - Zig project commands
-   - Zig system commands
-   - tool-detect commands
-4. async refresh warms richer Zig results in the background
-5. final execution goes through `lua/zignite/runtime/*` and `zig/src/command.zig`
+### Build picker / build execution
+1. Lua collects the current file path and filetype.
+2. Lua syncs config if needed.
+3. Lua sends `--build-resolve` to the Zig backend.
+4. Zig returns:
+   - command list
+   - command metadata
+   - preferred commands
+   - preferred live command name
+5. Lua renders the picker.
+6. When the user selects a command, Lua sends a command-specific `--build-resolve` request.
+7. Zig returns a JSON-first execution payload containing:
+   - final command
+   - argv
+   - cwd
+   - display name
+   - config revision
+8. Lua launches the terminal job.
 
 ### Quickfix
+1. Lua collects the terminal output.
+2. In `quickfix.processor = "auto"` mode, Lua prefers the Zig quickfix path when the backend is available, and falls back to Lua processing otherwise.
+3. Zig can strip ANSI, tail large outputs, and normalize diagnostics.
+4. Lua publishes the resulting quickfix list to Neovim.
 
-Quickfix is backend-heavy by design.
+## Supported Project Lanes
 
-Flow:
+The backend currently has real fixture coverage for:
+- Bazel
+- Bun
+- Cargo
+- CMake
+- Go modules
+- Go workspaces
+- Gradle
+- Maven
+- Meson
+- Node / package.json
+- Python with `uv`
+- Python with `requirements.txt` / `pip`
+- Python with conda (`environment.yml` and `environment.yaml`)
 
-1. terminal output is captured in Lua
-2. non-zero exits may trigger quickfix processing
-3. `zig/src/quickfix.zig` handles:
-   - tail limiting
-   - ANSI stripping
-   - diagnostic normalization
-4. Lua publishes the final quickfix list into Neovim
+Python support is intentionally limited to:
+- `uv`
+- `pip` / `requirements.txt`
+- conda
 
-## Backend contracts
+The backend does not intentionally support Poetry, PDM, or Hatch.
 
-The Lua side should treat backend record formats as stable contracts.
+## Testing Strategy
 
-Main project/system records:
+There are two main layers:
 
-- `COMMAND\t<name>\t<command>`
-- `ROOT\t<path>`
-- `SYSTEM\t<name>`
-- `BUILD_READY\t0|1`
+### Lua/frontend tests
+- `lua test/runner.lua`
+- `test/integration/*`
 
-Additional project-specific records may appear, but the `COMMAND`/`ROOT`/`SYSTEM` contract is the core interface used by the Lua build layer.
+These cover:
+- config/setup behavior
+- picker/controller behavior
+- quickfix UI behavior
+- Lua-to-backend RPC behavior through a simulator
 
-## System queries
+### Zig/backend tests
+- `cd zig && zig build test`
 
-System queries are the warmed, low-cost backend answers used by cached lookup.
+These cover:
+- direct resolver behavior
+- project parsers
+- build-system detection
+- quickfix backend logic
+- fixture-based backend scenarios under `test/fixtures/backend/*`
 
-Current queries include:
+### Benchmarks
+- `cd zig && zig build bench-fast`
+- `cd zig && zig build bench`
 
-- `c-family`
-- `bazel-root`
-- `jvm-root`
-- `node-root`
-- `python-root`
+These measure direct and daemon-backed resolver performance, plus quickfix
+processing benchmarks.
 
-These live in:
+## Design Rules
 
-- `zig/src/build/system.zig`
-
-Lua should prefer warmed system results when available, but still keep hot-path local checks nonblocking.
-
-## Auto project kinds
-
-Auto kinds map a source file path to the relevant project file or workspace.
-
-Examples:
-
-- `cargo-auto`
-- `go-auto`
-- `jvm-auto`
-- `c-family-auto`
-- `bazel-auto`
-- `package-json-auto`
-- `python-auto`
-
-These live in:
-
-- `zig/src/project/core/auto.zig`
-
-## Adding a new project parser
-
-Use this path:
-
-1. add parser implementation under `zig/src/project/<kind>/`
-2. expose public parser API via `zig/src/project/<kind>/api.zig`
-3. teach `zig/src/project/core/emit/*.zig` how to emit final records
-4. if source-path resolution is needed, wire auto-kind logic in `zig/src/project/core/auto.zig`
-5. only add Lua changes if the runtime layer actually needs a new policy or cache path
-
-Preferred outcome:
-
-- Zig emits final command records
-- Lua consumes those records without reconstructing them
-
-## Adding a new system query
-
-Use this path:
-
-1. add query enum and parser handling in `zig/src/build/system.zig`
-2. emit baseline `COMMAND` records there if the query should supply warmed commands
-3. ensure `zig/src/project/core/auto.zig` writes the query result when `kind == .system`
-4. add warmed-cache handling in `lua/zignite/build/system_runtime.lua`
-5. consume that warmed result in `lua/zignite/build/project_query.lua` or `lua/zignite/build/command_policy.lua`
-
-Preferred outcome:
-
-- Lua does not invent baseline commands that Zig can emit directly
-
-## What should stay in Lua
-
-These are good Lua responsibilities:
-
-- Neovim UI
-- user command entrypoints
-- config merge semantics
-- cached lookup orchestration
-- hot-path local gating that must stay nonblocking
-
-## What should move to Zig when possible
-
-These are good Zig responsibilities:
-
-- parser logic
-- command inference
-- build-system baseline command sets
-- workspace/source-path resolution
-- quickfix processing
-- tool detection parsing
-
-## Current rule of thumb
-
-If a change answers:
-
-- "what project is this?"
-- "what commands should exist?"
-- "what is the preferred command?"
-- "how do we parse this file or tool output?"
-
-it should usually land in Zig first.
-
-If a change answers:
-
-- "how do we show this in Neovim?"
-- "how do we merge user config?"
-- "how do we keep the picker/runtime nonblocking?"
-
-it should usually land in Lua.
+When extending the codebase:
+- prefer putting new resolution or inference logic in Zig, not Lua
+- keep Lua focused on Neovim integration and UI
+- route config interpretation through `zig/src/config/view.zig`
+- avoid reintroducing raw JSON parsing into resolver code
+- prefer fixture-based backend tests for new project-detection behavior

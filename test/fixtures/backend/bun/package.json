@@ -1,0 +1,9 @@
+{
+  "name": "bun-demo",
+  "packageManager": "bun@1.2.0",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "build": "bun build src/main.ts --outdir dist",
+    "test": "bun test"
+  }
+}
