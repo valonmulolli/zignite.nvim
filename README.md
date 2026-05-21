@@ -40,10 +40,7 @@ The current architecture is intentionally split:
 - Lua owns the Neovim frontend layer: setup, config, RPC transport, picker/window UI, and thin controller flow
 - Zig owns the backend layer: config interpretation, filetype normalization, build/run resolution, project parsing, system queries, detection, quickfix processing, and execution support
 
-For contributors:
-
-- architecture overview: `docs/architecture.md`
-- contribution guide: `CONTRIBUTING.md`
+For contributors: `CONTRIBUTING.md`
 
 
 ## Installation
