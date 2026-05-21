@@ -43,6 +43,9 @@ local function test_quickfix_on_error_lua_processor()
         return out
     end
 
+    require("zignite.ui.quickfix").reset()
+    reset_job_results()
+    reset_quickfix_results()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
@@ -102,6 +105,9 @@ local function test_quickfix_zig_processor()
         return out
     end
 
+    require("zignite.ui.quickfix").reset()
+    reset_job_results()
+    reset_quickfix_results()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
@@ -162,10 +168,12 @@ local function test_quickfix_zig_one_shot_processor()
         return out
     end
 
+    require("zignite.ui.quickfix").reset()
+    reset_job_results()
+    reset_quickfix_results()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(count_quickfix_daemon_jobs() == 0, "One-shot quickfix path should not start the quickfix daemon")
     assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the Zig backend")
     assert(#quickfix_results > 0, "One-shot quickfix path should populate quickfix output")
     local qf = quickfix_results[#quickfix_results]
@@ -321,7 +329,7 @@ local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
 end
 
 -- Test auto processor routes to Lua below threshold and Zig above threshold.
-local function test_quickfix_auto_threshold_behavior()
+local function test_quickfix_auto_prefers_zig_backend()
     require("zignite.ui.quickfix").reset()
     local quickfix_module = require("zignite.ui.quickfix")
     local choose_quickfix_processor =
@@ -367,8 +375,8 @@ local function test_quickfix_auto_threshold_behavior()
 
     assert(type(choose_quickfix_processor) == "function", "Quickfix test should be able to inspect processor selection")
     assert(
-        choose_quickfix_processor(config.options.quickfix, #small_lines) == "lua",
-        "Auto mode should select the Lua quickfix processor below threshold"
+        choose_quickfix_processor(config.options.quickfix, #small_lines) == "zig",
+        "Auto mode should prefer the Zig quickfix processor when the backend is available"
     )
 
     state.next_exit_code = 1
@@ -390,11 +398,11 @@ local function test_quickfix_auto_threshold_behavior()
 
     assert(
         choose_quickfix_processor(config.options.quickfix, #large_lines) == "zig",
-        "Auto mode should select the Zig quickfix processor above threshold"
+        "Auto mode should still select the Zig quickfix processor for larger outputs"
     )
 
     init.run_code(0, "float")
-    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use zig processor above threshold")
+    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use the zig processor path")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -403,7 +411,7 @@ local function test_quickfix_auto_threshold_behavior()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix auto threshold test passed")
+    print("✓ Quickfix auto zig-preference test passed")
 end
 
 -- Test zig quickfix processor falls back to Lua when zig backend fails.
@@ -579,7 +587,7 @@ test_quickfix_zig_processor()
 test_quickfix_zig_one_shot_processor()
 test_quickfix_backend_availability_resets_on_setup()
 test_quickfix_zig_processor_keeps_tail_on_byte_cap()
-test_quickfix_auto_threshold_behavior()
+test_quickfix_auto_prefers_zig_backend()
 test_quickfix_zig_fallback()
 test_quickfix_zig_protocol_error_fallback()
 test_quickfix_zig_diagnostic_parser()

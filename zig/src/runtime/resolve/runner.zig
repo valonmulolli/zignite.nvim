@@ -1,13 +1,83 @@
 const std = @import("std");
 const build_resolve = @import("../../build/resolve.zig");
-const build_types = @import("../../build/system/types.zig");
-const config = @import("../../config.zig");
+const build_detected = @import("../../build/resolve/detected.zig");
+const config_view = @import("../../config/view.zig");
+const builtin = @import("builtin.zig");
 const materialize = @import("materialize.zig");
+const source = @import("../source.zig");
 const types = @import("types.zig");
+const zig_classifier = @import("zig_classifier.zig");
 
-pub fn resolveRunner(allocator: std.mem.Allocator, options: types.Options) !types.ResolvedRunner {
+const project_runner_preferred_names = [_][]const u8{ "run", "live", "dev", "watch", "serve", "start", "preview", "build" };
+
+pub fn resolveRunner(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    environ_map: ?*const std.process.Environ.Map,
+    options: types.Options,
+) !types.ResolvedRunner {
+    var prepared = try source.prepareSource(io, allocator, environ_map, .{
+        .source_path = options.path,
+        .filetype = options.filetype,
+        .buffer_id = options.buffer_id,
+        .input_kind = options.input_kind,
+        .selection_text = options.selection_text,
+    });
+    defer prepared.deinit(allocator);
+
+    const execution_path = prepared.execution_path;
     const context_path = options.context_path orelse options.path;
-    var build_output = try build_resolve.resolveDetectedOutput(allocator, .{
+    const has_project_context = context_path.len > 0;
+
+    if (!has_project_context) {
+        const resolved_filetype = options.filetype;
+        if (try collectFiletypeRunner(allocator, resolved_filetype)) |configured| {
+            var resolved = configured;
+            errdefer resolved.deinit(allocator);
+            resolved.filetype = try allocator.dupe(u8, resolved_filetype);
+            try materialize.materializeRunner(allocator, &resolved, execution_path);
+            try attachExecutionPath(allocator, &resolved, execution_path);
+            return resolved;
+        }
+
+        return try minimalRunner(allocator, resolved_filetype, execution_path);
+    }
+
+    // Avoid triggering Zig build-step discovery during RunFile when the source
+    // already proves it must run via the project build graph.
+    if (std.mem.eql(u8, options.filetype, "zig")) {
+        if (try zig_classifier.shouldPreferProjectRunnerWithIO(io, allocator, options.path, context_path, options.project_root)) {
+            if (try buildZigProjectRunner(io, allocator, context_path, options.project_root)) |resolved_raw| {
+                var resolved = resolved_raw;
+                errdefer resolved.deinit(allocator);
+                try materialize.materializeRunner(allocator, &resolved, execution_path);
+                try attachExecutionPath(allocator, &resolved, execution_path);
+                return resolved;
+            }
+        }
+
+        if (try collectFiletypeRunner(allocator, "zig")) |configured| {
+            var resolved = configured;
+            errdefer resolved.deinit(allocator);
+            resolved.filetype = try allocator.dupe(u8, "zig");
+            try materialize.materializeRunner(allocator, &resolved, execution_path);
+            try attachExecutionPath(allocator, &resolved, execution_path);
+            return resolved;
+        }
+    }
+
+    if (std.mem.eql(u8, options.filetype, "go")) {
+        if (try collectFiletypeRunner(allocator, "go")) |configured| {
+            var resolved = configured;
+            errdefer resolved.deinit(allocator);
+            resolved.filetype = try allocator.dupe(u8, "go");
+            try materialize.materializeRunner(allocator, &resolved, execution_path);
+            try attachExecutionPath(allocator, &resolved, execution_path);
+            return resolved;
+        }
+    }
+
+    var build_output = try build_resolve.resolveDetectedOutputWithIO(io, allocator, .{
         .path = context_path,
         .filetype = options.filetype,
         .project_root = options.project_root,
@@ -15,102 +85,62 @@ pub fn resolveRunner(allocator: std.mem.Allocator, options: types.Options) !type
     defer build_output.deinit(allocator);
     const resolved_filetype = build_output.filetype orelse options.filetype;
 
-    if (std.mem.eql(u8, resolved_filetype, "zig")) {
-        if (try buildZigProjectRunner(allocator, context_path, options.project_root)) |resolved| {
-            return try materialize.materializeRunner(allocator, resolved, options.path);
-        }
-        if (try buildProjectRunner(allocator, resolved_filetype, &build_output)) |resolved| {
-            return try materialize.materializeRunner(allocator, resolved, options.path);
-        }
-    }
-
-    if (try collectConfiguredRunner(allocator, resolved_filetype)) |configured| {
+    if (try collectFiletypeRunner(allocator, resolved_filetype)) |configured| {
         var resolved = configured;
         errdefer resolved.deinit(allocator);
         try applySmartRunnerDefaults(allocator, resolved_filetype, &build_output, &resolved);
         resolved.filetype = try allocator.dupe(u8, resolved_filetype);
-        return try materialize.materializeRunner(allocator, resolved, options.path);
+        try materialize.materializeRunner(allocator, &resolved, execution_path);
+        try attachExecutionPath(allocator, &resolved, execution_path);
+        return resolved;
     }
 
-    if (try buildProjectRunner(allocator, resolved_filetype, &build_output)) |resolved| {
-        return try materialize.materializeRunner(allocator, resolved, options.path);
+    if (try buildProjectRunner(allocator, resolved_filetype, &build_output)) |resolved_raw| {
+        var resolved = resolved_raw;
+        errdefer resolved.deinit(allocator);
+        try materialize.materializeRunner(allocator, &resolved, execution_path);
+        try attachExecutionPath(allocator, &resolved, execution_path);
+        return resolved;
     }
 
+    return try minimalRunner(allocator, resolved_filetype, execution_path);
+}
+
+fn minimalRunner(
+    allocator: std.mem.Allocator,
+    filetype: []const u8,
+    execution_path: []const u8,
+) !types.ResolvedRunner {
+    var resolved = types.ResolvedRunner{
+        .filetype = try allocator.dupe(u8, filetype),
+    };
+    errdefer resolved.deinit(allocator);
+
+    resolved.execution_path = try allocator.dupe(u8, execution_path);
+    resolved.name = try allocator.dupe(u8, filetype);
+    return resolved;
+}
+
+fn attachExecutionPath(
+    allocator: std.mem.Allocator,
+    resolved: *types.ResolvedRunner,
+    execution_path: []const u8,
+) !void {
+    if (resolved.execution_path) |existing| {
+        allocator.free(existing);
+        resolved.execution_path = null;
+    }
+    resolved.execution_path = try allocator.dupe(u8, execution_path);
+}
+
+fn collectFiletypeRunner(allocator: std.mem.Allocator, filetype: []const u8) !?types.ResolvedRunner {
+    const configured = (try config_view.loadRunnerConfig(allocator, filetype)) orelse
+        (try builtin.loadRunnerConfig(allocator, filetype)) orelse return null;
     return .{
-        .filetype = try allocator.dupe(u8, resolved_filetype),
-        .name = try allocator.dupe(u8, resolved_filetype),
+        .command = configured.command,
+        .cleanup_command = configured.cleanup_command,
+        .cwd = configured.cwd,
     };
-}
-
-fn collectConfiguredRunner(allocator: std.mem.Allocator, filetype: []const u8) !?types.ResolvedRunner {
-    const raw = config.getSyncedConfigJson() orelse return null;
-
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch return null;
-    defer parsed.deinit();
-
-    if (parsed.value != .object) return null;
-    const runners = parsed.value.object.get("runners") orelse return null;
-    if (runners != .object) return null;
-    const runner_value = runners.object.get(filetype) orelse return null;
-
-    return try parseRunnerValue(allocator, runner_value);
-}
-
-fn parseRunnerValue(allocator: std.mem.Allocator, value: std.json.Value) !?types.ResolvedRunner {
-    switch (value) {
-        .string => |command| {
-            if (command.len == 0) return null;
-            return .{ .command = try allocator.dupe(u8, command) };
-        },
-        .array => {
-            const joined = try joinCommandArray(allocator, value.array.items);
-            if (joined == null) return null;
-            return .{ .command = joined };
-        },
-        .object => {
-            const cmd_value = value.object.get("cmd") orelse return null;
-            const command = try parseRunnerCommand(allocator, cmd_value) orelse return null;
-            var resolved = types.ResolvedRunner{ .command = command };
-            errdefer resolved.deinit(allocator);
-
-            if (value.object.get("cleanup_command")) |cleanup| {
-                if (cleanup == .string and cleanup.string.len > 0) {
-                    resolved.cleanup_command = try allocator.dupe(u8, cleanup.string);
-                }
-            }
-            if (value.object.get("cwd")) |cwd| {
-                if (cwd == .string and cwd.string.len > 0) {
-                    resolved.cwd = try allocator.dupe(u8, cwd.string);
-                }
-            }
-            return resolved;
-        },
-        else => return null,
-    }
-}
-
-fn parseRunnerCommand(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
-    return switch (value) {
-        .string => |command| if (command.len == 0) null else try allocator.dupe(u8, command),
-        .array => try joinCommandArray(allocator, value.array.items),
-        else => null,
-    };
-}
-
-fn joinCommandArray(allocator: std.mem.Allocator, items: []const std.json.Value) !?[]u8 {
-    var joined: std.ArrayList(u8) = .empty;
-    defer joined.deinit(allocator);
-
-    var appended = false;
-    for (items) |item| {
-        if (item != .string or item.string.len == 0) continue;
-        if (appended) try joined.appendSlice(allocator, " && ");
-        try joined.appendSlice(allocator, item.string);
-        appended = true;
-    }
-
-    if (!appended) return null;
-    return joined.toOwnedSlice(allocator);
 }
 
 fn applySmartRunnerDefaults(
@@ -122,23 +152,14 @@ fn applySmartRunnerDefaults(
     const command = resolved.command orelse return;
 
     if (std.mem.eql(u8, filetype, "python") and std.mem.eql(u8, command, "python3 -u $file")) {
-        if (findCommand(build_output.commands.items, "run")) |project_run| {
-            if (std.mem.startsWith(u8, project_run, "uv run ")) {
+        if (build_detected.findCommand(build_output.commands.items, "run")) |project_run| {
+            if (std.mem.startsWith(u8, project_run, "uv run ") or std.mem.startsWith(u8, project_run, "conda run ")) {
+                const owned_project_run = try allocator.dupe(u8, project_run);
                 allocator.free(command);
-                resolved.command = try allocator.dupe(u8, project_run);
+                resolved.command = owned_project_run;
             }
         }
         return;
-    }
-
-    if (std.mem.eql(u8, filetype, "go") and std.mem.eql(u8, command, "go run $file")) {
-        if (findCommand(build_output.commands.items, "run")) |project_run| {
-            allocator.free(command);
-            resolved.command = try allocator.dupe(u8, project_run);
-            if (resolved.cwd == null) {
-                resolved.cwd = try allocator.dupe(u8, "$dir");
-            }
-        }
     }
 }
 
@@ -152,11 +173,11 @@ fn buildProjectRunner(
     var resolved = types.ResolvedRunner{
         .source = "project",
         .filetype = try allocator.dupe(u8, filetype),
-        .command = try allocator.dupe(u8, command),
-        .name = try formatProjectName(allocator, filetype),
     };
     errdefer resolved.deinit(allocator);
 
+    resolved.command = try allocator.dupe(u8, command);
+    resolved.name = try formatProjectName(allocator, filetype);
     if (build_output.root) |root| {
         resolved.cwd = try allocator.dupe(u8, root);
     }
@@ -164,89 +185,50 @@ fn buildProjectRunner(
 }
 
 fn buildZigProjectRunner(
+    io: std.Io,
     allocator: std.mem.Allocator,
     path: []const u8,
     project_root: ?[]const u8,
 ) !?types.ResolvedRunner {
-    const root = try findMarkerRootAlloc(allocator, path, project_root, "build.zig", 12) orelse return null;
+    const root = try zig_classifier.findBuildRootAllocWithIO(io, allocator, path, project_root, 12) orelse return null;
     defer allocator.free(root);
 
-    return .{
+    var resolved = types.ResolvedRunner{
         .source = "project",
         .filetype = try allocator.dupe(u8, "zig"),
-        .command = try allocator.dupe(u8, "zig build run"),
-        .cwd = try allocator.dupe(u8, root),
-        .name = try allocator.dupe(u8, "Zig Project"),
     };
+    errdefer resolved.deinit(allocator);
+
+    resolved.command = try allocator.dupe(u8, "zig build run");
+    resolved.cwd = try allocator.dupe(u8, root);
+    resolved.name = try allocator.dupe(u8, "Zig Project");
+    return resolved;
 }
 
 fn findPreferredProjectCommand(build_output: *const build_resolve.ResolvedOutput) ?[]const u8 {
-    const names = [_][]const u8{ "run", "live", "dev", "watch", "serve", "start", "preview", "build" };
-    for (names) |name| {
-        if (findCommand(build_output.preferred.items, name)) |command| return command;
-    }
-    for (names) |name| {
-        if (findCommand(build_output.commands.items, name)) |command| return command;
-    }
-    return null;
-}
-
-fn findCommand(commands: []const build_types.CommandEntry, name: []const u8) ?[]const u8 {
-    for (commands) |entry| {
-        if (std.mem.eql(u8, entry.name, name)) return entry.command;
-    }
+    const name = build_detected.findPreferredCommandName(
+        build_output.preferred.items,
+        build_output.commands.items,
+        &project_runner_preferred_names,
+    ) orelse return null;
+    if (build_detected.findCommand(build_output.commands.items, name)) |command| return command;
+    if (build_detected.findCommand(build_output.preferred.items, name)) |command| return command;
     return null;
 }
 
 fn formatProjectName(allocator: std.mem.Allocator, filetype: []const u8) ![]u8 {
     var text = try allocator.dupe(u8, filetype);
-    errdefer allocator.free(text);
+    defer allocator.free(text);
     if (text.len > 0 and std.ascii.isLower(text[0])) {
         text[0] = std.ascii.toUpper(text[0]);
     }
     return std.fmt.allocPrint(allocator, "{s} Project", .{text});
 }
 
-fn findMarkerRootAlloc(
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    project_root: ?[]const u8,
-    marker: []const u8,
-    max_up: usize,
-) !?[]u8 {
-    if (project_root) |root| {
-        if (root.len > 0 and pathHasFile(root, marker)) {
-            return allocator.dupe(u8, root);
-        }
-    }
+test "formatProjectName capitalizes the filetype without leaking temp storage" {
+    const allocator = std.testing.allocator;
+    const name = try formatProjectName(allocator, "python");
+    defer allocator.free(name);
 
-    var current = try allocator.dupe(u8, std.fs.path.dirname(path) orelse path);
-    defer allocator.free(current);
-
-    var steps: usize = 0;
-    while (steps < max_up) : (steps += 1) {
-        if (pathHasFile(current, marker)) {
-            return allocator.dupe(u8, current);
-        }
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-
-        const next = try allocator.dupe(u8, parent);
-        allocator.free(current);
-        current = next;
-    }
-
-    return null;
-}
-
-fn pathHasFile(root: []const u8, name: []const u8) bool {
-    const full_path = std.fs.path.join(std.heap.page_allocator, &.{ root, name }) catch return false;
-    defer std.heap.page_allocator.free(full_path);
-
-    if (std.fs.path.isAbsolute(full_path)) {
-        std.fs.accessAbsolute(full_path, .{}) catch return false;
-        return true;
-    }
-    std.fs.cwd().access(full_path, .{}) catch return false;
-    return true;
+    try std.testing.expectEqualStrings("Python Project", name);
 }

@@ -7,8 +7,9 @@ const TimeoutContext = struct {
     finished: *std.atomic.Value(bool),
 };
 
-pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
+pub fn run(io: std.Io, args: []const []const u8) !void {
     var timeout_ms: ?u64 = null;
+    var cleanup_command: ?[]const u8 = null;
     var command_idx: usize = 1;
     var use_argv = false;
 
@@ -16,6 +17,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
         const arg = args[command_idx];
         if (std.mem.startsWith(u8, arg, "--timeout=")) {
             timeout_ms = try std.fmt.parseInt(u64, arg[10..], 10);
+            command_idx += 1;
+        } else if (std.mem.startsWith(u8, arg, "--cleanup=")) {
+            cleanup_command = arg["--cleanup=".len..];
             command_idx += 1;
         } else if (std.mem.eql(u8, arg, "--argv")) {
             use_argv = true;
@@ -40,20 +44,26 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
             std.log.err("Error: No argv payload provided after --argv", .{});
             std.process.exit(1);
         }
-        break :blk std.process.Child.init(child_args, allocator);
+        break :blk try std.process.spawn(io, .{
+            .argv = child_args,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
     } else blk: {
         const full_command = args[command_idx];
         const shell_flag = if (is_windows) "/C" else "-c";
         const shell_args = [_][]const u8{ shell, shell_flag, full_command };
-        break :blk std.process.Child.init(&shell_args, allocator);
+        break :blk try std.process.spawn(io, .{
+            .argv = &shell_args,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
     };
 
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    try child.spawn();
-
     var finished = std.atomic.Value(bool).init(false);
+    var timeout_future: ?std.Io.Future(void) = null;
     var context: TimeoutContext = undefined;
     if (timeout_ms) |ms| {
         context = .{
@@ -61,38 +71,74 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
             .duration = ms,
             .finished = &finished,
         };
-        const thread = try std.Thread.spawn(.{}, timeoutWatcher, .{&context});
-        thread.detach();
+        timeout_future = io.async(timeoutWatcher, .{ io, &context });
     }
+    defer stopTimeoutWatcher(io, &finished, &timeout_future);
 
-    const term = try child.wait();
-    finished.store(true, .release);
+    const term = try child.wait(io);
+    stopTimeoutWatcher(io, &finished, &timeout_future);
+    try runCleanup(io, cleanup_command);
     std.process.exit(termToExitCode(term));
+}
+
+fn stopTimeoutWatcher(io: std.Io, finished: *std.atomic.Value(bool), timeout_future: *?std.Io.Future(void)) void {
+    finished.store(true, .release);
+    if (timeout_future.*) |*future| {
+        _ = future.cancel(io);
+        timeout_future.* = null;
+    }
 }
 
 fn termToExitCode(term: std.process.Child.Term) u8 {
     return switch (term) {
-        .Exited => |code| if (code > 255) 255 else @as(u8, @intCast(code)),
-        .Signal => |sig| blk: {
-            const code = 128 + sig;
+        .exited => |code| if (code > 255) 255 else @as(u8, @intCast(code)),
+        .signal => |sig| blk: {
+            const code = 128 + @intFromEnum(sig);
             break :blk if (code > 255) 255 else @as(u8, @intCast(code));
         },
-        .Stopped => |sig| blk: {
-            const code = 128 + sig;
+        .stopped => |sig| blk: {
+            const code = 128 + @intFromEnum(sig);
             break :blk if (code > 255) 255 else @as(u8, @intCast(code));
         },
-        .Unknown => |status| if (status > 255) 255 else @as(u8, @intCast(status)),
+        .unknown => |status| if (status > 255) 255 else @as(u8, @intCast(status)),
     };
 }
 
-fn timeoutWatcher(ctx: *TimeoutContext) void {
-    std.Thread.sleep(ctx.duration * 1_000_000);
+fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(ctx.duration)), .awake) catch |err| switch (err) {
+        error.Canceled => return,
+    };
     if (ctx.finished.load(.acquire)) {
         return;
     }
 
-    _ = ctx.child_ptr.kill() catch |err| {
-        std.log.err("Failed to kill process on timeout: {}", .{err});
+    ctx.child_ptr.kill(io);
+
+    var stderr_buffer: [128]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
+    stderr_writer.interface.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration}) catch {};
+    stderr_writer.interface.flush() catch {};
+}
+
+fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) !void {
+    const cleanup = cleanup_command orelse return;
+    if (std.mem.trim(u8, cleanup, " \t\r\n").len == 0) return;
+
+    const is_windows = builtin.os.tag == .windows;
+    const shell = if (is_windows) "cmd.exe" else "/bin/sh";
+    const shell_flag = if (is_windows) "/C" else "-c";
+    const shell_args = [_][]const u8{ shell, shell_flag, cleanup };
+
+    var child = std.process.spawn(io, .{
+        .argv = &shell_args,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch |err| {
+        std.log.warn("Failed to spawn cleanup command: {}", .{err});
+        return;
     };
-    std.debug.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration});
+    _ = child.wait(io) catch |err| {
+        std.log.warn("Failed to wait for cleanup command: {}", .{err});
+    };
 }

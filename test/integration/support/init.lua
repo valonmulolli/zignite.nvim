@@ -19,6 +19,7 @@ local state = {
 	next_job_id = 123,
 	jobstop_count = 0,
 	quickfix_backend_invocations = 0,
+	quickfix_daemon_request_count = 0,
 	detect_backend_invocations = 0,
 	detect_backend_request_count = 0,
 	project_backend_invocations = 0,
@@ -95,6 +96,7 @@ local function reset_job_results()
 		job_results[index] = nil
 	end
 	state.quickfix_backend_invocations = 0
+	state.quickfix_daemon_request_count = 0
 	state.detect_backend_invocations = 0
 	state.detect_backend_request_count = 0
 	state.project_backend_invocations = 0
@@ -127,13 +129,7 @@ end
 
 ---@return integer
 local function count_quickfix_daemon_jobs()
-	local count = 0
-	for _, job in ipairs(job_results) do
-		if simulation.is_quickfix_daemon_cmd(job.cmd) then
-			count = count + 1
-		end
-	end
-	return count
+	return state.quickfix_daemon_request_count
 end
 
 ---@return integer

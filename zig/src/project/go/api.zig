@@ -5,6 +5,7 @@ const workspace = @import("workspace.zig");
 pub const Info = info.Info;
 pub const freeOwnedInfo = info.freeOwnedInfo;
 pub const parseInfo = info.parseInfo;
+pub const parseInfoWithIO = info.parseInfoWithIO;
 
 pub const parseModuleName = module.parseModuleName;
 

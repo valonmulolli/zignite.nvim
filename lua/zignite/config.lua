@@ -17,8 +17,8 @@ M.defaults = {
 	-- Default output mode: "float", "tab", "split", "vsplit"
 	mode = "float",
 
-	-- Default runners for specific filetypes.
-	-- Inspired by code_runner.nvim's configuration style
+	-- Filetype runner overrides. Builtin defaults now live in the Zig backend;
+	-- use this table only when you want to override them locally.
 	-- Available variables:
 	--   $file              - Full absolute path
 	--   $fileName          - Just the filename with extension
@@ -26,218 +26,31 @@ M.defaults = {
 	--   $dir               - Full directory path
 	--   $fileExt           - File extension
 	--   $dirName           - Just the directory name (not full path)
-	runners = {
-		-- Compiled languages.
-		-- Multi-step compile+run flows still need a shell join internally, but these
-		-- defaults avoid extra `cd`/probe work and use absolute paths directly.
-		c = {
-			cmd = {
-				"gcc $file -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		cpp = {
-			cmd = {
-				"c++ -pipe $file -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		rust = {
-			cmd = {
-				"rustc $file -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		go = "go run $file",
-		zig = "zig run $file",
-		java = {
-			cmd = {
-				"javac $file",
-				"java -cp $dir $fileNameWithoutExt",
-			},
-			cleanup_command = "rm -f $dir/$fileNameWithoutExt.class",
-		},
-		kotlin = {
-			cmd = {
-				"kotlinc $file -include-runtime -d /tmp/$fileNameWithoutExt.jar",
-				"java -jar /tmp/$fileNameWithoutExt.jar",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt.jar",
-		},
+	runners = {},
 
-		-- Interpreted languages
-		python = "python3 -u $file",
-		javascript = "node $file",
-		typescript = "bun $file",
-		lua = "lua $file",
-		ruby = "ruby $file",
-		php = "php $file",
-		perl = "perl $file",
-		r = "Rscript $file",
-		julia = "julia $file",
+	-- Project-level command overrides. Builtin defaults now live in the Zig backend;
+	-- use this table only when you want to override or extend them locally.
+	build_commands = {},
 
-		-- Shell scripts
-		sh = "bash $file",
-		zsh = "zsh $file",
-
-		-- Web and markup
-		html = "xdg-open $file",
-
-		-- Other languages
-		dart = "dart run $file",
-		swift = "swift $file",
-		elixir = "elixir $file",
-		haskell = {
-			cmd = {
-				"ghc -o /tmp/$fileNameWithoutExt $file",
-				"/tmp/$fileNameWithoutExt",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
-		odin = "odin run $file -file",
-		fortran = {
-			cmd = {
-				"gfortran $file -o /tmp/$fileNameWithoutExt",
-				"/tmp/$fileNameWithoutExt",
-			},
-			cleanup_command = "rm /tmp/$fileNameWithoutExt",
-		},
+	-- Auto-detection toggles for build command picker/RunBuild.
+	-- Keep defaults enabled for "smart by default" behavior.
+	detect = {
+		zig = true, -- Detect Zig subcommands via the Zig backend
+		go = true, -- Detect Go subcommands via the Zig backend
+		rust = true, -- Detect Cargo subcommands via the Zig backend
+		odin = true, -- Detect Odin subcommands via the Zig backend
+		c_cpp_make = true, -- Parse Makefile targets for c/cpp
+		js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
+		java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects
+		bazel_project = true, -- Add Bazel workspace commands when workspace markers exist
 	},
 
-	-- Build commands for different languages
-	-- These are project-level commands (cargo build, zig build, etc.)
-		build_commands = {
-		rust = {
-			build = "cargo build",
-			run = "cargo run",
-			test = "cargo test",
-			release = "cargo build --release",
-			["release-run"] = "cargo run --release",
-			check = "cargo check",
-			clean = "cargo clean",
-		},
-		zig = {
-			build = "zig build",
-			run = "zig build run",
-			test = "zig build test",
-			check = "zig build check",
-			release = "zig build -Doptimize=ReleaseFast",
-			["release-run"] = "zig build run -Doptimize=ReleaseFast",
-		},
-		odin = {
-			build = "odin build .",
-			run = "odin run .",
-			test = "odin test .",
-			release = "odin build . -o:speed",
-			check = "odin check .",
-		},
-		fortran = {
-			build = "gfortran *.f90 -o main",
-			run = "./main",
-			clean = "rm -f main",
-		},
-		go = {
-			build = "go build",
-			run = "go run .",
-			test = "go test ./...",
-			clean = "go clean",
-			mod = "go mod tidy",
-		},
-		javascript = {
-			start = "npm start",
-			dev = "npm run dev",
-			build = "npm run build",
-			test = "npm test",
-			install = "npm install",
-		},
-		typescript = {
-			start = "npm start",
-			dev = "npm run dev",
-			build = "npm run build",
-			test = "npm test",
-		},
-		python = {
-			run = "python -m main",
-			test = "pytest",
-			install = "pip install -r requirements.txt",
-		},
-		c = {
-			-- Make commands
-			build = "make",
-			run = "make run",
-			clean = "make clean",
-			test = "make test",
-			install = "make install",
-			debug = "make debug",
-
-			-- CMake commands
-			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-			["cmake-build"] = "cmake --build build",
-			["cmake-run"] = "cmake --build build && ./build/main",
-			["cmake-clean"] = "cmake --build build --target clean",
-			["cmake-debug"] =
-			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-			["cmake-release"] =
-			"cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-
-			-- Meson commands
-			["meson-setup"] = "meson setup build",
-			["meson-build"] = "meson compile -C build",
-			["meson-run"] = "meson compile -C build && ./build/main",
-			["meson-clean"] = "meson compile -C build --clean",
-			["meson-test"] = "meson test -C build",
-		},
-		cpp = {
-			-- Make commands
-			build = "make",
-			run = "make run",
-			clean = "make clean",
-			test = "make test",
-			install = "make install",
-			debug = "make debug",
-
-			-- CMake commands
-			["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-			["cmake-build"] = "cmake --build build",
-			["cmake-run"] = "cmake --build build && ./build/main",
-			["cmake-clean"] = "cmake --build build --target clean",
-			["cmake-debug"] =
-			"cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-			["cmake-release"] =
-			"cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-			["cmake-test"] = "ctest --test-dir build",
-
-			-- Meson commands
-			["meson-setup"] = "meson setup build",
-			["meson-build"] = "meson compile -C build",
-			["meson-run"] = "meson compile -C build && ./build/main",
-			["meson-clean"] = "meson compile -C build --clean",
-			["meson-test"] = "meson test -C build",
-			},
-		},
-
-		-- Auto-detection toggles for build command picker/RunBuild.
-		-- Keep defaults enabled for "smart by default" behavior.
-		detect = {
-			zig = true, -- Detect Zig subcommands via the Zig backend
-			go = true, -- Detect Go subcommands via the Zig backend
-			rust = true, -- Detect Cargo subcommands via the Zig backend
-			odin = true, -- Detect Odin subcommands via the Zig backend
-			c_cpp_make = true, -- Parse Makefile targets for c/cpp
-			js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
-			java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects
-			bazel_project = true, -- Add Bazel workspace commands when workspace markers exist
-		},
-
-		-- Detection runtime behavior for picker responsiveness.
-		detect_runtime = {
-			async_picker = true, -- Open picker from cache/defaults, refresh detected commands asynchronously
-			cache_ttl_ms = 15000, -- Detection cache freshness window
-			live_merge = true, -- Merge refreshed commands into open picker without reopening
-		},
+	-- Detection runtime behavior for picker responsiveness.
+	detect_runtime = {
+		async_picker = true, -- Open picker from cache/defaults, refresh detected commands asynchronously
+		cache_ttl_ms = 15000, -- Detection cache freshness window
+		live_merge = true, -- Merge refreshed commands into open picker without reopening
+	},
 
 	-- Spinner configuration
 	spinner = "dots",      -- Spinner type: "dots", "line", "bar", "arrows", "dots2", "triangle", "square", "circle", "arrow", "box"
@@ -247,11 +60,11 @@ M.defaults = {
 	-- Execution configuration
 	timeout = nil, -- Timeout in milliseconds (e.g., 10000 for 10s). nil = no timeout. Only works with Zig backend.
 
-		-- Quickfix behavior on command errors
-		quickfix = {
+	-- Quickfix behavior on command errors
+	quickfix = {
 		enabled = true,              -- Populate quickfix when command exits with non-zero status
-		processor = "auto",          -- "auto", "lua", or "zig"
-		zig_min_lines = 300,         -- In auto mode, switch to zig processor when output reaches this line count
+		processor = "auto",          -- "auto", "lua", or "zig"; auto prefers zig when the backend is available
+		zig_min_lines = 300,         -- Legacy threshold kept for compatibility; auto now prefers zig backend directly
 		max_lines = 1000,            -- Tail limit for large outputs (performance guard)
 		max_bytes = 262144,          -- Byte cap for quickfix payload
 		strip_ansi = true,           -- Remove ANSI escape codes from quickfix lines
@@ -262,7 +75,7 @@ M.defaults = {
 		strip_chunk_size = 200,      -- Lines processed per chunk when async_strip=true
 	},
 
-		-- Project configuration
+	-- Project configuration
 	-- Pattern matching for project root detection
 	project = {},
 
@@ -275,6 +88,7 @@ M.defaults = {
 		y = 0.5,                       -- Vertical position (0.0 = top, 0.5 = center, 1.0 = bottom)
 		border_hl = "FloatBorder",     -- Highlight group for the border
 		close_key = "<Esc>",           -- Key to close the window
+		auto_close_success_ms = nil,   -- Auto-close successful float runs after N ms. nil = stay open.
 		focus = true,                  -- Auto-focus the window on open
 		startinsert = false,           -- Enter insert mode when the window opens
 		border_hl_success = "DiagnosticOk", -- Highlight group for success border (e.g., "DiagnosticOk", "String", "DiffAdd")
@@ -307,74 +121,86 @@ M.defaults = {
 M.options = {}
 M.revision = 0
 
+local VALID_MODES = { "float", "tab", "split", "vsplit" }
+local VALID_FLOAT_BORDERS = { "none", "single", "double", "rounded", "solid", "shadow" }
+local VALID_TERM_POSITIONS = { "bot", "top", "left", "right" }
+local VALID_PICKER_FILTER_INPUTS = { "inline", "ui", "cmdline" }
+local VALID_PICKER_LAYOUTS = { "auto", "detailed", "compact" }
+local VALID_CLOSE_BEHAVIORS = { "stop", "hide" }
+
+---@param message string
+---@return nil
+local function warn_config(message)
+	vim.notify(message, vim.log.levels.WARN)
+end
+
+---@param path string
+---@param value any
+---@param allowed string[]
+---@return nil
+local function warn_invalid_choice(path, value, allowed)
+	warn_config(string.format("Invalid %s: %s. Valid values: %s", path, tostring(value), table.concat(allowed, ", ")))
+end
+
+---@param path string
+---@param value any
+---@return nil
+local function warn_expected_boolean(path, value)
+	warn_config(string.format("Invalid %s: expected boolean, got %s", path, type(value)))
+end
+
 -- Validate configuration options
 ---@param opts table
 ---@return nil
 local function validate_config(opts)
-	if opts.mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, opts.mode) then
-		vim.notify("Invalid mode: " .. opts.mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.WARN)
+	if opts.mode and not vim.tbl_contains(VALID_MODES, opts.mode) then
+		warn_invalid_choice("mode", opts.mode, VALID_MODES)
 	end
 
 	if opts.float then
 		local float = opts.float
-		if
-			float.border
-			and not vim.tbl_contains({ "none", "single", "double", "rounded", "solid", "shadow" }, float.border)
-		then
-			vim.notify("Invalid border: " .. float.border, vim.log.levels.WARN)
+		if float.border and not vim.tbl_contains(VALID_FLOAT_BORDERS, float.border) then
+			warn_invalid_choice("float.border", float.border, VALID_FLOAT_BORDERS)
 		end
-			if float.height and (float.height <= 0 or float.height > 1) then
-				vim.notify("Float height should be > 0 and <= 1", vim.log.levels.WARN)
-			end
-			if float.width and (float.width <= 0 or float.width > 1) then
-				vim.notify("Float width should be > 0 and <= 1", vim.log.levels.WARN)
+		if float.height then
+			local h = tonumber(float.height)
+			if not h then
+				warn_config("float.height must be a number, got " .. type(float.height))
+			elseif h <= 0 or h > 1 then
+				warn_config("Float height should be > 0 and <= 1")
 			end
 		end
+		if float.width then
+			local w = tonumber(float.width)
+			if not w then
+				warn_config("float.width must be a number, got " .. type(float.width))
+			elseif w <= 0 or w > 1 then
+				warn_config("Float width should be > 0 and <= 1")
+			end
+		end
+	end
 
 	if opts.term then
 		local term = opts.term
-		if term.position and not vim.tbl_contains({ "bot", "top", "left", "right" }, term.position) then
-			vim.notify("Invalid terminal position: " .. term.position, vim.log.levels.WARN)
+		if term.position and not vim.tbl_contains(VALID_TERM_POSITIONS, term.position) then
+			warn_invalid_choice("term.position", term.position, VALID_TERM_POSITIONS)
 		end
 	end
 
 	if opts.picker then
 		local picker = opts.picker
-		if picker.filter_input and not vim.tbl_contains({ "inline", "ui", "cmdline" }, picker.filter_input) then
-			vim.notify(
-				"Invalid picker.filter_input: "
-					.. tostring(picker.filter_input)
-					.. ". Valid values: inline, ui, cmdline",
-				vim.log.levels.WARN
-			)
+		if picker.filter_input and not vim.tbl_contains(VALID_PICKER_FILTER_INPUTS, picker.filter_input) then
+			warn_invalid_choice("picker.filter_input", picker.filter_input, VALID_PICKER_FILTER_INPUTS)
 		end
-		if picker.layout and not vim.tbl_contains({ "auto", "detailed", "compact" }, picker.layout) then
-			vim.notify(
-				"Invalid picker.layout: "
-					.. tostring(picker.layout)
-					.. ". Valid values: auto, detailed, compact",
-				vim.log.levels.WARN
-			)
+		if picker.layout and not vim.tbl_contains(VALID_PICKER_LAYOUTS, picker.layout) then
+			warn_invalid_choice("picker.layout", picker.layout, VALID_PICKER_LAYOUTS)
 		end
 		if picker.compact_breakpoint ~= nil then
 			local breakpoint = tonumber(picker.compact_breakpoint)
 			if not breakpoint or breakpoint < 40 then
-				vim.notify(
+				warn_config(
 					"Invalid picker.compact_breakpoint: expected number >= 40, got "
-						.. tostring(picker.compact_breakpoint),
-					vim.log.levels.WARN
-				)
-			end
-		end
-	end
-
-	if opts.detect then
-		local detect = opts.detect
-		for key, value in pairs(detect) do
-			if type(value) ~= "boolean" then
-				vim.notify(
-					"Invalid detect." .. tostring(key) .. ": expected boolean, got " .. type(value),
-					vim.log.levels.WARN
+						.. tostring(picker.compact_breakpoint)
 				)
 			end
 		end
@@ -383,31 +209,36 @@ local function validate_config(opts)
 	if opts.detect_runtime then
 		local runtime = opts.detect_runtime
 		if runtime.async_picker ~= nil and type(runtime.async_picker) ~= "boolean" then
-			vim.notify(
-				"Invalid detect_runtime.async_picker: expected boolean, got " .. type(runtime.async_picker),
-				vim.log.levels.WARN
-			)
+			warn_expected_boolean("detect_runtime.async_picker", runtime.async_picker)
 		end
 		if runtime.live_merge ~= nil and type(runtime.live_merge) ~= "boolean" then
-			vim.notify(
-				"Invalid detect_runtime.live_merge: expected boolean, got " .. type(runtime.live_merge),
-				vim.log.levels.WARN
-			)
+			warn_expected_boolean("detect_runtime.live_merge", runtime.live_merge)
 		end
 		if runtime.cache_ttl_ms ~= nil then
 			local ttl = tonumber(runtime.cache_ttl_ms)
 			if not ttl or ttl <= 0 then
-				vim.notify(
+				warn_config(
 					"Invalid detect_runtime.cache_ttl_ms: expected positive number, got "
-						.. tostring(runtime.cache_ttl_ms),
-					vim.log.levels.WARN
+						.. tostring(runtime.cache_ttl_ms)
 				)
 			end
 		end
 	end
 
-	if opts.close_behavior and not vim.tbl_contains({ "stop", "hide" }, opts.close_behavior) then
-		vim.notify("Invalid close_behavior: " .. opts.close_behavior .. ". Valid values: stop, hide", vim.log.levels.WARN)
+	if opts.close_behavior and not vim.tbl_contains(VALID_CLOSE_BEHAVIORS, opts.close_behavior) then
+		warn_invalid_choice("close_behavior", opts.close_behavior, VALID_CLOSE_BEHAVIORS)
+	end
+end
+
+---@return nil
+local function sync_config_async()
+	if type(vim.fn) ~= "table" or type(vim.fn.fnamemodify) ~= "function" then
+		return
+	end
+
+	local sync_ok, config_sync = pcall(require, "zignite.rpc.config_sync")
+	if sync_ok and type(config_sync.sync_current_async) == "function" then
+		pcall(config_sync.sync_current_async)
 	end
 end
 
@@ -422,12 +253,7 @@ function M.setup(opts)
 	M.revision = (tonumber(M.revision) or 0) + 1
 
 	M.setup_keymaps()
-	if type(vim.fn) == "table" and type(vim.fn.fnamemodify) == "function" then
-		local sync_ok, config_sync = pcall(require, "zignite.backend.config_sync")
-		if sync_ok and type(config_sync.sync_async) == "function" then
-			pcall(config_sync.sync_async, M.options, M.revision)
-		end
-	end
+	sync_config_async()
 end
 
 -- Ensure defaults are available without applying side effects (e.g. keymaps).

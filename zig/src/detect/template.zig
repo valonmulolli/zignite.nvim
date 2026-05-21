@@ -4,7 +4,7 @@ const types = @import("types.zig");
 const Tool = types.Tool;
 const BUILD_ARG_PLACEHOLDER = "$zignite_args";
 
-pub fn buildDetectCommandRecords(allocator: std.mem.Allocator, tool: Tool, names: [][]u8) ![][]u8 {
+pub fn buildDetectCommandRecords(allocator: std.mem.Allocator, tool: Tool, names: []const []const u8) ![][]u8 {
     var commands: std.ArrayList([]u8) = .empty;
     errdefer {
         for (commands.items) |command| allocator.free(command);
@@ -14,7 +14,11 @@ pub fn buildDetectCommandRecords(allocator: std.mem.Allocator, tool: Tool, names
     for (names) |name| {
         const template = try detectCommandTemplate(allocator, tool, name);
         defer allocator.free(template);
-        try commands.append(allocator, try std.fmt.allocPrint(allocator, "{s}\t{s}", .{ name, template }));
+        const record = try std.fmt.allocPrint(allocator, "{s}\t{s}", .{ name, template });
+        commands.append(allocator, record) catch |err| {
+            allocator.free(record);
+            return err;
+        };
     }
 
     return try commands.toOwnedSlice(allocator);

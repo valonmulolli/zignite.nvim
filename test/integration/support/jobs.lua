@@ -79,9 +79,18 @@ function M.attach(ctx, simulation)
 			return 0
 		end
 
+		if type(data) == "table" then
+			for _, part in ipairs(data) do
+				job.input = job.input .. tostring(part)
+			end
+		else
+			job.input = job.input .. tostring(data or "")
+		end
+
 		if simulation.is_unified_daemon_cmd(job.cmd) then
 			local text = type(data) == "table" and table.concat(data) or tostring(data or "")
 			if text:match("^@@ZQF_BEGIN%s+") then
+				ctx.state.quickfix_daemon_request_count = ctx.state.quickfix_daemon_request_count + 1
 				if ctx.state.next_quickfix_backend_exit_code ~= 0 then
 					local exit_code = ctx.state.next_quickfix_backend_exit_code
 					ctx.state.next_quickfix_backend_exit_code = 0
@@ -204,6 +213,7 @@ function M.attach(ctx, simulation)
 			if
 				text:match("^@@ZCFG_REQ_BEGIN%s+")
 				or text:match("^@@ZBR_REQ_BEGIN%s+")
+				or text:match("^@@ZBA_REQ_BEGIN%s+")
 				or text:match("^@@ZRUN_REQ_BEGIN%s+")
 			then
 				local response = simulation.parse_unified_daemon_request(text)
@@ -323,13 +333,6 @@ function M.attach(ctx, simulation)
 			return 1
 		end
 
-		if type(data) == "table" then
-			for _, part in ipairs(data) do
-				job.input = job.input .. tostring(part)
-			end
-		else
-			job.input = job.input .. tostring(data or "")
-		end
 		return 1
 	end
 

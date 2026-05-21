@@ -9,6 +9,25 @@ local function zignite()
 	return require("zignite.init")
 end
 
+---@return string[]
+local function current_build_commands_for_completion()
+	local config = require("zignite.config")
+	local build_resolve = require("zignite.rpc.build_resolve")
+
+	config.ensure()
+	local filepath = vim.fn.expand("%:p")
+	local filetype = tostring(vim.bo.filetype or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if type(filepath) ~= "string" or filepath == "" or filetype == "" then
+		return {}
+	end
+
+	local resolved = build_resolve.resolve_sync(filepath, filetype)
+	if type(resolved) ~= "table" or type(resolved.completion_names) ~= "table" then
+		return {}
+	end
+	return resolved.completion_names
+end
+
 -- Create the :RunCode user command for visual selection
 vim.api.nvim_create_user_command("RunCode", function(opts)
 	zignite().run_code(opts.range)
@@ -46,7 +65,8 @@ end, {})
 -- Usage: :RunBuild build, :RunBuild run, :RunBuild test, etc.
 vim.api.nvim_create_user_command("RunBuild", function(opts)
 	local command_name = opts.fargs[1]
-	local mode = opts.fargs[2]
+	local mode = nil
+	local args_start = 2
 
 	if not command_name then
 		vim.notify(
@@ -56,12 +76,23 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 		return
 	end
 
-	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
-		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
-		return
+	if opts.fargs[2] and vim.tbl_contains({ "float", "tab", "split", "vsplit" }, opts.fargs[2]) then
+		mode = opts.fargs[2]
+		args_start = 3
 	end
 
-	zignite().run_build_command(command_name, mode)
+	local provided_args = nil
+	if #opts.fargs >= args_start then
+		local tail = {}
+		for index = args_start, #opts.fargs do
+			tail[#tail + 1] = tostring(opts.fargs[index] or "")
+		end
+		if #tail > 0 then
+			provided_args = table.concat(tail, " ")
+		end
+	end
+
+	zignite().run_build_command(command_name, mode, provided_args)
 end, {
 	nargs = "+",
 	---@param ArgLead string
@@ -69,20 +100,18 @@ end, {
 	---@param _CursorPos integer
 	---@return string[]
 	complete = function(ArgLead, _CmdLine, _CursorPos)
-		local filetype = vim.bo.filetype
-		local build_cmds = zignite().get_build_commands_for_completion(filetype)
+		local build_cmds = current_build_commands_for_completion()
 
 		if not build_cmds or vim.tbl_isempty(build_cmds) then
 			return {}
 		end
 
 		local commands = {}
-		for cmd_name, _ in pairs(build_cmds) do
+		for _, cmd_name in ipairs(build_cmds) do
 			if ArgLead == "" or cmd_name:sub(1, #ArgLead) == ArgLead then
 				table.insert(commands, cmd_name)
 			end
 		end
-		table.sort(commands)
 		return commands
 	end,
 })

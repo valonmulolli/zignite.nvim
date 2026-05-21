@@ -58,7 +58,21 @@ pub fn parseUses(
         try appendUse(allocator, &uses, workspace_dir, line, normalized_match_path);
     }
 
+    keepDeepestMatch(uses.items);
     return try uses.toOwnedSlice(allocator);
+}
+
+fn keepDeepestMatch(uses: []UseEntry) void {
+    var best_index: ?usize = null;
+    for (uses, 0..) |item, index| {
+        if (!item.matched) continue;
+        if (best_index == null or item.path.len > uses[best_index.?].path.len) {
+            best_index = index;
+        }
+    }
+    for (uses, 0..) |*item, index| {
+        item.matched = best_index != null and index == best_index.?;
+    }
 }
 
 fn appendUse(
@@ -94,14 +108,17 @@ fn appendUse(
         }
     }
 
-    try uses.append(allocator, .{
+    uses.append(allocator, .{
         .path = normalized,
         .matched = matched,
-    });
+    }) catch |err| {
+        allocator.free(normalized);
+        return err;
+    };
 }
 
 fn stripLineComment(line: []const u8) []const u8 {
-    const idx = std.mem.indexOf(u8, line, "//") orelse return line;
+    const idx = std.mem.find(u8, line, "//") orelse return line;
     return line[0..idx];
 }
 

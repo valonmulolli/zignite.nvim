@@ -1,5 +1,31 @@
 const std = @import("std");
 
+fn readerSupportsMethod(comptime T: type, comptime name: []const u8) bool {
+    if (std.meta.hasMethod(T, name)) return true;
+    return switch (@typeInfo(T)) {
+        .pointer => |pointer| std.meta.hasMethod(pointer.child, name),
+        else => false,
+    };
+}
+
+pub fn readLineAlloc(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    max_line: usize,
+) !?[]u8 {
+    if (comptime readerSupportsMethod(@TypeOf(reader), "takeDelimiter")) {
+        const maybe_line = try reader.takeDelimiter('\n');
+        if (maybe_line == null) return null;
+        const line = maybe_line.?;
+        if (line.len > max_line) return error.StreamTooLong;
+        return try allocator.dupe(u8, line);
+    }
+    if (comptime readerSupportsMethod(@TypeOf(reader), "readUntilDelimiterOrEofAlloc")) {
+        return try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', max_line);
+    }
+    @compileError("reader must support takeDelimiter or readUntilDelimiterOrEofAlloc");
+}
+
 pub fn stripTrailingCR(line: []const u8) []const u8 {
     if (line.len > 0 and line[line.len - 1] == '\r') {
         return line[0 .. line.len - 1];
@@ -44,18 +70,77 @@ pub fn readUntilEnd(
     max_line: usize,
     end_marker: []const u8,
     request_id: u64,
+    context: anytype,
     on_line: anytype,
 ) !bool {
     while (true) {
-        const maybe_line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', max_line);
+        const maybe_line = try readLineAlloc(allocator, reader, max_line);
         if (maybe_line == null) return false;
         const line_owned = maybe_line.?;
         defer allocator.free(line_owned);
         const line = stripTrailingCR(line_owned);
 
         if (isFrameEndLine(line, end_marker, request_id)) return true;
-        try on_line(line);
+        try on_line(context, line);
     }
+}
+
+pub const CollectLineOptions = struct {
+    strip_leading_tab: bool = false,
+    skip_empty: bool = false,
+};
+
+pub fn collectOwnedLinesUntilEnd(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    max_line: usize,
+    end_marker: []const u8,
+    request_id: u64,
+    options: CollectLineOptions,
+) ![][]u8 {
+    var lines: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (lines.items) |line| allocator.free(line);
+        lines.deinit(allocator);
+    }
+
+    const Collect = struct {
+        allocator: std.mem.Allocator,
+        lines: *std.ArrayList([]u8),
+        options: CollectLineOptions,
+
+        fn onLine(self: @This(), line: []const u8) !void {
+            const value = if (self.options.strip_leading_tab and line.len > 0 and line[0] == '\t')
+                line[1..]
+            else
+                line;
+            if (self.options.skip_empty and value.len == 0) return;
+            const owned_value = try self.allocator.dupe(u8, value);
+            self.lines.append(self.allocator, owned_value) catch |err| {
+                self.allocator.free(owned_value);
+                return err;
+            };
+        }
+    };
+
+    const collect = Collect{
+        .allocator = allocator,
+        .lines = &lines,
+        .options = options,
+    };
+
+    const completed = try readUntilEnd(
+        allocator,
+        reader,
+        max_line,
+        end_marker,
+        request_id,
+        collect,
+        Collect.onLine,
+    );
+    if (!completed) return error.UnexpectedEof;
+
+    return try lines.toOwnedSlice(allocator);
 }
 
 pub fn skipUntilEnd(
@@ -66,16 +151,15 @@ pub fn skipUntilEnd(
     request_id: u64,
 ) !bool {
     const Skip = struct {
-        fn onLine(_: []const u8) !void {}
+        fn onLine(_: void, _: []const u8) !void {}
     };
-    return readUntilEnd(allocator, reader, max_line, end_marker, request_id, Skip.onLine);
+    return readUntilEnd(allocator, reader, max_line, end_marker, request_id, {}, Skip.onLine);
 }
 
 const TestReader = struct {
     lines: []const []const u8,
     index: usize = 0,
-
-    fn readUntilDelimiterOrEofAlloc(
+    pub fn readUntilDelimiterOrEofAlloc(
         self: *TestReader,
         allocator: std.mem.Allocator,
         delimiter: u8,
@@ -110,11 +194,11 @@ test "parseRequestId extracts request id from begin frame" {
 
 test "writeErrorResponse emits protocol frame" {
     const allocator = std.testing.allocator;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try writeErrorResponse(
-        out.writer(allocator),
+        &out.writer,
         "@@ZDET_RES_BEGIN",
         "@@ZDET_RES_ERR",
         "@@ZDET_RES_END",
@@ -124,7 +208,7 @@ test "writeErrorResponse emits protocol frame" {
 
     try std.testing.expectEqualStrings(
         "@@ZDET_RES_BEGIN 7\n@@ZDET_RES_ERR 7 InvalidDetectTool\n@@ZDET_RES_END 7\n",
-        out.items,
+        out.written(),
     );
 }
 
@@ -137,18 +221,17 @@ test "readUntilEnd forwards lines until matching frame end" {
         "@@ZPRJ_REQ_END 7\r",
         "tail",
     } };
-    var collected: std.ArrayList(u8) = .empty;
-    defer collected.deinit(allocator);
-    var writer = collected.writer(allocator);
+    var collected: std.Io.Writer.Allocating = .init(allocator);
+    defer collected.deinit();
     const Collect = struct {
-        writer: *@TypeOf(collected.writer(allocator)),
+        writer: *std.Io.Writer,
 
         fn onLine(self: @This(), line: []const u8) !void {
             try self.writer.writeAll(line);
             try self.writer.writeByte('\n');
         }
     };
-    const collect = Collect{ .writer = &writer };
+    const collect = Collect{ .writer = &collected.writer };
 
     const completed = try readUntilEnd(
         allocator,
@@ -156,11 +239,12 @@ test "readUntilEnd forwards lines until matching frame end" {
         64,
         "@@ZPRJ_REQ_END",
         7,
-        collect.onLine,
+        collect,
+        Collect.onLine,
     );
 
     try std.testing.expect(completed);
-    try std.testing.expectEqualStrings("first\n@@ZPRJ_REQ_END 6\nsecond\n", collected.items);
+    try std.testing.expectEqualStrings("first\n@@ZPRJ_REQ_END 6\nsecond\n", collected.written());
     try std.testing.expectEqual(@as(usize, 4), reader.index);
 }
 
@@ -182,13 +266,43 @@ test "skipUntilEnd returns false on eof before matching end" {
 
 test "readUntilEnd propagates oversized line errors" {
     const allocator = std.testing.allocator;
-    var reader = TestReader{ .lines = &.{ "123456" } };
+    var reader = TestReader{ .lines = &.{"123456"} };
     const Noop = struct {
-        fn onLine(_: []const u8) !void {}
+        fn onLine(_: void, _: []const u8) !void {}
     };
 
     try std.testing.expectError(
         error.StreamTooLong,
-        readUntilEnd(allocator, &reader, 3, "@@ZPRJ_REQ_END", 1, Noop.onLine),
+        readUntilEnd(allocator, &reader, 3, "@@ZPRJ_REQ_END", 1, {}, Noop.onLine),
     );
+}
+
+test "collectOwnedLinesUntilEnd strips tabs and skips empty values" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "\tfirst",
+        "\t",
+        "second",
+        "@@ZPRJ_REQ_END 7",
+    } };
+
+    const lines = try collectOwnedLinesUntilEnd(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+        7,
+        .{
+            .strip_leading_tab = true,
+            .skip_empty = true,
+        },
+    );
+    defer {
+        for (lines) |line| allocator.free(line);
+        allocator.free(lines);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), lines.len);
+    try std.testing.expectEqualStrings("first", lines[0]);
+    try std.testing.expectEqualStrings("second", lines[1]);
 }

@@ -1,9 +1,8 @@
-# zignite.nvim
-
+<h1 align="center">zignite.nvim</h1>
+<br/>
 <p align="center">
-  <img src="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml/badge.svg?branch=master&event=push" alt="CI"/>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/>
-  <img src="https://img.shields.io/badge/Made%20with-Lua-blueviolet.svg" alt="Made with Lua"/>
+  <img src="https://img.shields.io/badge/Lua%20%2B%20Zig-blueviolet.svg" alt="Lua + Zig"/>
   <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
   <br/>
   <strong>Fast, asynchronous code execution for Neovim with a Zig backend.</strong>
@@ -11,37 +10,35 @@
 
 ---
 
-Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, timeouts, project parsing, quickfix processing, and command detection.
+Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, filetype normalization, build/run resolution, project parsing, quickfix processing, and command detection.
 
 ## Features
 
 - **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
 - **Full ANSI Colors**: Compiler errors and logs retain their rich coloring.
-- **Zig Backend**: Core process management, command detection, project parsing, and quickfix processing run through a native backend.
+- **Zig Backend**: Build resolution, runner resolution, command detection, project parsing, quickfix processing, and execution support run through a native backend.
 - **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Zig backend.
 - **Quickfix Integration**: Non-zero exits can populate the quickfix list so errors are easy to jump through.
-- **Unified Zig Daemon**: Reuses one backend daemon for detection, project parsing, and quickfix processing to reduce repeat-run latency.
+- **Unified Zig Daemon**: Reuses one backend daemon for config sync, build/run resolve, detection, project parsing, and quickfix processing to reduce repeat-run latency.
 - **Build System Support**: Supports `cargo`, `zig build`, `npm`, `make`, CMake, Meson, Bazel, Maven, Gradle, Go modules/workspaces, and more.
 - **Interactive Command Picker**: Choose between `run`, `test`, `build`, `clean`, and detected project commands.
 - **Project Detection**: Detects project roots so project-aware commands run from the correct working directory.
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
-- **Cross-Platform Core**: Verified in CI on Linux and macOS. Some bundled runner examples are POSIX-oriented and may need overrides on Windows.
+- **Platform**: Linux and macOS only.
 
 ## Requirements
 
 - Neovim >= 0.10
-- Zig `0.15.2`
+- Zig `0.16.0`
 
-The backend and CI are currently tested against Zig `0.15.2`. Newer Zig
-versions may work, but `0.15.2` is the version we use for local development,
-CI, and benchmark numbers in this repo.
+The backend targets Zig 0.16.0. Earlier versions will not compile.
 
 ## Architecture
 
 The current architecture is intentionally split:
 
-- Lua owns the Neovim runtime layer: UI, config merge, cached lookup, async refresh, and command dispatch
-- Zig owns the backend layer: parsing, command inference, system queries, detection, quickfix processing, and execution support
+- Lua owns the Neovim frontend layer: setup, config, RPC transport, picker/window UI, and thin controller flow
+- Zig owns the backend layer: config interpretation, filetype normalization, build/run resolution, project parsing, system queries, detection, quickfix processing, and execution support
 
 For contributors:
 
@@ -88,16 +85,13 @@ If you manage keymaps through Lazy's `keys` field, use Lazy's key format:
 }
 ```
 
-**Packer**
+**Native package (vim-pack)**
 
-```lua
-use {
-    'valonmulolli/zignite.nvim',
-    build = "cd zig && zig build -Doptimize=ReleaseFast",
-    config = function()
-        require("zignite").setup({})
-    end,
-}
+```bash
+git clone https://github.com/valonmulolli/zignite.nvim \
+  ~/.local/share/nvim/site/pack/vendor/start/zignite.nvim
+cd ~/.local/share/nvim/site/pack/vendor/start/zignite.nvim/zig && \
+  zig build -Doptimize=ReleaseFast
 ```
 
 **Nix / NixOS (flake)**
@@ -180,7 +174,7 @@ require('zignite').setup({
     quickfix = {
         enabled = true,             -- Populate quickfix on non-zero exit
         processor = "auto",         -- "auto" | "lua" | "zig"
-        zig_min_lines = 300,        -- Auto-switch to zig quickfix processor
+        zig_min_lines = 300,        -- Legacy threshold; auto mode now prefers zig whenever backend is available
         max_lines = 1000,           -- Keep only last N lines from terminal output
         max_bytes = 262144,         -- Byte cap for quickfix processing
         strip_ansi = true,          -- Remove color escape codes in quickfix lines
@@ -247,8 +241,9 @@ picker = {
 
 Picker commands are built from your configured `build_commands.<filetype>` plus
 auto-detected commands when available. Detection currently covers:
-- tool commands for `zig`, `go`, `cargo`, and `odin`
+- tool commands for `zig`, `go`, `rust`, `c`, `cpp`, `python`, `odin`, and `fortran`
 - project commands for `Makefile`, `package.json`, Maven, Gradle, CMake, Meson, Bazel, `Cargo.toml`, `go.mod`, `go.work`, and `pyproject.toml`
+- Python project workflows for `uv`, `requirements.txt`/`pip`, and conda (`environment.yml` / `environment.yaml`)
 
 Configured commands always take priority when names overlap.
 
@@ -263,9 +258,10 @@ detect = {
 }
 ```
 
-When the Zig backend is available, detection and project parsing reuse a
-persistent backend daemon (`--daemon`) for lower overhead. If the backend is
-unavailable or a request fails, parsing falls back to Lua automatically.
+Detection, build resolution, run resolution, config sync, and quickfix reuse a
+persistent Zig backend daemon (`--daemon`) for lower overhead. The plugin
+builds this backend during installation, and the resolver path expects it to be
+available.
 
 `RunBuild`, `RunLive`, and `:RunBuild` completion use configured commands plus
 cached detected commands first, then refresh detection in the background. That
@@ -285,6 +281,11 @@ detect_runtime = {
 - `async_picker = true`: `:RunBuildSelect` opens immediately from configured/cached commands.
 - `cache_ttl_ms`: stale threshold used before triggering refresh.
 - `live_merge = true`: refreshed detected commands are merged into the open picker without closing it.
+
+Python project support is intentionally limited to:
+- `uv`
+- `requirements.txt` / `pip`
+- conda (`environment.yml` / `environment.yaml`)
 
 `zig fetch` is included and prompts for URL/path input when selected. In the
 picker, you can paste a plain GitHub repo URL or `<owner>/<repo>`, and
@@ -316,11 +317,11 @@ zig fetch --save git+https://github.com/<owner>/<repo>
 
 - Use `:RunFile` for fast single-file feedback.
 - Use `:RunBuild run` when you explicitly want project-wide startup/build behavior.
-- For Zig, `:RunFile` prefers project build execution (`zig build ...`) when `build.zig` exists.
+- For Zig, `:RunFile` prefers project build execution (`zig build ...`) only when the source imports build-defined modules that require `build.zig`.
 
 ### Quickfix Pipeline
 
-- `quickfix.processor = "auto"`: uses Lua for small outputs, Zig for large outputs (`zig_min_lines` threshold).
+- `quickfix.processor = "auto"`: prefers Zig processing when the backend is available, with immediate Lua fallback on backend errors.
 - `quickfix.processor = "zig"`: always uses Zig processing with immediate Lua fallback on backend errors.
 - `quickfix.zig_worker = true`: keeps quickfix requests on the persistent Zig backend daemon (`--daemon`) to avoid per-run process spawn cost.
 - `quickfix.zig_worker = false`: disables worker reuse and uses one-shot Zig quickfix jobs.
@@ -330,7 +331,6 @@ Recommended low-latency setup:
 ```lua
 quickfix = {
     processor = "auto",
-    zig_min_lines = 200,
     zig_worker = true,
     max_lines = 1000,
     max_bytes = 262144,
@@ -356,18 +356,27 @@ You can use these variables in your custom runner commands:
 Run `zig build -Doptimize=ReleaseFast` inside the plugin's `zig/` directory manually.
 
 ### "No runner configured"
-Add it to your setup:
-```lua
-runners = {
-    my_lang = "my-compiler $file"
-}
-```
+The Zig backend auto-detects the correct build/run command for supported
+filetypes. If nothing appears:
 
-### Windows note
-Core runtime and tests are exercised on Linux/macOS in CI. If you use Windows, expect to override POSIX-style cleanup or shell snippets in language runners/build commands.
+- Check that your `build.zig`, `Cargo.toml`, `Makefile`, `CMakeLists.txt`,
+  `package.json`, etc. are in the project root.
+- The filetype must be one of the supported languages (zig, rust, go, c, cpp,
+  python, odin, fortran, java, kotlin, javascript, typescript).
+- If your project uses an unsupported build system, add a custom command in your
+  setup via `build_commands` or `runners`:
+  ```lua
+  runners = {
+      my_lang = "my-compiler $file"
+  }
+  ```
+
+### Platform note
+Only Linux and macOS are supported. Windows is not supported and will not be.
 
 ### Odin "Redeclaration of 'main'" on `:RunFile`
-Use single-file mode for Odin:
+The Zig backend defaults to `odin run .` for project builds. If you are working
+on a single file outside of an Odin project, set a custom runner:
 ```lua
 runners = {
     odin = "odin run $file -file",
@@ -375,7 +384,9 @@ runners = {
 ```
 
 ### Go `:RunFile` feels slow or hangs
-`go run .` compiles/runs the whole module. For single-file execution use `:RunFile` (runner `go run $file`). Use `:RunBuild run` only when you want full module execution.
+The Zig backend picks `go run .` by default (whole-module execution). For
+single-file feedback, use `:RunFile` which uses the configured runner
+(`go run $file`). Switch to `:RunBuild run` when you want full module execution.
 
 ### `zsh: no such option: argv`
 Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
@@ -413,54 +424,37 @@ detect_runtime = {
 lua test/runner.lua
 ```
 
-### Run integration tests only
+### Run the Lua frontend + integration suite
 
 ```sh
-lua test/integration.lua
+lua test/runner.lua
 ```
 
-### Run performance benchmark
-
-```sh
-lua test/benchmark.lua 10000
-```
-
-Or through the Zig build script:
+### Run backend benchmark
 
 ```sh
 cd zig
 zig build bench          # defaults to 3000 iterations
 zig build bench-fast     # defaults to 1000 iterations
-zig build bench-ci       # defaults to 3000 iterations + hard-fail guardrail
 zig build bench -- 10000
 ```
 
-How `zig build bench-fast` works:
-- It first builds the `zignite` Zig backend in `Debug`.
-- Then it runs `lua test/benchmark.lua` with the built backend wired in through
-  environment variables from `zig/build.zig`.
-- `bench-fast` is the quick local pass: it uses `1000` iterations so you can
-  sanity-check performance without waiting for the full `bench` run.
-- `bench` uses `3000` iterations for a steadier baseline.
-- `bench-ci` also uses `3000` iterations, but enables a hard-fail guardrail so
-  CI can fail if backend quickfix speed regresses too far.
+What the benchmark covers:
+- direct Zig build resolution
+- direct Zig run resolution
+- selected-command materialization
+- daemon-backed build resolution
+- daemon-backed run resolution
+- quickfix processing (tail collect, ansi strip, full pipeline)
+
+`bench-fast` is the quick local pass. `bench` gives a steadier baseline.
 
 The benchmark prints:
-- Non-blocking cache-first build-list latency and avg/run.
-- Lua quickfix path time.
-- Zig quickfix simulation time.
-- Zig quickfix + diagnostics parse simulation time.
-- Real Zig backend quickfix timings when `zig/zig-out/bin/zignite` is available (includes process spawn overhead).
-- Real Zig backend per-run averages (`avg/run`) for easier comparison.
-- Speedup percentage (`zig` vs `lua`) for large-output quickfix.
-
-Soft guardrail:
-- Warn when zig speedup is below 30%.
-
-Optional hard guardrail:
-```sh
-ZIGNITE_BENCH_HARD_FAIL=1 lua test/benchmark.lua 10000
-```
+- direct resolver timings (`avg/run`)
+- daemon-backed resolver timings (`avg/run`)
+- per-case throughput (`ops/s`)
+- per-case percentile stats (min, p50, p95, max, stddev)
+- guardrail warnings when a benchmark crosses its configured threshold
 
 ## License
 

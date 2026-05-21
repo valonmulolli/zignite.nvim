@@ -32,6 +32,7 @@ pub fn parseQuery(value: []const u8) !Query {
 pub fn freeOwnedResult(allocator: std.mem.Allocator, result: Result) void {
     if (result.root) |root| allocator.free(root);
     for (result.commands) |entry| {
+        allocator.free(entry.name);
         allocator.free(entry.command);
     }
     if (result.commands.len > 0) {

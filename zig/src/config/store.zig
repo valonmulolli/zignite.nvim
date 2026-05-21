@@ -3,6 +3,7 @@ const std = @import("std");
 const page_allocator = std.heap.page_allocator;
 
 var synced_revision: u64 = 0;
+var synced_generation: u64 = 0;
 var synced_json: ?[]u8 = null;
 
 pub fn setSyncedConfigJson(json: []const u8, revision: u64) !void {
@@ -15,6 +16,7 @@ pub fn setSyncedConfigJson(json: []const u8, revision: u64) !void {
 
     synced_json = owned;
     synced_revision = revision;
+    synced_generation +%= 1;
 }
 
 pub fn getSyncedConfigJson() ?[]const u8 {
@@ -25,10 +27,15 @@ pub fn getSyncedRevision() u64 {
     return synced_revision;
 }
 
+pub fn getSyncedGeneration() u64 {
+    return synced_generation;
+}
+
 pub fn reset() void {
     if (synced_json) |previous| {
         page_allocator.free(previous);
     }
     synced_json = null;
     synced_revision = 0;
+    synced_generation +%= 1;
 }

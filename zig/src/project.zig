@@ -66,31 +66,39 @@ pub fn readProjectFile(allocator: std.mem.Allocator, kind: Kind, path: []const u
     return project_io.readProjectFile(allocator, kind, path);
 }
 
+pub fn readProjectFileWithIO(io: std.Io, allocator: std.mem.Allocator, kind: Kind, path: []const u8) ![]u8 {
+    return project_io.readProjectFileWithIO(io, allocator, kind, path);
+}
+
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     return project_output.writeOutput(stdout, allocator, options, contents);
 }
 
-pub fn runMode(allocator: std.mem.Allocator, options: Options) !void {
-    const contents = try readProjectFile(allocator, options.kind, options.path);
+pub fn writeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
+    return project_output.writeOutputWithIO(io, stdout, allocator, options, contents);
+}
+
+pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
+    const contents = try readProjectFileWithIO(io, allocator, options.kind, options.path);
     defer allocator.free(contents);
 
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
-    try writeOutput(stdout, allocator, options, contents);
+    try writeOutputWithIO(io, stdout, allocator, options, contents);
     try stdout.flush();
 }
 
-pub fn runDaemon(allocator: std.mem.Allocator) !void {
+pub fn runDaemon(allocator: std.mem.Allocator, io: std.Io) !void {
     var stdin_ctx: protocol_stdio.Stdin = .{};
-    stdin_ctx.init();
+    stdin_ctx.init(io);
     const reader = stdin_ctx.io();
     var stdout_ctx: protocol_stdio.Stdout = .{};
-    stdout_ctx.init();
+    stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
 
     while (true) {
-        const maybe_begin = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', PROJECT_DAEMON_MAX_LINE);
+        const maybe_begin = try frame.readLineAlloc(allocator, reader, PROJECT_DAEMON_MAX_LINE);
         if (maybe_begin == null) break;
         const begin_owned = maybe_begin.?;
         defer allocator.free(begin_owned);
@@ -99,7 +107,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
         if (!std.mem.startsWith(u8, begin_line, PROJECT_DAEMON_REQ_BEGIN)) {
             continue;
         }
-        handleDaemonFrame(allocator, reader, stdout, begin_line) catch |err| {
+        handleDaemonFrame(allocator, io, reader, stdout, begin_line) catch |err| {
             if (err == error.UnexpectedEof) break;
             return err;
         };
@@ -108,6 +116,7 @@ pub fn runDaemon(allocator: std.mem.Allocator) !void {
 
 pub fn handleDaemonFrame(
     allocator: std.mem.Allocator,
+    io: std.Io,
     reader: anytype,
     stdout: anytype,
     begin_line: []const u8,
@@ -127,46 +136,29 @@ pub fn handleDaemonFrame(
         }
         return err;
     };
-    var request_args: std.ArrayList([]u8) = .empty;
-    defer {
-        for (request_args.items) |arg| allocator.free(arg);
-        request_args.deinit(allocator);
-    }
-
-    const ParseArgsLine = struct {
-        allocator: std.mem.Allocator,
-        request_args: *std.ArrayList([]u8),
-
-        fn onLine(self: @This(), line: []const u8) !void {
-            if (line.len > 0 and line[0] == '\t') {
-                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line[1..]));
-            } else if (line.len > 0) {
-                try self.request_args.append(self.allocator, try self.allocator.dupe(u8, line));
-            }
-        }
-    };
-    const parse_args_line = ParseArgsLine{
-        .allocator = allocator,
-        .request_args = &request_args,
-    };
-    const completed = try frame.readUntilEnd(
+    const request_args = try frame.collectOwnedLinesUntilEnd(
         allocator,
         reader,
         PROJECT_DAEMON_MAX_LINE,
         PROJECT_DAEMON_REQ_END,
         header.request_id,
-        parse_args_line.onLine,
+        .{
+            .strip_leading_tab = true,
+            .skip_empty = true,
+        },
     );
-
-    if (!completed) return error.UnexpectedEof;
+    defer {
+        for (request_args) |arg| allocator.free(arg);
+        allocator.free(request_args);
+    }
 
     try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
-    const options = parseArgs(request_args.items);
+    const options = parseArgs(request_args);
     if (options) |parsed| {
-        const contents = readProjectFile(allocator, parsed.kind, parsed.path);
+        const contents = readProjectFileWithIO(io, allocator, parsed.kind, parsed.path);
         if (contents) |payload| {
             defer allocator.free(payload);
-            writeOutput(stdout, allocator, parsed, payload) catch |err| {
+            writeOutputWithIO(io, stdout, allocator, parsed, payload) catch |err| {
                 try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
             };
         } else |err| {
@@ -197,6 +189,7 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "meson-auto")) return .meson_auto;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "cargo-auto")) return .cargo_auto;
+    if (std.ascii.eqlIgnoreCase(value, "zig-auto")) return .zig_auto;
     if (std.ascii.eqlIgnoreCase(value, "pyproject")) return .pyproject;
     if (std.ascii.eqlIgnoreCase(value, "python-auto")) return .python_auto;
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
@@ -223,7 +216,7 @@ fn parseProjectDaemonBegin(line: []const u8) !ProjectDaemonRequestHeader {
 }
 
 const TestReader = struct {
-    fn readUntilDelimiterOrEofAlloc(
+    pub fn readUntilDelimiterOrEofAlloc(
         self: *TestReader,
         allocator: std.mem.Allocator,
         delimiter: u8,
@@ -240,18 +233,19 @@ const TestReader = struct {
 test "handleDaemonFrame writes project error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{};
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
 
     try handleDaemonFrame(
         allocator,
+        std.testing.io,
         &reader,
-        out.writer(allocator),
+        &out.writer,
         "@@ZPRJ_REQ_BEGIN 11 extra",
     );
 
     try std.testing.expectEqualStrings(
         "@@ZPRJ_RES_BEGIN 11\n@@ZPRJ_RES_ERR 11 InvalidProjectDaemonHeader\n@@ZPRJ_RES_END 11\n",
-        out.items,
+        out.written(),
     );
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const common = @import("../core/common.zig");
 const go_mod = @import("module.zig");
 const go_work = @import("workspace.zig");
+const pathing = @import("../../pathing.zig");
 
 pub const Info = struct {
     module_name: ?[]u8 = null,
@@ -25,11 +26,23 @@ pub fn parseInfo(
     project_path: []const u8,
     match_path: ?[]const u8,
 ) !Info {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return parseInfoWithIO(threaded.io(), allocator, contents, project_path, match_path);
+}
+
+pub fn parseInfoWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    contents: []const u8,
+    project_path: []const u8,
+    match_path: ?[]const u8,
+) !Info {
     var info: Info = .{};
+    errdefer freeOwnedInfo(allocator, info);
 
     const project_name = std.fs.path.basename(project_path);
     if (std.mem.eql(u8, project_name, "go.work")) {
-        info.module_name = try parseWorkspaceModuleName(allocator, contents, project_path, match_path);
+        info.module_name = try parseWorkspaceModuleNameWithIO(io, allocator, contents, project_path, match_path);
     } else {
         info.module_name = try go_mod.parseModuleName(allocator, contents);
     }
@@ -58,6 +71,17 @@ fn parseWorkspaceModuleName(
     go_work_path: []const u8,
     match_path: ?[]const u8,
 ) !?[]u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return parseWorkspaceModuleNameWithIO(threaded.io(), allocator, contents, go_work_path, match_path);
+}
+
+fn parseWorkspaceModuleNameWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    contents: []const u8,
+    go_work_path: []const u8,
+    match_path: ?[]const u8,
+) !?[]u8 {
     const items = try go_work.parseUses(allocator, contents, go_work_path, match_path);
     defer go_work.freeOwnedUses(allocator, items);
 
@@ -74,7 +98,7 @@ fn parseWorkspaceModuleName(
     const go_mod_path = try std.fs.path.join(allocator, &.{ module_root, "go.mod" });
     defer allocator.free(go_mod_path);
 
-    const go_mod_contents = common.readFileAlloc(allocator, go_mod_path) catch return null;
+    const go_mod_contents = common.readFileAllocWithIO(io, allocator, go_mod_path) catch return null;
     defer allocator.free(go_mod_contents);
 
     return try go_mod.parseModuleName(allocator, go_mod_contents);
@@ -91,7 +115,7 @@ fn buildPackageSelectorAlloc(
     const normalized_match = try common.normalizePathAlloc(allocator, match_path);
     defer allocator.free(normalized_match);
 
-    const package_dir_slice = std.fs.path.dirname(normalized_match) orelse normalized_match;
+    const package_dir_slice = pathing.dirOrDot(normalized_match);
     const normalized_package_dir = try common.normalizePathAlloc(allocator, package_dir_slice);
     defer allocator.free(normalized_package_dir);
 

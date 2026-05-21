@@ -54,6 +54,93 @@ local function test_run_build_last_behavior()
     print("✓ RunBuildLast behavior test passed")
 end
 
+local function test_run_build_last_ignores_stale_command()
+    config.setup({
+        build_commands = {
+            staleft = {
+                run = "echo run-stale",
+                test = "pytest -q",
+            },
+        },
+    })
+
+    vim.bo.filetype = "staleft"
+    local original_expand = vim.fn.expand
+    local original_buf_set_lines = vim.api.nvim_buf_set_lines
+    local output_messages = {}
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/stale/main.py" end
+        return original_expand(expr)
+    end
+    vim.api.nvim_buf_set_lines = function(buf, start_idx, end_idx, strict, lines)
+        if type(lines) == "table" and #lines > 0 then
+            table.insert(output_messages, table.concat(lines, "\n"))
+        end
+        if original_buf_set_lines then
+            return original_buf_set_lines(buf, start_idx, end_idx, strict, lines)
+        end
+    end
+
+    reset_job_results()
+    init.run_build_command("run", "float")
+    assert(#job_results > 0, "run_build_command(run) should start a job before command goes stale")
+
+    config.setup({
+        build_commands = {
+            staleft = {
+                test = "pytest -q",
+            },
+        },
+    })
+
+    reset_job_results()
+    init.run_last_build_command("float")
+    assert(#job_results == 0, "RunBuildLast should not execute a stale missing command")
+    assert(#output_messages > 0, "RunBuildLast should explain when the last command is no longer available")
+    assert(
+        output_messages[#output_messages]:match("Command 'run' not found"),
+        "RunBuildLast should report that the stale command is no longer available"
+    )
+
+    vim.fn.expand = original_expand
+    vim.api.nvim_buf_set_lines = original_buf_set_lines
+    reset_job_results()
+
+    print("✓ RunBuildLast stale command test passed")
+end
+
+local function test_build_resolve_exposes_backend_last_command_name()
+    config.setup({
+        build_commands = {
+            pickerft = {
+                run = "echo picker-run",
+                test = "echo picker-test",
+            },
+        },
+    })
+
+    vim.bo.filetype = "pickerft"
+    local original_expand = vim.fn.expand
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/picker/main.py" end
+        return original_expand(expr)
+    end
+
+    reset_job_results()
+    init.run_build_command("test", "float")
+    assert(#job_results > 0, "run_build_command(test) should start a job before resolving picker state")
+
+    local resolved = require("zignite.rpc.build_resolve").resolve_sync("/tmp/picker/main.py", "pickerft")
+    assert(type(resolved) == "table", "build_resolve.resolve_sync should return a table")
+    assert(resolved.last_command_name == "test",
+        "build resolve should expose the backend-owned last command name for picker state")
+
+    vim.fn.expand = original_expand
+    reset_job_results()
+
+    print("✓ Build resolve backend last-command test passed")
+end
+
 -- Test RunLive picks command by live/dev/watch priority.
 local function test_run_live_priority_selection()
     config.setup({
@@ -179,6 +266,11 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
         end
     end
 
+    os.execute("mkdir -p /tmp/jslive >/dev/null 2>&1")
+    local package_json = assert(io.open("/tmp/jslive/package.json", "w"))
+    package_json:write("{}\n")
+    package_json:close()
+
     reset_job_results()
     init.run_live("float")
     local execution_jobs = 0
@@ -200,6 +292,8 @@ local function test_run_live_javascript_ignores_missing_default_scripts()
     vim.fn.systemlist = original_systemlist
     vim.v.shell_error = 0
     vim.api.nvim_buf_set_lines = original_buf_set_lines
+    os.remove("/tmp/jslive/package.json")
+    os.execute("rmdir /tmp/jslive >/dev/null 2>&1")
     reset_job_results()
 
     print("✓ RunLive JavaScript missing-script test passed")
@@ -230,7 +324,7 @@ local function test_run_live_javascript_uses_detected_live_alias()
     end
     os.execute("mkdir -p /tmp/jsliveok >/dev/null 2>&1")
     local package_json = assert(io.open("/tmp/jsliveok/package.json", "w"))
-    package_json:write("{}\n")
+    package_json:write('{ "scripts": { "dev": "vite" } }\n')
     package_json:close()
 
     reset_job_results()
@@ -250,8 +344,53 @@ local function test_run_live_javascript_uses_detected_live_alias()
     print("✓ RunLive JavaScript live-alias test passed")
 end
 
+local function test_run_code_visual_uses_backend_managed_execution_path()
+    config.setup({})
+
+    vim.bo.filetype = "zig"
+    local original_expand = vim.fn.expand
+    local original_tempname = vim.fn.tempname
+    local original_execute_command = init.execute_command
+    local tempname_calls = 0
+    local execution_paths = {}
+
+    vim.fn.expand = function(expr)
+        if expr == "%:p" then return "/tmp/visual-zig/main.zig" end
+        return original_expand(expr)
+    end
+    vim.fn.tempname = function()
+        tempname_calls = tempname_calls + 1
+        return string.format("/tmp/zignite-visual-%d", tempname_calls)
+    end
+    init.execute_command = function(system_command)
+        local command = command_to_string(system_command)
+        local execution_path = command:match("(/[^%s'\"]+%.zig)")
+        execution_paths[#execution_paths + 1] = execution_path
+    end
+
+    init.run_code(1, "float")
+    init.run_code(1, "float")
+
+    init.execute_command = original_execute_command
+    vim.fn.expand = original_expand
+    vim.fn.tempname = original_tempname
+
+    assert(#execution_paths == 2, "visual runs should reach execute_command twice")
+    assert(execution_paths[1] == execution_paths[2], "visual runs should reuse the backend-managed execution path")
+    assert(execution_paths[1]:match("%.zig$"), "backend-managed visual execution path should keep the Zig extension")
+    assert(tempname_calls == 0, "visual runs should no longer allocate temp paths in Lua")
+
+    os.remove(execution_paths[1])
+    reset_job_results()
+
+    print("✓ RunCode visual backend execution path test passed")
+end
+
 test_run_build_last_behavior()
+test_run_build_last_ignores_stale_command()
+test_build_resolve_exposes_backend_last_command_name()
 test_run_live_priority_selection()
 test_run_live_missing_command()
 test_run_live_javascript_ignores_missing_default_scripts()
 test_run_live_javascript_uses_detected_live_alias()
+test_run_code_visual_uses_backend_managed_execution_path()

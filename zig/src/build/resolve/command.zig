@@ -28,7 +28,7 @@ pub fn writeCommandUiMetadata(
 }
 
 pub fn commandRequiresArguments(command_template: []const u8) bool {
-    return std.mem.indexOf(u8, command_template, COMMAND_ARG_PLACEHOLDER) != null;
+    return std.mem.find(u8, command_template, COMMAND_ARG_PLACEHOLDER) != null;
 }
 
 pub fn commandDisplayAlloc(allocator: std.mem.Allocator, command_template: []const u8) ![]u8 {
@@ -41,7 +41,7 @@ pub fn commandDisplayAlloc(allocator: std.mem.Allocator, command_template: []con
 
     var cursor: usize = 0;
     while (true) {
-        const next = std.mem.indexOfPos(u8, command_template, cursor, COMMAND_ARG_PLACEHOLDER) orelse {
+        const next = std.mem.findPos(u8, command_template, cursor, COMMAND_ARG_PLACEHOLDER) orelse {
             try out.appendSlice(allocator, command_template[cursor..]);
             break;
         };
@@ -102,7 +102,7 @@ pub fn resolveCommandTemplate(
 
     var cursor: usize = 0;
     while (true) {
-        const next = std.mem.indexOfPos(u8, command_template, cursor, COMMAND_ARG_PLACEHOLDER) orelse {
+        const next = std.mem.findPos(u8, command_template, cursor, COMMAND_ARG_PLACEHOLDER) orelse {
             try out.appendSlice(allocator, command_template[cursor..]);
             break;
         };
@@ -162,15 +162,19 @@ fn parseGithubHttpReference(value: []const u8) ?struct { repo: []const u8, fragm
         if (!std.mem.startsWith(u8, value, prefix)) continue;
         var path = value[prefix.len..];
         var fragment: ?[]const u8 = null;
+        const explicit_fragment = if (std.mem.findScalar(u8, path, '#')) |hash_index|
+            blk: {
+                const value_fragment = path[hash_index + 1 ..];
+                path = path[0..hash_index];
+                break :blk if (value_fragment.len > 0) value_fragment else null;
+            }
+        else
+            null;
 
-        if (std.mem.indexOfScalar(u8, path, '#')) |hash_index| {
-            fragment = path[hash_index + 1 ..];
-            path = path[0..hash_index];
-        }
-        if (std.mem.indexOfScalar(u8, path, '?')) |query_index| {
+        if (std.mem.findScalar(u8, path, '?')) |query_index| {
             path = path[0..query_index];
         }
-        path = std.mem.trimRight(u8, path, "/");
+        path = std.mem.trimEnd(u8, path, "/");
 
         var parts = std.mem.splitScalar(u8, path, '/');
         const owner = parts.next() orelse return null;
@@ -185,8 +189,10 @@ fn parseGithubHttpReference(value: []const u8) ?struct { repo: []const u8, fragm
 
         if (remainder.len != 0) {
             if (!std.mem.startsWith(u8, remainder, "tree/")) return null;
-            fragment = remainder["tree/".len..];
+            fragment = explicit_fragment orelse remainder["tree/".len..];
             if (fragment.?.len == 0) return null;
+        } else {
+            fragment = explicit_fragment;
         }
 
         return .{
@@ -200,17 +206,17 @@ fn parseGithubHttpReference(value: []const u8) ?struct { repo: []const u8, fragm
 fn parseGithubShorthand(value: []const u8) ?struct { repo: []const u8, fragment: ?[]const u8 } {
     var repo = value;
     var fragment: ?[]const u8 = null;
-    if (std.mem.indexOfScalar(u8, value, '#')) |hash_index| {
+    if (std.mem.findScalar(u8, value, '#')) |hash_index| {
         repo = value[0..hash_index];
         fragment = value[hash_index + 1 ..];
         if (fragment.?.len == 0) return null;
     }
 
-    if (std.mem.indexOfScalar(u8, repo, '/')) |slash_index| {
+    if (std.mem.findScalar(u8, repo, '/')) |slash_index| {
         const owner = repo[0..slash_index];
         const name = repo[slash_index + 1 ..];
         if (owner.len == 0 or name.len == 0) return null;
-        if (std.mem.indexOfScalar(u8, name, '/')) |_| return null;
+        if (std.mem.findScalar(u8, name, '/')) |_| return null;
         var trimmed_repo = repo;
         if (std.mem.endsWith(u8, trimmed_repo, ".git")) {
             trimmed_repo = trimmed_repo[0 .. trimmed_repo.len - 4];
@@ -218,4 +224,16 @@ fn parseGithubShorthand(value: []const u8) ?struct { repo: []const u8, fragment:
         return .{ .repo = trimmed_repo, .fragment = fragment };
     }
     return null;
+}
+
+test "normalizeGithubRepoReferenceAlloc keeps explicit fragment when url also has query and tree path" {
+    const allocator = std.testing.allocator;
+
+    const normalized = try normalizeGithubRepoReferenceAlloc(
+        allocator,
+        "https://github.com/owner/repo/tree/main?query=foo#v2",
+    );
+    defer allocator.free(normalized);
+
+    try std.testing.expectEqualStrings("--save git+https://github.com/owner/repo#v2", normalized);
 }

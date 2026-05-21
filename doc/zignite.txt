@@ -1,4 +1,4 @@
-*zignite.txt*    Blazing-fast code runner for Neovim with Zig backend
+*zignite.txt*    Fast code runner for Neovim with Zig backend
 
 ==============================================================================
 CONTENTS                                                    *zignite-contents*
@@ -44,12 +44,19 @@ and shebang detection.
 PROJECT EXECUTION~
 Auto-detects project type and runs appropriate commands:
   • package.json → start via detected package manager
-  • Cargo.toml → cargo run
-  • go.mod → go run .
+  • Cargo.toml → cargo run / cargo run --bin <name>
+  • go.mod / go.work → project-aware build commands
   • build.zig → zig build run
   • MODULE.bazel / WORKSPACE(.bazel) → bazel build //...
   • pyproject.toml / uv.lock → uv run -m main when uv-managed
+  • requirements.txt → python -m main / pytest / pip install -r requirements.txt
+  • environment.yml / environment.yaml → conda run python -m main
   • Makefile → make
+
+ZIG PROJECT NOTE~
+  Zignite does not create `.zig-cache` or `zig-out` just by opening a file.
+  If those directories appear on open, the usual cause is external Zig tooling
+  such as ZLS or a background Zig build step.
 
 BUILD COMMANDS~
 Execute language-specific build commands:
@@ -58,7 +65,7 @@ Execute language-specific build commands:
   • Go: build, run, test, clean, mod
   • C/C++: Make, CMake, Meson support (25+ commands)
   • JavaScript/TypeScript: package-manager-aware script commands
-  • Python: pytest/pip defaults with automatic uv upgrades in uv-managed projects
+  • Python: pytest/pip defaults with automatic uv or conda project upgrades
 
 INTERACTIVE PICKER~
 Visual command picker with:
@@ -81,8 +88,8 @@ SAFETY & ERROR HANDLING~
     list, allowing you to jump to the error quickly.
   • Persistent worker: Reuses a Zig quickfix daemon to reduce repeated
     quickfix processing latency on failed runs.
-  • Persistent detect worker: Reuses a Zig daemon for build command
-    detection parsing (zig/go/cargo/odin), with automatic Lua fallback.
+  • Persistent backend daemon: Reuses one Zig daemon for config sync,
+    build/run resolution, detection, project parsing, and quickfix.
 
 ==============================================================================
 COMMANDS                                                    *zignite-commands*
@@ -90,6 +97,9 @@ COMMANDS                                                    *zignite-commands*
                                                                     *:RunFile*
 :RunFile [mode]
     Execute the current file.
+    Uses the configured filetype runner. For Go this stays single-file
+    execution (`go run $file`) even inside `go.mod` / `go.work` projects.
+    Use |:RunBuild| `run` when you explicitly want project-wide Go startup.
     
     Arguments:
       [mode]    Optional output mode: float, split, vsplit, tab
@@ -157,8 +167,8 @@ COMMANDS                                                    *zignite-commands*
 	    asynchronously in-place (`detect_runtime.async_picker = true`).
 	    `:RunBuild`, `:RunLive`, and `:RunBuild` completion also prefer
 	    configured/cached commands first to avoid blocking on detection.
-	    When Zig backend is available, detection parsing runs through a persistent
-	    `--detect-daemon` worker; on failure it falls back to Lua parsing.
+	    When the Zig backend is available, picker resolution and refreshes run
+	    through the unified backend daemon.
 	    `zig fetch` prompts for URL/path input when selected. You can paste a
 	    plain GitHub repo URL or `owner/repo`, and Zignite expands it to the
 	    saved Zig form automatically.
@@ -273,18 +283,11 @@ Basic setup: >lua
 <
 
 RUNNERS~
-                                                          *zignite-config-runners*
+                                                           *zignite-config-runners*
 Customize file execution commands: >lua
     runners = {
         python = "python3 -u $file",
         javascript = "node $file",
-        c = {
-            cmd = {
-                "gcc $file -o /tmp/$fileNameWithoutExt",
-                "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt"
-        },
     }
 <
 
@@ -353,7 +356,7 @@ Configure quickfix generation on failed runs: >lua
     quickfix = {
         enabled = true,
         processor = "auto",         -- auto | lua | zig
-        zig_min_lines = 300,        -- auto threshold for zig processor
+        zig_min_lines = 300,        -- legacy compatibility threshold
         max_lines = 1000,
         max_bytes = 262144,
         strip_ansi = true,
@@ -366,8 +369,8 @@ Configure quickfix generation on failed runs: >lua
 <
 
 Quickfix processor behavior:
-  • processor = "auto": Lua for small outputs, Zig for larger outputs
-    based on zig_min_lines.
+  • processor = "auto": prefer Zig quickfix processing when the backend is
+    available, with immediate Lua fallback on backend failure.
   • processor = "zig": always use Zig quickfix processing (with Lua
     fallback on backend failure).
   • zig_worker = true: keep a persistent Zig daemon process to reduce
@@ -418,12 +421,23 @@ ZIG~
   release           zig build -Doptimize=ReleaseFast
   release-run       zig build run -Doptimize=ReleaseFast
 
+  NOTE:
+    • `:RunFile` uses the configured Zig single-file runner when the file is
+      standalone.
+    • If the source imports a build-defined module (for example
+      `@import("zig")` from `build.zig`), `:RunFile` resolves to
+      `zig build run`.
+
 GO~
   build             go build
   run               go run .
   test              go test ./...
   clean             go clean
   mod               go mod tidy
+
+  NOTE:
+    • `:RunFile` uses the filetype runner (`go run $file`)
+    • `:RunBuild run` uses the project-aware Go command
 
 C/C++ (MAKE)~
   build             make
@@ -436,7 +450,7 @@ C/C++ (MAKE)~
 C/C++ (CMAKE)~
   cmake-config      cmake -B build
   cmake-build       cmake --build build
-  cmake-run         cmake --build build && ./build/main
+  cmake-run         cmake --build build
   cmake-clean       cmake --build build --target clean
   cmake-debug       cmake -B build -DCMAKE_BUILD_TYPE=Debug
   cmake-release     cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -445,7 +459,7 @@ C/C++ (CMAKE)~
 C/C++ (MESON)~
   meson-setup       meson setup build
   meson-build       meson compile -C build
-  meson-run         meson compile -C build && ./build/main
+  meson-run         meson compile -C build
   meson-clean       meson compile -C build --clean
   meson-test        meson test -C build
 
@@ -457,10 +471,43 @@ JAVASCRIPT/TYPESCRIPT (PACKAGE MANAGER AWARE)~
   install           npm install        (auto-switches to pnpm/yarn/bun when detected)
 
 PYTHON~
-  run               python -m main     (auto-switches to uv run -m main in uv projects)
-  test              pytest             (auto-switches to uv run pytest in uv projects)
+  run               python -m main     (auto-switches to uv run -m main or conda run python -m main)
+  test              pytest             (auto-switches to uv run pytest or conda run pytest)
   install           pip install -r requirements.txt
-                    (auto-switches to uv sync in uv projects)
+                    (auto-switches to uv sync or conda env update -f environment.yml|yaml --prune)
+
+PYTHON PROJECT POLICY~
+  Supported Python project workflows are intentionally limited to:
+    • uv
+    • requirements.txt / pip
+    • conda (`environment.yml` / `environment.yaml`)
+
+  Poetry, PDM, and Hatch are not part of the supported backend path.
+
+GO RUN BEHAVIOR~                                           *zignite-go-run*
+  `:RunFile` keeps the configured Go single-file runner:
+    • `go run $file`
+
+  `:RunBuild run` is the project-aware path:
+    • `go run .`
+    • `go run ./cmd/<name>`
+    • `go run ./service/cmd/<name>` in `go.work` layouts
+
+  If a Go project appears to "hang", check whether you meant to use:
+    • `:RunFile` for single-file feedback
+    • `:RunBuild run` for full project startup
+
+PYTHON RUN BEHAVIOR~                                   *zignite-python-run*
+  `:RunFile` uses the configured Python file runner by default:
+    • `python3 -u $file`
+
+  The backend upgrades that runner only when it can prove a richer
+  project-managed path:
+    • uv projects → `uv run -m main`
+    • conda env files → `conda run python -m main`
+
+  `requirements.txt` affects build commands (`run`, `test`, `install`)
+  but does not replace the single-file runner.
 
 ==============================================================================
 LANGUAGES                                                  *zignite-languages*
@@ -491,6 +538,22 @@ BUILD COMMANDS~
     :RunBuild run      " cargo run
     :RunBuild test     " cargo test
     :RunBuild release  " cargo build --release
+<
+
+GO SINGLE FILE VS PROJECT~
+>
+    nvim cmd/api/main.go
+    :RunFile           " go run /abs/path/to/cmd/api/main.go
+    :RunBuild run      " go run ./cmd/api   (or go run .)
+<
+
+PYTHON PROJECT-AWARE RUNNERS~
+>
+    nvim app/main.py
+    :RunFile           " python3 -u /abs/path/to/app/main.py
+    :RunBuild run      " python -m main
+    " In uv project:    uv run -m main
+    " In conda project: conda run python -m main
 <
 
 INTERACTIVE PICKER~
@@ -546,19 +609,17 @@ Check if build commands are configured for your filetype: >
 
 ZIG BACKEND NOT FOUND~
 Build the Zig backend: >
-    cd /path/to/zignite.nvim-v0/zig
+    cd /path/to/zignite.nvim/zig
     zig build
 <
 
 Run the backend benchmark: >
-    cd /path/to/zignite.nvim-v0/zig
+    cd /path/to/zignite.nvim/zig
     zig build bench
     zig build bench-fast
-    zig build bench-ci
     zig build bench -- 10000
 <
 The default bench run uses 3000 iterations. `bench-fast` uses 1000.
-`bench-ci` also enables the hard-fail benchmark guardrail.
 
 QUICKFIX LATENCY IS HIGH~
 Tune quickfix limits to reduce processing cost: >

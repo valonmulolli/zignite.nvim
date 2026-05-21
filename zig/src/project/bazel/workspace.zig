@@ -1,5 +1,6 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
+const pathing = @import("../../pathing.zig");
 const project_io = @import("../core/io.zig");
 const infer = @import("infer.zig");
 const model = @import("model.zig");
@@ -9,6 +10,16 @@ const CommandEntry = model.CommandEntry;
 const CommandInfo = model.CommandInfo;
 
 pub fn buildWorkspaceCommandInfo(
+    allocator: std.mem.Allocator,
+    workspace_root: []const u8,
+    match_path: ?[]const u8,
+) !CommandInfo {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return buildWorkspaceCommandInfoWithIO(threaded.io(), allocator, workspace_root, match_path);
+}
+
+pub fn buildWorkspaceCommandInfoWithIO(
+    io: std.Io,
     allocator: std.mem.Allocator,
     workspace_root: []const u8,
     match_path: ?[]const u8,
@@ -32,7 +43,11 @@ pub fn buildWorkspaceCommandInfo(
     const normalized_match = try common.normalizePathAlloc(allocator, match_path.?);
     defer allocator.free(normalized_match);
 
-    var current_dir = try allocator.dupe(u8, std.fs.path.dirname(normalized_match) orelse normalized_match);
+    var current_dir = try std.fmt.allocPrint(
+        allocator,
+        "{s}",
+        .{pathing.dirOrDot(normalized_match)},
+    );
     defer allocator.free(current_dir);
 
     var primary_build: ?[]u8 = null;
@@ -45,11 +60,11 @@ pub fn buildWorkspaceCommandInfo(
     }
 
     while (current_dir.len > 0) {
-        const build_file = try findBuildFileAlloc(allocator, current_dir);
+        const build_file = try findBuildFileAllocWithIO(io, allocator, current_dir);
         if (build_file) |path| {
             defer allocator.free(path);
 
-            const contents = common.readFileAlloc(allocator, path) catch continue;
+            const contents = common.readFileAllocWithIO(io, allocator, path) catch continue;
             defer allocator.free(contents);
 
             const items = try parse.parseTargets(allocator, contents);
@@ -62,23 +77,35 @@ pub fn buildWorkspaceCommandInfo(
             defer model.freeOwnedCommandInfo(allocator, info);
 
             for (info.commands) |entry| {
-                try commands.append(allocator, .{
-                    .name = try allocator.dupe(u8, entry.name),
-                    .command = try allocator.dupe(u8, entry.command),
-                });
+                const owned_name = try allocator.dupe(u8, entry.name);
+                const owned_command = allocator.dupe(u8, entry.command) catch |err| {
+                    allocator.free(owned_name);
+                    return err;
+                };
+                commands.append(allocator, .{
+                    .name = owned_name,
+                    .command = owned_command,
+                }) catch |err| {
+                    allocator.free(owned_name);
+                    allocator.free(owned_command);
+                    return err;
+                };
             }
 
             if (info.primary_build) |value| {
-                if (primary_build) |existing| allocator.free(existing);
-                primary_build = try allocator.dupe(u8, value);
+                if (primary_build == null) {
+                    primary_build = try allocator.dupe(u8, value);
+                }
             }
             if (info.primary_run) |value| {
-                if (primary_run) |existing| allocator.free(existing);
-                primary_run = try allocator.dupe(u8, value);
+                if (primary_run == null) {
+                    primary_run = try allocator.dupe(u8, value);
+                }
             }
             if (info.primary_test) |value| {
-                if (primary_test) |existing| allocator.free(existing);
-                primary_test = try allocator.dupe(u8, value);
+                if (primary_test == null) {
+                    primary_test = try allocator.dupe(u8, value);
+                }
             }
         }
 
@@ -86,8 +113,9 @@ pub fn buildWorkspaceCommandInfo(
         const parent = std.fs.path.dirname(current_dir) orelse break;
         if (std.mem.eql(u8, parent, current_dir)) break;
 
+        const next = try std.fmt.allocPrint(allocator, "{s}", .{parent});
         allocator.free(current_dir);
-        current_dir = try allocator.dupe(u8, parent);
+        current_dir = next;
     }
 
     return .{
@@ -99,13 +127,18 @@ pub fn buildWorkspaceCommandInfo(
 }
 
 fn findBuildFileAlloc(allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return findBuildFileAllocWithIO(threaded.io(), allocator, dir);
+}
+
+fn findBuildFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
     const build_bazel = try std.fs.path.join(allocator, &.{ dir, "BUILD.bazel" });
     errdefer allocator.free(build_bazel);
-    if (project_io.pathExists(build_bazel)) return build_bazel;
+    if (project_io.pathExistsWithIO(io, build_bazel)) return build_bazel;
     allocator.free(build_bazel);
 
     const build = try std.fs.path.join(allocator, &.{ dir, "BUILD" });
-    if (project_io.pathExists(build)) return build;
+    if (project_io.pathExistsWithIO(io, build)) return build;
     allocator.free(build);
     return null;
 }

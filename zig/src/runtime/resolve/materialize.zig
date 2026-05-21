@@ -1,14 +1,12 @@
 const std = @import("std");
+const pathing = @import("../../pathing.zig");
 const types = @import("types.zig");
 
 pub fn materializeRunner(
     allocator: std.mem.Allocator,
-    runner_in: types.ResolvedRunner,
+    runner: *types.ResolvedRunner,
     path: []const u8,
-) !types.ResolvedRunner {
-    var runner = runner_in;
-    errdefer runner.deinit(allocator);
-
+) !void {
     const filetype_name = runner.filetype orelse "";
     if (runner.name == null and filetype_name.len > 0) {
         runner.name = try allocator.dupe(u8, filetype_name);
@@ -37,14 +35,12 @@ pub fn materializeRunner(
         allocator.free(command);
         runner.command = resolved;
 
-        runner.argv = try tokenizeCommand(allocator, raw_command);
+        runner.argv = try tokenizeCommand(allocator, resolved);
     }
 
     if (std.mem.eql(u8, runner.source, "project") and runner.cwd == null) {
-        runner.cwd = try allocator.dupe(u8, std.fs.path.dirname(path) orelse path);
+        runner.cwd = try allocator.dupe(u8, pathing.dirOrDot(path));
     }
-
-    return runner;
 }
 
 pub fn substituteVariablesRaw(
@@ -72,13 +68,11 @@ fn substituteVariablesImpl(
     cwd_hint: ?[]const u8,
 ) ![]u8 {
     const file = path;
-    const dir = std.fs.path.dirname(path) orelse path;
+    const dir = pathing.dirOrDot(path);
     const file_name = std.fs.path.basename(path);
     const file_name_without_ext = std.fs.path.stem(file_name);
-    const file_ext = if (std.fs.path.extension(file_name)) |ext|
-        if (ext.len > 0) ext[1..] else ""
-    else
-        "";
+    const file_ext_with_dot = std.fs.path.extension(file_name);
+    const file_ext = if (file_ext_with_dot.len > 0) file_ext_with_dot[1..] else "";
     const root = cwd_hint orelse dir;
     const dir_name = std.fs.path.basename(root);
 
@@ -245,8 +239,7 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
                 quote = ch;
             } else if (std.ascii.isWhitespace(ch)) {
                 if (current.items.len > 0) {
-                    try tokens.append(allocator, try current.toOwnedSlice(allocator));
-                    current = .empty;
+                    try appendCurrentToken(allocator, &tokens, &current);
                 }
             } else if (ch == '\\' and index + 1 < command.len) {
                 index += 1;
@@ -261,9 +254,22 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
         return tokens;
     }
     if (current.items.len > 0) {
-        try tokens.append(allocator, try current.toOwnedSlice(allocator));
+        try appendCurrentToken(allocator, &tokens, &current);
     }
     return tokens;
+}
+
+fn appendCurrentToken(
+    allocator: std.mem.Allocator,
+    tokens: *std.ArrayList([]u8),
+    current: *std.ArrayList(u8),
+) !void {
+    const token = try current.toOwnedSlice(allocator);
+    current.* = .empty;
+    tokens.append(allocator, token) catch |err| {
+        allocator.free(token);
+        return err;
+    };
 }
 
 pub fn isReservedArgvCommand(command: []const u8) bool {
@@ -271,4 +277,50 @@ pub fn isReservedArgvCommand(command: []const u8) bool {
     if (std.mem.eql(u8, trimmed, "--argv")) return true;
     if (!std.mem.startsWith(u8, trimmed, "--argv")) return false;
     return trimmed.len == "--argv".len or std.ascii.isWhitespace(trimmed["--argv".len]);
+}
+
+test "substituteVariablesRaw uses dot for bare relative file dir" {
+    const allocator = std.testing.allocator;
+
+    const resolved = try substituteVariablesRaw(allocator, "$dir", "main.py");
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings(".", resolved);
+}
+
+test "materializeRunner uses dot cwd for bare relative project path" {
+    const allocator = std.testing.allocator;
+
+    var runner = types.ResolvedRunner{
+        .source = "project",
+        .filetype = try allocator.dupe(u8, "python"),
+        .command = try allocator.dupe(u8, "python3 -u $file"),
+    };
+    try materializeRunner(allocator, &runner, "main.py");
+    defer runner.deinit(allocator);
+
+    try std.testing.expectEqualStrings(".", runner.cwd.?);
+    try std.testing.expectEqualStrings("python3 -u 'main.py'", runner.command.?);
+    try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
+    try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
+    try std.testing.expectEqualStrings("main.py", runner.argv.items[2]);
+}
+
+test "materializeRunner keeps file paths with spaces as one argv argument" {
+    const allocator = std.testing.allocator;
+
+    var runner = types.ResolvedRunner{
+        .source = "filetype",
+        .filetype = try allocator.dupe(u8, "python"),
+        .command = try allocator.dupe(u8, "python3 -u $file"),
+    };
+
+    try materializeRunner(allocator, &runner, "/tmp/example dir/main.py");
+    defer runner.deinit(allocator);
+
+    try std.testing.expectEqualStrings("python3 -u '/tmp/example dir/main.py'", runner.command.?);
+    try std.testing.expectEqual(@as(usize, 3), runner.argv.items.len);
+    try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
+    try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
+    try std.testing.expectEqualStrings("/tmp/example dir/main.py", runner.argv.items[2]);
 }

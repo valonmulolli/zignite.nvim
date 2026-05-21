@@ -16,7 +16,7 @@ pub fn parseModuleName(allocator: std.mem.Allocator, contents: []const u8) !?[]u
 }
 
 fn stripLineComment(line: []const u8) []const u8 {
-    const idx = std.mem.indexOf(u8, line, "//") orelse return line;
+    const idx = std.mem.find(u8, line, "//") orelse return line;
     return line[0..idx];
 }
 

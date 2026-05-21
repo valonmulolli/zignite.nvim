@@ -1,495 +1,203 @@
 -- ============================================================================
--- Zignite.nvim - Complete Example Configuration
+-- Zignite.nvim - Example Configuration
 -- ============================================================================
--- This file is a full reference configuration.
--- Use `lazy_config.lua` if you want the recommended minimal lazy.nvim setup.
--- Use this file when you want to browse most available options in one place.
+-- This is a reference config for normal use.
+--
+-- Important architecture rule:
+--   Lua owns Neovim setup, keymaps, UI, and user overrides.
+--   Zig owns builtin runners, build-system detection, and command resolution.
+--
+-- Keep `runners` and `build_commands` empty unless you intentionally want to
+-- override or extend the Zig backend defaults.
+--
+-- Plugin manager build step:
+--   build = "cd zig && zig build -Doptimize=ReleaseFast"
 -- ============================================================================
-
--- Plugin manager build step (recommended):
--- build = "cd zig && zig build -Doptimize=ReleaseFast",
 
 require("zignite").setup({
+  -- ==========================================================================
+  -- KEYMAPS
+  -- ==========================================================================
+  -- If your plugin manager registers keymaps, set `keymaps = {}` here and define
+  -- these mappings in the manager spec instead.
+  keymaps = {
+    { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
+    { "n", "<leader>rf", ":RunFile<CR>", { desc = "Run file" } },
+    { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
+    { "n", "<leader>rl", ":RunLive<CR>", { desc = "Run live/watch command" } },
+    { "n", "<leader>rt", ":RunFile tab<CR>", { desc = "Run file in new tab" } },
+    { "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
+    { "n", "<leader>rh", ":RunFile split<CR>", { desc = "Run file in horizontal split" } },
+    { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
+    { "n", "<leader>rs", ":StopCode<CR>", { desc = "Stop execution" } },
+  },
 
-    -- ========================================================================
-    -- KEYMAPS
-    -- ========================================================================
-    keymaps = {
-        -- File execution
-        { "n", "<leader>r",  ":RunFile<CR>",        { desc = "Run file" } },
-        { "n", "<leader>rf", ":RunFile<CR>",        { desc = "Run file" } },
+  -- Default output mode: "float", "tab", "split", or "vsplit".
+  mode = "float",
 
-        -- Build command picker
-        { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
-        { "n", "<leader>rl", ":RunLive<CR>",        { desc = "Run live/watch command" } },
-
-        -- Output modes
-        { "n", "<leader>rt", ":RunFile tab<CR>",    { desc = "Run file in new tab" } },
-        { "n", "<leader>rv", ":RunFile vsplit<CR>", { desc = "Run file in vertical split" } },
-        { "n", "<leader>rh", ":RunFile split<CR>",  { desc = "Run file in horizontal split" } },
-
-        -- Control
-        { "n", "<leader>rq", ":RunClose<CR>",       { desc = "Close runner" } },
-        { "n", "<leader>rs", ":StopCode<CR>",       { desc = "Stop execution" } },
-    },
-
-    -- ========================================================================
-    -- OUTPUT MODE
-    -- ========================================================================
-    -- Default mode: "float", "tab", "split", "vsplit"
-    mode = "float",
-
-    -- ========================================================================
-    -- FILETYPE RUNNERS
-    -- ========================================================================
-    -- Commands for running single files
-    runners = {
-        -- Compiled languages
-        c = {
-            cmd = {
-                "gcc $file -o /tmp/$fileNameWithoutExt",
-                "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt"
-        },
-
-        cpp = {
-            cmd = {
-                "c++ -pipe $file -o /tmp/$fileNameWithoutExt",
-                "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt"
-        },
-
-        rust = {
-            cmd = {
-                "rustc $file -o /tmp/$fileNameWithoutExt",
-                "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt"
-        },
-
-        go = "go run $file",
-        zig = "zig run $file",
-
-        -- Interpreted languages
-        python = "python3 -u $file",
-        javascript = "node $file",
-        typescript = "bun $file",
-        lua = "lua $file",
-        ruby = "ruby $file",
-        php = "php $file",
-        -- Use Odin single-file mode to avoid package-wide main redeclaration errors.
-        odin = "odin run $file -file",
-        fortran = {
-            cmd = {
-                "gfortran $file -o /tmp/$fileNameWithoutExt",
-                "/tmp/$fileNameWithoutExt",
-            },
-            cleanup_command = "rm /tmp/$fileNameWithoutExt"
-        },
-    },
-
-    -- ========================================================================
-    -- BUILD COMMANDS
-    -- ========================================================================
-    -- Project-level build commands (cargo build, zig build, etc.)
+  -- ==========================================================================
+  -- BACKEND OVERRIDES
+  -- ==========================================================================
+  -- Builtin single-file runners live in Zig. Leave this empty for the default
+  -- behavior for Zig, Go, Rust, C/C++, Python, JavaScript, TypeScript, etc.
+  runners = {
+    -- Example override:
+    -- python = "uv run python $file",
     --
-    -- Features:
-    --   • Auto-setup: Build directory is created automatically if missing
-    --   • Auto-discovery: First executable in build/ is run automatically
-    --   • LSP support: CMake generates compile_commands.json
-    --   • Smart filtering: Picker shows only relevant commands for detected build system
-    --   • Bazel workspace commands are auto-detected as `bazel-*` entries
-    -- ========================================================================
-    build_commands = {
-        -- Rust
-        rust = {
-            build = "cargo build",
-            run = "cargo run",
-            test = "cargo test",
-            release = "cargo build --release",
-            ["release-run"] = "cargo run --release",
-            check = "cargo check",
-            clean = "cargo clean",
+    -- Example custom runner:
+    -- mylang = {
+    --   cmd = {
+    --     "mylang build $file",
+    --     "mylang run $fileNameWithoutExt",
+    --   },
+    --   cleanup_command = "rm -f $fileNameWithoutExt",
+    -- },
+  },
 
-            -- Additional commands
-            bench = "cargo bench",
-            doc = "cargo doc --open",
-            clippy = "cargo clippy",
-            fmt = "cargo fmt",
-        },
+  -- Builtin project/build commands live in Zig. Leave this empty so the backend
+  -- can pick the real project system: zig build, go modules/workspaces, Cargo,
+  -- package.json scripts, Make, CMake, Meson, Bazel, Maven, Gradle, and more.
+  build_commands = {
+    -- Example extension:
+    -- zig = {
+    --   docs = "zig build docs",
+    -- },
+    --
+    -- Example override:
+    -- typescript = {
+    --   lint = "npm run lint",
+    -- },
+  },
 
-        -- Zig
-        zig = {
-            build = "zig build",
-            run = "zig build run",
-            test = "zig build test",
-            check = "zig build check",
-            release = "zig build -Doptimize=ReleaseFast",
-            ["release-run"] = "zig build run -Doptimize=ReleaseFast",
+  -- Build command auto-detection.
+  detect = {
+    zig = true,
+    go = true,
+    rust = true,
+    odin = true,
+    c_cpp_make = true,
+    js_package_scripts = true,
+    java_kotlin_project = true,
+    bazel_project = true,
+  },
 
-            -- Additional commands
-            debug = "zig build -Doptimize=Debug",
-            small = "zig build -Doptimize=ReleaseSmall",
-        },
+  -- Detection runtime behavior for the picker.
+  detect_runtime = {
+    async_picker = true, -- Open from cache/defaults, refresh in the background.
+    cache_ttl_ms = 15000,
+    live_merge = true, -- Merge refreshed commands into the open picker.
+  },
 
-        -- Go
-        go = {
-            build = "go build",
-            run = "go run .",
-            test = "go test ./...",
-            clean = "go clean",
-            mod = "go mod tidy",
+  -- ==========================================================================
+  -- QUICKFIX
+  -- ==========================================================================
+  quickfix = {
+    enabled = true,
+    processor = "auto", -- "auto", "lua", or "zig"; auto prefers Zig.
+    zig_min_lines = 300,
+    max_lines = 1000,
+    max_bytes = 262144,
+    strip_ansi = true,
+    strip_ansi_max_lines = 400,
+    parse_diagnostics = true,
+    zig_worker = true,
+    async_strip = true,
+    strip_chunk_size = 200,
+  },
 
-            -- Additional commands
-            vet = "go vet ./...",
-            fmt = "go fmt ./...",
-        },
+  -- ==========================================================================
+  -- PROJECT OVERRIDES
+  -- ==========================================================================
+  -- Use this only for special local projects that need a custom command.
+  project = {
+    -- [vim.fn.expand("~/Dev/my-special-project") .. "/.*"] = {
+    --   name = "My Special Project",
+    --   command = "zig build run -Dexample=true",
+    -- },
+  },
 
-        -- Odin
-        odin = {
-            build = "odin build .",
-            run = "odin run .",
-            test = "odin test .",
-            release = "odin build . -o:speed",
-            check = "odin check .",
-        },
+  -- ==========================================================================
+  -- UI
+  -- ==========================================================================
+  float = {
+    border = "rounded",
+    height = 0.8,
+    width = 0.8,
+    x = 0.5,
+    y = 0.5,
+    border_hl = "FloatBorder",
+    border_hl_success = "DiagnosticOk",
+    border_hl_error = "DiagnosticError",
+    close_key = "<Esc>",
+    auto_close_success_ms = nil, -- nil keeps successful output open.
+    focus = true,
+    startinsert = false,
+  },
 
-        -- Fortran
-        fortran = {
-            build = "gfortran *.f90 -o main",
-            run = "./main",
-            clean = "rm -f main",
-        },
+  term = {
+    position = "bot",
+    size = 15,
+    focus = true,
+    startinsert = true,
+  },
 
-        -- JavaScript/TypeScript
-        -- If these stay at their default values, Zignite auto-switches
-        -- to pnpm/yarn/bun based on the project lockfile or packageManager field.
-        javascript = {
-            start = "npm start",
-            dev = "npm run dev",
-            build = "npm run build",
-            test = "npm test",
-            install = "npm install",
-        },
+  picker = {
+    focus = true,
+    filter_input = "inline", -- "inline", "ui", or "cmdline".
+    layout = "auto", -- "auto", "detailed", or "compact".
+    compact_breakpoint = 96,
+  },
 
-        typescript = {
-            start = "npm start",
-            dev = "npm run dev",
-            build = "npm run build",
-            test = "npm test",
-        },
+  -- Only one runner window at a time.
+  singleton = true,
 
-        -- Python
-        -- If these stay at their default values, Zignite auto-switches
-        -- to uv in uv-managed projects (`uv.lock` or `[tool.uv]`).
-        python = {
-            run = "python -m main",
-            test = "pytest",
-            install = "pip install -r requirements.txt",
-        },
+  -- Behavior for :RunClose and the float close key:
+  --   "stop" stops the process.
+  --   "hide" only hides the output window.
+  close_behavior = "stop",
 
-        -- ====================================================================
-        -- C/C++ with Make, CMake, and Meson support
-        -- ====================================================================
-        -- These commands include:
-        --   • Explicit setup commands for configured build directories
-        --   • Direct build/clean commands for lower shell overhead
-        --   • Target-aware run commands are inferred by the plugin when possible
-        --   • LSP support: Generates compile_commands.json for clangd
-        -- ====================================================================
-        c = {
-            -- Make commands (for projects with Makefile)
-            build = "make",
-            run = "make run",
-            clean = "make clean",
-            test = "make test",
-            install = "make install",
-            debug = "make debug",
+  -- Spinner/title animation.
+  spinner = "dots",
+  spinner_speed = 80,
+  enable_animations = true,
 
-            -- CMake commands (direct build path, LSP support)
-            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
-            ["cmake-clean"] = "cmake --build build --target clean",
-            ["cmake-debug"] =
-            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-            ["cmake-release"] =
-            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-
-            -- Meson commands (explicit setup, direct build path)
-            ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
-            ["meson-clean"] = "meson compile -C build --clean",
-            ["meson-test"] = "meson test -C build",
-        },
-
-        cpp = {
-            -- Make commands (for projects with Makefile)
-            build = "make",
-            run = "make run",
-            clean = "make clean",
-            test = "make test",
-            install = "make install",
-            debug = "make debug",
-
-            -- CMake commands (direct build path, LSP support)
-            ["cmake-config"] = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1",
-            ["cmake-build"] = "cmake --build build",
-            ["cmake-run"] = "cmake --build build && ./build/main",
-            ["cmake-clean"] = "cmake --build build --target clean",
-            ["cmake-debug"] =
-            "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-            ["cmake-release"] =
-            "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build",
-            ["cmake-test"] = "ctest --test-dir build",
-
-            -- Meson commands (explicit setup, direct build path)
-            ["meson-setup"] = "meson setup build",
-            ["meson-build"] = "meson compile -C build",
-            ["meson-run"] = "meson compile -C build && ./build/main",
-            ["meson-clean"] = "meson compile -C build --clean",
-            ["meson-test"] = "meson test -C build",
-        },
-    },
-
-    -- ========================================================================
-    -- PROJECT CONFIGURATION
-    -- ========================================================================
-    -- Pattern matching for project root detection
-    project = {
-        -- Example: Zig project
-        [vim.fn.expand("~/Dev/myzig") .. "/.*"] = {
-            name = "My Zig Project",
-            command = "zig build run",
-        },
-
-        -- Example: Rust project with release mode
-        [vim.fn.expand("~/Dev/rustapp") .. "/.*"] = {
-            name = "Rust Application",
-            command = "cargo run --release",
-        },
-
-        -- Example: Node.js project
-        [vim.fn.expand("~/Dev/webapp") .. "/.*"] = {
-            name = "Web Application",
-            command = "npm run dev",
-        },
-    },
-
-    -- ========================================================================
-    -- UI CONFIGURATION
-    -- ========================================================================
-
-    -- Floating window settings
-    float = {
-        border = "rounded",                  -- "none", "single", "double", "rounded", "solid", "shadow"
-        height = 0.8,                        -- 0.0 to 1.0 (percentage of editor height)
-        width = 0.8,                         -- 0.0 to 1.0 (percentage of editor width)
-        x = 0.5,                             -- 0.0 = left, 0.5 = center, 1.0 = right
-        y = 0.5,                             -- 0.0 = top, 0.5 = center, 1.0 = bottom
-        border_hl = "FloatBorder",           -- Highlight group for the border
-        border_hl_success = "DiagnosticOk",  -- Border color on success (exit 0)
-        border_hl_error = "DiagnosticError", -- Border color on error (exit != 0)
-        close_key = "<Esc>",                 -- Key to close the window
-        focus = true,                        -- Auto-focus the window on open
-        startinsert = false,                 -- Enter insert mode when the window opens
-    },
-
-    -- Terminal settings (for split/vsplit/tab modes)
-    term = {
-        position = "bot",   -- "bot", "top", "left", "right"
-        size = 15,          -- Size in lines (for horizontal) or columns (for vertical)
-        focus = true,       -- Focus on terminal after opening
-        startinsert = true, -- Start in insert mode
-    },
-
-    -- Singleton mode: Only allow one runner window at a time
-    singleton = true,
-
-    -- ========================================================================
-    -- ANIMATIONS & OUTPUT
-    -- ========================================================================
-
-    -- Spinner configuration
-    spinner = "dots",         -- "dots", "line", "bar", "arrows", "triangle", "square", "circle"
-    spinner_speed = 80,       -- Speed in milliseconds
-    enable_animations = true, -- Enable/disable animations and spinners
-
-    -- Execution configuration
-    timeout = nil, -- Timeout in ms (e.g. 5000). nil = disabled.
-
-    -- Build picker behavior
-    picker = {
-        focus = true, -- Focus the picker when it opens
-        filter_input = "inline", -- "inline", "ui", or "cmdline"
-        layout = "auto", -- "auto", "detailed", or "compact"
-        compact_breakpoint = 96, -- Auto-switch to compact mode on narrow screens
-    },
-
-    -- Picker detection runtime (cache-first + async refresh)
-    detect_runtime = {
-        async_picker = true, -- Open picker immediately from cache/default commands
-        cache_ttl_ms = 15000, -- Refresh detection when cache is older than this
-        live_merge = true, -- Merge refreshed detected commands while picker is open
-    },
-
-    -- Quickfix behavior on errors (performance-friendly defaults)
-    quickfix = {
-        enabled = true,         -- Populate quickfix on non-zero exit code
-        max_lines = 1000,       -- Limit quickfix to the last N lines
-        strip_ansi = true,      -- Remove ANSI color codes in quickfix lines
-        async_strip = true,     -- Process ANSI stripping in chunks to avoid UI pause
-        strip_chunk_size = 200, -- Lines processed per chunk when async_strip=true
-    },
+  -- Timeout in milliseconds. nil disables timeout.
+  timeout = nil,
 })
 
 -- ============================================================================
--- ADDITIONAL CONFIGURATION EXAMPLES
+-- OPTIONAL LOCAL KEYMAP EXAMPLES
 -- ============================================================================
-
--- ----------------------------------------------------------------------------
--- Language-Specific Keymaps (Recommended!)
--- ----------------------------------------------------------------------------
--- Show picker for compiled languages, run directly for scripting languages
-
-vim.api.nvim_create_autocmd("FileType", {
-    pattern = { "rust", "zig", "go", "c", "cpp" },
-    callback = function()
-        -- Override <leader>r to show picker for compiled languages
-        vim.keymap.set("n", "<leader>r", ":RunBuildSelect<CR>", {
-            buffer = true,
-            desc = "Select build command"
-        })
-    end,
-})
-
--- ----------------------------------------------------------------------------
--- Filetype-Specific Quick Commands
--- ----------------------------------------------------------------------------
-
--- Rust: Quick commands
-vim.api.nvim_create_autocmd("FileType", {
-    pattern = "rust",
-    callback = function()
-        vim.keymap.set("n", "<F5>", ":RunBuild run<CR>", { buffer = true, desc = "Cargo run" })
-        vim.keymap.set("n", "<F6>", ":RunBuild test<CR>", { buffer = true, desc = "Cargo test" })
-        vim.keymap.set("n", "<F7>", ":RunBuild check<CR>", { buffer = true, desc = "Cargo check" })
-    end,
-})
-
--- Zig: Quick commands
-vim.api.nvim_create_autocmd("FileType", {
-    pattern = "zig",
-    callback = function()
-        vim.keymap.set("n", "<F5>", ":RunBuild run<CR>", { buffer = true, desc = "Zig run" })
-        vim.keymap.set("n", "<F6>", ":RunBuild test<CR>", { buffer = true, desc = "Zig test" })
-    end,
-})
-
--- C/C++: Quick commands
-vim.api.nvim_create_autocmd("FileType", {
-    pattern = { "c", "cpp" },
-    callback = function()
-        vim.keymap.set("n", "<F5>", ":RunBuild run<CR>", { buffer = true, desc = "Make run" })
-        vim.keymap.set("n", "<F6>", ":RunBuild build<CR>", { buffer = true, desc = "Make build" })
-        vim.keymap.set("n", "<F7>", ":RunBuild test<CR>", { buffer = true, desc = "Make test" })
-        vim.keymap.set("n", "<F8>", ":RunBuild cmake-run<CR>", { buffer = true, desc = "CMake run" })
-        vim.keymap.set("n", "<F9>", ":RunBuild meson-run<CR>", { buffer = true, desc = "Meson run" })
-    end,
-})
-
--- ============================================================================
--- USAGE EXAMPLES
--- ============================================================================
-
--- Single file execution:
---   nvim test.c
---   :RunFile              → Compiles and runs test.c
---   <leader>r             → Same as above
-
--- Build command (direct):
---   nvim src/main.rs
---   :RunBuild run         → Runs cargo run
---   :RunBuild test        → Runs cargo test
---   :RunBuild release     → Runs cargo build --release
-
--- Build command (picker):
---   nvim src/main.rs
---   <leader>rb            → Shows picker with all cargo commands
---   <leader>rl            → Runs live/dev/watch command for current filetype
---   Select and run!
-
--- Build execution:
---   nvim ~/Dev/myzig/src/main.zig
---   :RunBuild run         → Runs zig build run (from project root)
---   Bazel workspaces also expose `bazel-build`, `bazel-run`, `bazel-test`,
---   and `bazel-query`, prompting for the target when needed.
---   <leader>rb            → Shows picker with all detected/configured commands
-
--- Odin single-file execution:
---   nvim lesson.odin
---   :RunFile              → Runs odin run lesson.odin -file
---   :RunBuild run         → Runs project-style build command (e.g. odin run .)
-
--- Different output modes:
---   :RunFile split        → Run in horizontal split
---   :RunFile vsplit       → Run in vertical split
---   :RunFile tab          → Run in new tab
---   :RunBuild test split  → Run tests in split
-
--- Visual selection:
---   Select code in visual mode
---   :'<,'>RunCode         → Runs selected code
-
--- ============================================================================
--- AVAILABLE COMMANDS
--- ============================================================================
-
--- :RunFile [mode]           - Run current file
--- :RunCode                  - Run visual selection
--- :RunBuild <command>       - Run specific build command
--- :RunBuildSelect [mode]    - Show command picker
--- :RunClose                 - Close output window
--- :StopCode                 - Stop running process
-
--- ============================================================================
--- AVAILABLE VARIABLES
--- ============================================================================
-
--- $file              - Full path to the file
--- $fileName          - Just the filename with extension
--- $fileNameWithoutExt- Filename without extension
--- $dir               - Directory containing the file
--- $fileExt           - File extension
--- $projectName       - Name of the project root folder
--- $projectNameShort  - Project name with -cli/-tui/-app stripped
+-- These are intentionally commented out. The backend already resolves the best
+-- build/run/test commands; these mappings only choose which UI command to open.
+--
+-- vim.api.nvim_create_autocmd("FileType", {
+--   pattern = { "rust", "zig", "go", "c", "cpp" },
+--   callback = function(ev)
+--     vim.keymap.set("n", "<leader>r", ":RunBuildSelect<CR>", {
+--       buffer = ev.buf,
+--       desc = "Select build command",
+--     })
+--   end,
+-- })
 
 -- ============================================================================
 -- QUICK REFERENCE
 -- ============================================================================
-
--- Default Keymaps:
---   <leader>r   → Run file
---   <leader>rb  → Show build command picker
---   <leader>rq  → Close runner
---   <leader>rt  → Run in tab
---   <leader>rv  → Run in vsplit
---   <leader>rh  → Run in split
-
--- Build Commands (examples):
---   Rust:  build, run, test, release, check, clean
---   Zig:   build, run, test, release
---   Go:    build, run, test, clean, mod
---   C/C++: build, run, test, cmake-run, meson-run
---   JS/TS: start, dev, build, test, install
-
--- ============================================================================
--- DOCUMENTATION
--- ============================================================================
-
--- See these files for more information:
---   • README.md              - User documentation
---   • doc/zignite.txt        - Vim help file
+-- :RunFile [mode]         Run current file.
+-- :RunCode                Run visual selection or current file.
+-- :RunBuild <command>     Run a concrete build command.
+-- :RunBuildSelect [mode]  Open the build command picker.
+-- :RunBuildLast           Repeat the last build command.
+-- :RunLive                Run the best live/dev/watch command.
+-- :RunClose               Close output, using `close_behavior`.
+-- :StopCode               Stop the running process.
+--
+-- Common variables available in custom commands:
+--   $file
+--   $fileName
+--   $fileNameWithoutExt
+--   $dir
+--   $fileExt
+--   $projectName
+--   $projectNameShort
