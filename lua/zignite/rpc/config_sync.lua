@@ -72,6 +72,15 @@ local function has_current_sync(revision)
 		and config_client.get_worker_generation() == tonumber(last_synced_state.worker_generation)
 end
 
+---@param val any
+---@return any
+local function ensure_object(val)
+	if type(val) == "table" and next(val) == nil then
+		return vim.empty_dict()
+	end
+	return val
+end
+
 ---@param options table
 ---@param revision integer
 ---@return string|nil
@@ -81,10 +90,10 @@ local function encode_synced_config(options, revision)
 	end
 
 	return vim.json.encode({
-		build_commands = type(options) == "table" and options.build_commands or {},
-		detect = type(options) == "table" and options.detect or {},
-		runners = type(options) == "table" and options.runners or {},
-		project = type(options) == "table" and options.project or {},
+		build_commands = type(options) == "table" and ensure_object(options.build_commands) or vim.empty_dict(),
+		detect = type(options) == "table" and ensure_object(options.detect) or vim.empty_dict(),
+		runners = type(options) == "table" and ensure_object(options.runners) or vim.empty_dict(),
+		project = type(options) == "table" and ensure_object(options.project) or vim.empty_dict(),
 		timeout = type(options) == "table" and options.timeout or nil,
 		revision = revision,
 	})
