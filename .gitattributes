@@ -1,0 +1,3 @@
+*.zig linguist-language=Zig
+*.lua linguist-language=Lua
+*.md linguist-detectable=false
