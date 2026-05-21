@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const test_module = b.createModule(.{
-        .root_source_file = b.path("../zig_backend_tests.zig"),
+        .root_source_file = b.path("tests.zig"),
         .target = target,
         .optimize = optimize,
     });

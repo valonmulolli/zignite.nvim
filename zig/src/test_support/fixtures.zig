@@ -1,53 +1,53 @@
 const std = @import("std");
 
-const cmake_cmakelists = @embedFile("../../../test/fixtures/backend/cmake/CMakeLists.txt");
-const cmake_main = @embedFile("../../../test/fixtures/backend/cmake/src/main.cpp");
+const cmake_cmakelists = @embedFile("../../test_fixtures/backend/cmake/CMakeLists.txt");
+const cmake_main = @embedFile("../../test_fixtures/backend/cmake/src/main.cpp");
 
-const meson_build = @embedFile("../../../test/fixtures/backend/meson/meson.build");
-const meson_main = @embedFile("../../../test/fixtures/backend/meson/src/main.cpp");
+const meson_build = @embedFile("../../test_fixtures/backend/meson/meson.build");
+const meson_main = @embedFile("../../test_fixtures/backend/meson/src/main.cpp");
 
-const bazel_module = @embedFile("../../../test/fixtures/backend/bazel/MODULE.bazel");
-const bazel_build = @embedFile("../../../test/fixtures/backend/bazel/app/BUILD.bazel");
-const bazel_main = @embedFile("../../../test/fixtures/backend/bazel/app/main.cc");
+const bazel_module = @embedFile("../../test_fixtures/backend/bazel/MODULE.bazel");
+const bazel_build = @embedFile("../../test_fixtures/backend/bazel/app/BUILD.bazel");
+const bazel_main = @embedFile("../../test_fixtures/backend/bazel/app/main.cc");
 
-const cargo_toml = @embedFile("../../../test/fixtures/backend/cargo/Cargo.toml");
-const cargo_main = @embedFile("../../../test/fixtures/backend/cargo/src/main.rs");
-const cargo_bin = @embedFile("../../../test/fixtures/backend/cargo/src/bin/api.rs");
+const cargo_toml = @embedFile("../../test_fixtures/backend/cargo/Cargo.toml");
+const cargo_main = @embedFile("../../test_fixtures/backend/cargo/src/main.rs");
+const cargo_bin = @embedFile("../../test_fixtures/backend/cargo/src/bin/api.rs");
 
-const go_mod = @embedFile("../../../test/fixtures/backend/go/go.mod");
-const go_main = @embedFile("../../../test/fixtures/backend/go/cmd/api/main.go");
+const go_mod = @embedFile("../../test_fixtures/backend/go/go.mod");
+const go_main = @embedFile("../../test_fixtures/backend/go/cmd/api/main.go");
 
-const go_work = @embedFile("../../../test/fixtures/backend/go_work/go.work");
-const go_work_mod = @embedFile("../../../test/fixtures/backend/go_work/service/go.mod");
-const go_work_main = @embedFile("../../../test/fixtures/backend/go_work/service/cmd/api/main.go");
+const go_work = @embedFile("../../test_fixtures/backend/go_work/go.work");
+const go_work_mod = @embedFile("../../test_fixtures/backend/go_work/service/go.mod");
+const go_work_main = @embedFile("../../test_fixtures/backend/go_work/service/cmd/api/main.go");
 
-const maven_pom = @embedFile("../../../test/fixtures/backend/maven/pom.xml");
+const maven_pom = @embedFile("../../test_fixtures/backend/maven/pom.xml");
 
-const python_pyproject = @embedFile("../../../test/fixtures/backend/python/pyproject.toml");
-const python_main = @embedFile("../../../test/fixtures/backend/python/app/main.py");
-const python_uv_lock = @embedFile("../../../test/fixtures/backend/python/uv.lock");
+const python_pyproject = @embedFile("../../test_fixtures/backend/python/pyproject.toml");
+const python_main = @embedFile("../../test_fixtures/backend/python/app/main.py");
+const python_uv_lock = @embedFile("../../test_fixtures/backend/python/uv.lock");
 
-const python_conda_env = @embedFile("../../../test/fixtures/backend/python_conda/environment.yml");
-const python_conda_main = @embedFile("../../../test/fixtures/backend/python_conda/app/main.py");
+const python_conda_env = @embedFile("../../test_fixtures/backend/python_conda/environment.yml");
+const python_conda_main = @embedFile("../../test_fixtures/backend/python_conda/app/main.py");
 
-const python_conda_yaml_env = @embedFile("../../../test/fixtures/backend/python_conda_yaml/environment.yaml");
-const python_conda_yaml_main = @embedFile("../../../test/fixtures/backend/python_conda_yaml/app/main.py");
+const python_conda_yaml_env = @embedFile("../../test_fixtures/backend/python_conda_yaml/environment.yaml");
+const python_conda_yaml_main = @embedFile("../../test_fixtures/backend/python_conda_yaml/app/main.py");
 
-const python_requirements = @embedFile("../../../test/fixtures/backend/python_requirements/requirements.txt");
-const python_requirements_main = @embedFile("../../../test/fixtures/backend/python_requirements/app/main.py");
+const python_requirements = @embedFile("../../test_fixtures/backend/python_requirements/requirements.txt");
+const python_requirements_main = @embedFile("../../test_fixtures/backend/python_requirements/app/main.py");
 
-const node_package_json = @embedFile("../../../test/fixtures/backend/node/package.json");
-const node_pnpm_lock = @embedFile("../../../test/fixtures/backend/node/pnpm-lock.yaml");
+const node_package_json = @embedFile("../../test_fixtures/backend/node/package.json");
+const node_pnpm_lock = @embedFile("../../test_fixtures/backend/node/pnpm-lock.yaml");
 
-const yarn_package_json = @embedFile("../../../test/fixtures/backend/yarn/package.json");
-const yarn_lock = @embedFile("../../../test/fixtures/backend/yarn/yarn.lock");
+const yarn_package_json = @embedFile("../../test_fixtures/backend/yarn/package.json");
+const yarn_lock = @embedFile("../../test_fixtures/backend/yarn/yarn.lock");
 
-const bun_package_json = @embedFile("../../../test/fixtures/backend/bun/package.json");
-const bun_lock = @embedFile("../../../test/fixtures/backend/bun/bun.lock");
-const bun_main = @embedFile("../../../test/fixtures/backend/bun/src/main.ts");
+const bun_package_json = @embedFile("../../test_fixtures/backend/bun/package.json");
+const bun_lock = @embedFile("../../test_fixtures/backend/bun/bun.lock");
+const bun_main = @embedFile("../../test_fixtures/backend/bun/src/main.ts");
 
-const gradle_build = @embedFile("../../../test/fixtures/backend/gradle/build.gradle.kts");
-const gradle_wrapper = @embedFile("../../../test/fixtures/backend/gradle/gradlew");
+const gradle_build = @embedFile("../../test_fixtures/backend/gradle/build.gradle.kts");
+const gradle_wrapper = @embedFile("../../test_fixtures/backend/gradle/gradlew");
 
 fn writeFileTree(dir: std.Io.Dir, sub_path: []const u8, data: []const u8) !void {
     if (std.fs.path.dirname(sub_path)) |parent| {
