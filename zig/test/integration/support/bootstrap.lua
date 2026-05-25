@@ -57,6 +57,9 @@ function M.setup()
 	vim.tbl_isempty = vim.tbl_isempty or function(tbl)
 		return next(tbl) == nil
 	end
+	vim.empty_dict = vim.empty_dict or function()
+		return setmetatable({}, { __type = "dict" })
+	end
 	vim.tbl_contains = vim.tbl_contains or function(tbl, value)
 		for _, existing in ipairs(tbl) do
 			if existing == value then
