@@ -1,5 +1,6 @@
 const std = @import("std");
 const config = @import("../../config.zig");
+const common = @import("../../project/core/common.zig");
 const system_command = @import("../../system_command.zig");
 const types = @import("types.zig");
 
@@ -57,22 +58,32 @@ pub fn writeResolvedOutputLegacy(
         try stdout.print("MESSAGE\tError: No runner configured for filetype: {s}\n", .{filetype});
     }
     if (resolved.command) |command| {
-        try stdout.print("COMMAND\t{s}\n", .{command});
+        if (!common.hasControlChars(command)) {
+            try stdout.print("COMMAND\t{s}\n", .{command});
+        }
     }
     if (resolved.execution_path) |execution_path| {
-        try stdout.print("EXECUTION_PATH\t{s}\n", .{execution_path});
+        if (!common.hasControlChars(execution_path)) {
+            try stdout.print("EXECUTION_PATH\t{s}\n", .{execution_path});
+        }
     }
     for (resolved.argv.items) |arg| {
-        try stdout.print("ARGV\t{s}\n", .{arg});
+        if (!common.hasControlChars(arg)) {
+            try stdout.print("ARGV\t{s}\n", .{arg});
+        }
     }
     try stdout.print("SOURCE\t{s}\n", .{resolved.source});
     try stdout.print("FILETYPE\t{s}\n", .{filetype});
     try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
     if (resolved.cwd) |cwd| {
-        try stdout.print("CWD\t{s}\n", .{cwd});
+        if (!common.hasControlChars(cwd)) {
+            try stdout.print("CWD\t{s}\n", .{cwd});
+        }
     }
     if (resolved.name) |name| {
-        try stdout.print("NAME\t{s}\n", .{name});
+        if (!common.hasControlChars(name)) {
+            try stdout.print("NAME\t{s}\n", .{name});
+        }
     }
 }
 

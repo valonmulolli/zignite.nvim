@@ -24,12 +24,20 @@ pub fn deinitOwnedNameList(allocator: std.mem.Allocator, names: *std.ArrayList([
     names.deinit(allocator);
 }
 
+pub fn hasControlChars(value: []const u8) bool {
+    for (value) |ch| {
+        if (ch < 0x20 or ch == 0x7F) return true;
+    }
+    return false;
+}
+
 pub fn pushUniqueName(
     allocator: std.mem.Allocator,
     names: *std.ArrayList([]u8),
     value: []const u8,
 ) !void {
     if (value.len == 0) return;
+    if (hasControlChars(value)) return;
     for (names.items) |existing| {
         if (std.mem.eql(u8, existing, value)) return;
     }
