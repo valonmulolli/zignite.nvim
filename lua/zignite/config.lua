@@ -261,6 +261,7 @@ end
 function M.ensure()
 	if vim.tbl_isempty(M.options) then
 		M.options = vim.tbl_deep_extend("force", {}, M.defaults, {})
+		M.revision = 1
 	end
 	return M.options
 end
