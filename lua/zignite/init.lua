@@ -34,7 +34,7 @@ local function get_visual_selection()
 	if start_line == 0 or end_line == 0 then
 		return ""
 	end
-	return table.concat(vim.api.nvim_buf_get_text(0, start_line - 1, start_col, end_line - 1, end_col, {}), "\n")
+	return table.concat(vim.api.nvim_buf_get_text(0, start_line - 1, start_col - 1, end_line - 1, end_col, {}), "\n")
 end
 
 ---@return string
