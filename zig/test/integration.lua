@@ -3,7 +3,7 @@
 local project_root = arg[1] or "."
 package.path = package.path .. ";" .. project_root .. "/lua/?.lua"
 package.path = package.path .. ";" .. project_root .. "/lua/?/init.lua"
-package.path = package.path .. ";" .. project_root .. "/test/?.lua"
+package.path = package.path .. ";" .. project_root .. "/zig/test/?.lua"
 
 local ctx = require("integration.support")
 local exported_globals = {
