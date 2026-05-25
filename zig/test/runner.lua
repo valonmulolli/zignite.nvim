@@ -1,5 +1,5 @@
 -- Simple test runner for Zignite.nvim
--- Run with: lua test/runner.lua (from project root)
+-- Run with: lua zig/test/runner.lua (from project root)
 
 local M = {}
 
@@ -11,7 +11,7 @@ function M.run_tests()
     local project_root = arg[1] or "."
     package.path = package.path .. ';' .. project_root .. '/lua/?.lua'
     package.path = package.path .. ';' .. project_root .. '/lua/?/init.lua'
-    package.path = package.path .. ';' .. project_root .. '/test/?.lua'
+    package.path = package.path .. ';' .. project_root .. '/zig/test/?.lua'
 
     local test_files = {
         "test_config",
@@ -36,7 +36,7 @@ function M.run_tests()
 
     -- Run integration tests in a separate Lua process to avoid mock/module
     -- leakage between unit and integration suites.
-    local integration_cmd = string.format('lua "%s/test/integration.lua" "%s"', project_root, project_root)
+    local integration_cmd = string.format('lua "%s/zig/test/integration.lua" "%s"', project_root, project_root)
     local integration_ok = os.execute(integration_cmd)
     if integration_ok == true or integration_ok == 0 then
         print("✓ integration passed")
