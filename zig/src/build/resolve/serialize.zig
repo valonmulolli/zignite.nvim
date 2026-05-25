@@ -1,6 +1,7 @@
 const std = @import("std");
 const config = @import("../../config.zig");
 const command = @import("command.zig");
+const common = @import("../../project/core/common.zig");
 const build_types = @import("../system/types.zig");
 const types = @import("types.zig");
 
@@ -86,6 +87,7 @@ pub fn writeResolvedOutputLegacyCommands(
     entries: []const build_types.CommandEntry,
 ) !void {
     for (entries) |entry| {
+        if (common.hasControlChars(entry.name) or common.hasControlChars(entry.command)) continue;
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         try command.writeCommandUiMetadata(stdout, allocator, filetype, entry);
     }
@@ -97,10 +99,13 @@ pub fn writeResolvedOutputLegacyPreferred(
     live_name: ?[]const u8,
 ) !void {
     for (entries) |entry| {
+        if (common.hasControlChars(entry.name) or common.hasControlChars(entry.command)) continue;
         try stdout.print("PREFERRED\t{s}\t{s}\n", .{ entry.name, entry.command });
     }
     if (live_name) |name| {
-        try stdout.print("PREFERRED_NAME\tlive\t{s}\n", .{name});
+        if (!common.hasControlChars(name)) {
+            try stdout.print("PREFERRED_NAME\tlive\t{s}\n", .{name});
+        }
     }
 }
 
