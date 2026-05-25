@@ -107,7 +107,6 @@ const c_family_cmake_builtin_commands = [_]BuiltinCommand{
     .{ .name = "build", .command = "make", .system = "make" },
     .{ .name = "cmake-config", .command = "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1", .system = "cmake" },
     .{ .name = "cmake-build", .command = "cmake --build build", .system = "cmake" },
-    .{ .name = "cmake-run", .command = "cmake --build build", .system = "cmake" },
     .{ .name = "cmake-clean", .command = "cmake --build build --target clean", .system = "cmake" },
     .{ .name = "cmake-debug", .command = "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build", .system = "cmake" },
     .{ .name = "cmake-release", .command = "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build", .system = "cmake" },
@@ -116,7 +115,6 @@ const c_family_cmake_builtin_commands = [_]BuiltinCommand{
 const c_family_meson_builtin_commands = [_]BuiltinCommand{
     .{ .name = "meson-setup", .command = "meson setup build", .system = "meson" },
     .{ .name = "meson-build", .command = "meson compile -C build", .system = "meson" },
-    .{ .name = "meson-run", .command = "meson compile -C build", .system = "meson" },
     .{ .name = "meson-clean", .command = "meson compile -C build --clean", .system = "meson" },
     .{ .name = "meson-test", .command = "meson test -C build", .system = "meson" },
 };
