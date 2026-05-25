@@ -71,7 +71,6 @@ fn detectStepsWithTimeoutWithIO(
     const cache_dir = try std.fs.path.join(allocator, &.{ build_root, ".zignite-zig-cache" });
     defer allocator.free(cache_dir);
     try std.Io.Dir.cwd().createDirPath(io, cache_dir);
-    defer std.Io.Dir.cwd().deleteTree(io, cache_dir) catch {};
 
     const result = std.process.run(allocator, io, .{
         .argv = &.{ "zig", "build", "--cache-dir", cache_dir, "--global-cache-dir", cache_dir, "-l" },
