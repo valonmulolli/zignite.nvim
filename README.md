@@ -42,14 +42,12 @@ The current architecture is intentionally split:
 
 For contributors: `CONTRIBUTING.md`
 
-
 ## Installation
 
 The `build` step is required to compile the Zig backend.
 
 Example files in this repo:
 
-- `lazy_config.lua`: recommended minimal `lazy.nvim` setup
 - `example_config.lua`: full reference config with more options than most users need
 
 **Lazy.nvim**
@@ -121,9 +119,9 @@ Zignite works out of the box for 20+ languages. The block below shows the defaul
 
 ```lua
 require('zignite').setup({
-    -- Timeout in milliseconds (e.g., 5000 = 5 seconds). 
+    -- Timeout in milliseconds (e.g., 5000 = 5 seconds).
     -- If a process runs longer than this, the Zig backend will kill it.
-    timeout = nil, 
+    timeout = nil,
 
     keymaps = {
         { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
@@ -143,7 +141,7 @@ require('zignite').setup({
         close_key = "<Esc>",
         startinsert = false,      -- Float opens in normal mode by default
     },
-    
+
     spinner = "dots",             -- "dots", "line", "bar", "arrows", etc.
     enable_animations = true,     -- Show spinner in window title
     close_behavior = "stop",      -- "stop" (default) or "hide" for :RunClose / float close key
@@ -218,6 +216,7 @@ For Zig projects, the default commands also include a project-level check path:
 ```
 
 Use:
+
 - `j`/`k` (or arrow keys) to navigate
 - `Enter` to select
 - `/` to start inline filter in the same picker popup (type to filter, `Enter` apply, `Esc` cancel)
@@ -227,6 +226,7 @@ Use:
 On narrower screens the picker automatically switches to a smaller compact layout while staying in a single window. The selected command still appears on the bottom command line.
 
 To use external prompt modes instead of inline filtering, set:
+
 ```lua
 picker = {
     filter_input = "ui",      -- use vim.ui.input popup
@@ -238,6 +238,7 @@ picker = {
 
 Picker commands are built from your configured `build_commands.<filetype>` plus
 auto-detected commands when available. Detection currently covers:
+
 - tool commands for `zig`, `go`, `rust`, `c`, `cpp`, `python`, `odin`, and `fortran`
 - project commands for `Makefile`, `package.json`, Maven, Gradle, CMake, Meson, Bazel, `Cargo.toml`, `go.mod`, `go.work`, and `pyproject.toml`
 - Python project workflows for `uv`, `requirements.txt`/`pip`, and conda (`environment.yml` / `environment.yaml`)
@@ -280,6 +281,7 @@ detect_runtime = {
 - `live_merge = true`: refreshed detected commands are merged into the open picker without closing it.
 
 Python project support is intentionally limited to:
+
 - `uv`
 - `requirements.txt` / `pip`
 - conda (`environment.yml` / `environment.yaml`)
@@ -338,21 +340,23 @@ quickfix = {
 
 You can use these variables in your custom runner commands:
 
-| Variable | Description | Example |
-| :--- | :--- | :--- |
-| `$file` | Full file path | `/home/user/main.py` |
-| `$fileName` | Filename with extension | `main.py` |
-| `$fileNameWithoutExt` | Filename without extension | `main` |
-| `$dir` | Directory path | `/home/user/project` |
-| `$projectName` | Project root folder name | `my-project-cli` |
-| `$projectNameShort` | Project name without suffix | `my-project` |
+| Variable              | Description                 | Example              |
+| :-------------------- | :-------------------------- | :------------------- |
+| `$file`               | Full file path              | `/home/user/main.py` |
+| `$fileName`           | Filename with extension     | `main.py`            |
+| `$fileNameWithoutExt` | Filename without extension  | `main`               |
+| `$dir`                | Directory path              | `/home/user/project` |
+| `$projectName`        | Project root folder name    | `my-project-cli`     |
+| `$projectNameShort`   | Project name without suffix | `my-project`         |
 
 ## Troubleshooting
 
 ### "Zig executable not found"
+
 Run `zig build -Doptimize=ReleaseFast` inside the plugin's `zig/` directory manually.
 
 ### "No runner configured"
+
 The Zig backend auto-detects the correct build/run command for supported
 filetypes. If nothing appears:
 
@@ -369,11 +373,14 @@ filetypes. If nothing appears:
   ```
 
 ### Platform note
+
 Only Linux and macOS are supported. Windows is not supported and will not be.
 
 ### Odin "Redeclaration of 'main'" on `:RunFile`
+
 The Zig backend defaults to `odin run .` for project builds. If you are working
 on a single file outside of an Odin project, set a custom runner:
+
 ```lua
 runners = {
     odin = "odin run $file -file",
@@ -381,19 +388,24 @@ runners = {
 ```
 
 ### Go `:RunFile` feels slow or hangs
+
 The Zig backend picks `go run .` by default (whole-module execution). For
 single-file feedback, use `:RunFile` which uses the configured runner
 (`go run $file`). Switch to `:RunBuild run` when you want full module execution.
 
 ### `zsh: no such option: argv`
+
 Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
 
 ### `<leader>` mapping does not trigger
+
 If you define mappings via Lazy.nvim `keys`, use `{ "<lhs>", "<rhs>", mode = "n", ... }` format.  
 The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ keymaps = { ... } })`.
 
 ### Quickfix feels slow on huge error logs
+
 Tune these options first:
+
 ```lua
 quickfix = {
     processor = "auto",
@@ -405,7 +417,9 @@ quickfix = {
 ```
 
 ### Build picker refresh behavior
+
 If you prefer legacy blocking detection behavior for the picker:
+
 ```lua
 detect_runtime = {
     async_picker = false,
@@ -418,13 +432,13 @@ detect_runtime = {
 ### Run tests
 
 ```sh
-lua test/runner.lua
+lua zig/test/runner.lua
 ```
 
 ### Run the Lua frontend + integration suite
 
 ```sh
-lua test/runner.lua
+lua zig/test/runner.lua
 ```
 
 ### Run backend benchmark
@@ -437,6 +451,7 @@ zig build bench -- 10000
 ```
 
 What the benchmark covers:
+
 - direct Zig build resolution
 - direct Zig run resolution
 - selected-command materialization
@@ -447,6 +462,7 @@ What the benchmark covers:
 `bench-fast` is the quick local pass. `bench` gives a steadier baseline.
 
 The benchmark prints:
+
 - direct resolver timings (`avg/run`)
 - daemon-backed resolver timings (`avg/run`)
 - per-case throughput (`ops/s`)
