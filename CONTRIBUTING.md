@@ -19,7 +19,7 @@ Run these before committing:
 
 ```sh
 ~/.luarocks/bin/luacheck lua --codes
-lua test/runner.lua
+lua zig/test/runner.lua
 cd zig && zig build test
 ```
 
