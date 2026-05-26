@@ -207,7 +207,7 @@ end
 
 ---@return table
 function M.get_float_config()
-	local float_config = M.get_config().float
+	local float_config = M.get_config().float or {}
 	local max_width = math.max(20, vim.o.columns - 2)
 	local max_height = math.max(5, vim.o.lines - 2)
 	local width = math.floor(vim.o.columns * float_config.width)
