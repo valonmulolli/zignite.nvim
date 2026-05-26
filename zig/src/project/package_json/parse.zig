@@ -102,7 +102,7 @@ pub fn parseScripts(
     contents: []const u8,
     names: *std.ArrayList([]u8),
 ) !void {
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, contents, .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, contents, .{ .max_value_len = 1000 });
     defer parsed.deinit();
 
     const root = parsed.value;

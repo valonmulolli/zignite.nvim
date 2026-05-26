@@ -68,12 +68,8 @@ fn detectStepsWithTimeoutWithIO(
     build_root: []const u8,
     timeout_ms: ?u64,
 ) ![]Step {
-    const cache_dir = try std.fs.path.join(allocator, &.{ build_root, ".zignite-zig-cache" });
-    defer allocator.free(cache_dir);
-    try std.Io.Dir.cwd().createDirPath(io, cache_dir);
-
     const result = std.process.run(allocator, io, .{
-        .argv = &.{ "zig", "build", "--cache-dir", cache_dir, "--global-cache-dir", cache_dir, "-l" },
+        .argv = &.{ "zig", "build", "-l" },
         .cwd = .{ .path = build_root },
         .stdout_limit = .limited(256 * 1024),
         .stderr_limit = .limited(256 * 1024),
