@@ -1,4 +1,4 @@
-local frame = require("zignite.ui.common")
+local ui_common = require("zignite.ui.common")
 
 ---@type table
 local M = {}
@@ -22,7 +22,7 @@ local spinner_frames = {
 ---@param base_title string
 ---@return nil
 function M.start_title_spinner(win_id, base_title)
-	local config = frame.get_config()
+	local config = ui_common.get_config()
 	if not config.enable_animations then
 		pcall(vim.api.nvim_win_set_config, win_id, { title = " " .. base_title .. " " })
 		return
@@ -32,7 +32,7 @@ function M.start_title_spinner(win_id, base_title)
 
 	local frames = spinner_frames[config.spinner] or spinner_frames.dots
 	local frame_index = 1
-	local uv = vim.uv or vim.loop
+	local uv = vim.uv
 
 	if not uv or type(uv.new_timer) ~= "function" then
 		return
@@ -86,8 +86,8 @@ function M.set_exit_status(win_id, exit_code)
 	local title = string.format(" %s %s (Code: %d) ", icon, status_text, exit_code)
 	pcall(vim.api.nvim_win_set_config, win_id, { title = title })
 
-	local float_config = frame.get_config().float
-	local close_key = frame.format_key_for_display(float_config.close_key or "<Esc>")
+	local float_config = ui_common.get_config().float
+	local close_key = ui_common.format_key_for_display(float_config.close_key or "<Esc>")
 	local footer = string.format(" %s: close ", close_key)
 	pcall(vim.api.nvim_win_set_config, win_id, { footer = footer })
 
@@ -101,7 +101,7 @@ function M.set_exit_status(win_id, exit_code)
 	end
 	local ok_count, line_count = pcall(vim.api.nvim_buf_line_count, buf)
 	if ok_count and line_count and line_count > 0 then
-		pcall(vim.api.nvim_win_set_cursor, win_id, { line_count, 0 })
+		pcall(vim.api.nvim_win_set_cursor, win_id, { line_count, 1 })
 	end
 end
 

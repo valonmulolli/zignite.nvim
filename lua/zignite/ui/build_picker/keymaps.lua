@@ -17,8 +17,9 @@ function M.bind(opts)
 		opts.move_selection(-1)
 	end, { buffer = opts.buf, nowait = true })
 	vim.keymap.set("n", "<CR>", function()
-		if opts.selected_index() >= 1 and opts.selected_index() <= #opts.filtered_commands() then
-			opts.select_command(opts.selected_index())
+		local idx = opts.selected_index()
+		if idx >= 1 and idx <= #opts.filtered_commands() then
+			opts.select_command(idx)
 		end
 	end, { buffer = opts.buf, nowait = true })
 

@@ -13,12 +13,40 @@ function M.command_for_argument_display(display_command, value)
 	end)
 end
 
----@param selected table
----@return string
-local function get_prompt_buffer_help_line(selected)
-	return " " .. tostring(
-		selected.argument_help or "Type arguments | Enter: run | Esc: cancel | Backspace: edit"
-	) .. " "
+---@param opts table
+---@return string|nil
+local function read_inline_input(opts)
+	if type(vim.fn.getcharstr) ~= "function" then
+		return nil
+	end
+
+	local value = opts.initial or ""
+	while true do
+		if type(opts.on_change) == "function" and not opts.on_change(value) then
+			break
+		end
+
+		local ok, key = pcall(vim.fn.getcharstr)
+		if not ok or key == nil then
+			break
+		end
+		if key == "\r" or key == "\n" then
+			return value
+		end
+		if key == "\027" then
+			return nil
+		end
+
+		local key_byte = string.byte(key, 1)
+		if key == "\127" or key == "\008" then
+			value = value:sub(1, math.max(0, #value - 1))
+		elseif key == "\021" then
+			value = ""
+		elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
+			value = value .. key
+		end
+	end
+	return value
 end
 
 ---@param opts table
@@ -34,47 +62,25 @@ function M.open_filter_prompt(opts)
 	end
 
 	local function run_inline_filter()
-		if type(vim.fn.getcharstr) ~= "function" then
-			return false
-		end
-
 		local original_query = opts.get_filter_query()
-		local current_query = original_query
-		while true do
-			opts.set_filter_query(current_query)
-			opts.apply_filter()
-			if not opts.render_picker() then
-				break
-			end
-
-			local ok, key = pcall(vim.fn.getcharstr)
-			if not ok or key == nil then
-				break
-			end
-			if key == "\r" or key == "\n" then
-				break
-			end
-			if key == "\027" then
-				opts.set_filter_query(original_query)
+		local result = read_inline_input({
+			initial = original_query,
+			on_change = function(value)
+				opts.set_filter_query(value)
 				opts.apply_filter()
-				opts.render_picker()
-				return true
-			end
-
-			local key_byte = string.byte(key, 1)
-			if key == "\127" or key == "\008" then
-				current_query = current_query:sub(1, math.max(0, #current_query - 1))
-			elseif key == "\021" then
-				current_query = ""
-			elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
-				current_query = current_query .. key
-			end
+				return opts.render_picker()
+			end,
+		})
+		if result == nil then
+			opts.set_filter_query(original_query)
+			opts.apply_filter()
+			opts.render_picker()
+			return true
 		end
-
-		opts.set_filter_query(current_query)
+		opts.set_filter_query(result)
 		opts.apply_filter()
 		opts.render_picker()
-		return true
+		return result ~= nil
 	end
 
 	local function run_ui_filter()
@@ -191,51 +197,33 @@ function M.run_inline_argument_entry(opts)
 		help_text = opts.selected.argument_help,
 	})
 
-	while true do
-		opts.render_picker()
-
-		local ok, key = pcall(vim.fn.getcharstr)
-		if not ok or key == nil then
-			break
-		end
-		if key == "\r" or key == "\n" then
-			if current_value:match("^%s*$") then
-				local state = opts.get_argument_state()
-				if state then
-					state.value = ""
-					opts.set_argument_state(state)
-				end
-				current_value = ""
-				opts.render_picker()
-			else
-				opts.set_argument_state(nil)
-				opts.close_picker()
-				opts.run_build_command(opts.selected.name, opts.mode, current_value)
-				return true
-			end
-		elseif key == "\027" then
-			opts.set_argument_state(nil)
-			opts.render_picker()
-			return true
-		else
-			local key_byte = string.byte(key, 1)
-			if key == "\127" or key == "\008" then
-				current_value = current_value:sub(1, math.max(0, #current_value - 1))
-			elseif key == "\021" then
-				current_value = ""
-			elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
-				current_value = current_value .. key
-			end
+	local result = read_inline_input({
+		initial = current_value,
+		on_change = function(value)
+			current_value = value
 			local state = opts.get_argument_state()
 			if state then
-				state.value = current_value
+				state.value = value
 				opts.set_argument_state(state)
 			end
-		end
+			opts.render_picker()
+			return true
+		end,
+	})
+
+	if result == nil then
+		opts.set_argument_state(nil)
+		opts.render_picker()
+		return true
+	end
+
+	if result:match("^%s*$") then
+		return true
 	end
 
 	opts.set_argument_state(nil)
-	opts.render_picker()
+	opts.close_picker()
+	opts.run_build_command(opts.selected.name, opts.mode, result)
 	return true
 end
 

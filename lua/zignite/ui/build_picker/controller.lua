@@ -40,18 +40,6 @@ function M.open(opts)
 		other = "other",
 	}
 
-	---@param cmd table
-	---@return string
-	local function command_section(cmd)
-		return command_helpers.command_section(cmd)
-	end
-
-	---@param command_entries table[]|nil
-	---@return table[]
-	local function build_command_list(command_entries)
-		return command_helpers.normalize_command_entries(command_entries)
-	end
-
 	---@type table[]
 	local all_commands = {}
 	---@type table[]
@@ -84,7 +72,7 @@ function M.open(opts)
 	---@param preferred_name string|nil
 	---@return nil
 	local function replace_command_entries(command_entries, preferred_name)
-		all_commands = build_command_list(command_entries)
+		all_commands = command_helpers.normalize_command_entries(command_entries)
 		apply_filter()
 		if preferred_name and #filtered_commands > 0 then
 			local preferred_idx = filter_helpers.find_command_index(filtered_commands, preferred_name)
@@ -157,7 +145,7 @@ function M.open(opts)
 		filter_query = filter_query,
 		filtered_commands = filtered_commands,
 		selected_index = selected_index,
-		command_section = command_section,
+		command_section = command_helpers.command_section,
 		section_labels = section_labels,
 		command_for_display = command_for_display,
 		header_label = argument_state and argument_state.prompt or nil,
@@ -195,7 +183,7 @@ function M.open(opts)
 			filter_query = filter_query,
 			filtered_commands = filtered_commands,
 			selected_index = selected_index,
-			command_section = command_section,
+			command_section = command_helpers.command_section,
 			section_labels = section_labels,
 			command_for_display = command_for_display,
 			header_label = argument_state and argument_state.prompt or nil,
