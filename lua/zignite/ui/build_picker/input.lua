@@ -205,6 +205,7 @@ function M.run_inline_argument_entry(opts)
 					state.value = ""
 					opts.set_argument_state(state)
 				end
+				current_value = ""
 				opts.render_picker()
 			else
 				opts.set_argument_state(nil)

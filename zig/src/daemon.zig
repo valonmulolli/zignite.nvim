@@ -42,6 +42,7 @@ const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
 const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
+const FRAME_HEADER_MAX_LINE = 4096;
 var shutdown_requested = std.atomic.Value(bool).init(false);
 var signal_handlers_installed = false;
 
@@ -68,7 +69,7 @@ pub fn runWithIO(
 
     while (true) {
         if (shutdown_requested.load(.acquire)) break;
-        const maybe_line = try frame.readLineAlloc(allocator, reader, QUICKFIX_MAX_LINE);
+        const maybe_line = try frame.readLineAlloc(allocator, reader, FRAME_HEADER_MAX_LINE);
         if (maybe_line == null) break;
         const line_owned = maybe_line.?;
         defer allocator.free(line_owned);

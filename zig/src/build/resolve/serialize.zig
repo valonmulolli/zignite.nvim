@@ -392,6 +392,8 @@ fn buildPickerCommandEntries(
     var entries: std.ArrayList(PickerCommandEntryJson) = .empty;
     defer entries.deinit(allocator);
 
+    if (commands.len != meta_entries.len) return error.MismatchedEntryCount;
+
     for (commands, meta_entries) |command_entry, meta_entry| {
         if (meta_entry.hide_in_picker) continue;
         try entries.append(allocator, .{

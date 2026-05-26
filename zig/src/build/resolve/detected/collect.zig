@@ -189,9 +189,9 @@ fn substituteVariablesShellAlloc(
             file_name
         else if (std.mem.eql(u8, name, "fileNameWithoutExt") or std.mem.eql(u8, name, "FILENAMEWITHOUTEXT"))
             file_name_without_ext
-        else if (std.mem.eql(u8, name, "fileExt"))
+        else if (std.mem.eql(u8, name, "fileExt") or std.mem.eql(u8, name, "FILEEXT"))
             file_ext
-        else if (std.mem.eql(u8, name, "dirName"))
+        else if (std.mem.eql(u8, name, "dirName") or std.mem.eql(u8, name, "DIRNAME"))
             dir_name
         else
             null;

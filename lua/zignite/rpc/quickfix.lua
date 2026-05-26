@@ -171,7 +171,7 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 	---@type string[]
 	local output_lines = {}
 	local failed = false
-	local job_id = vim.fn.jobstart(cmd, {
+	local ok_job, job_id = pcall(vim.fn.jobstart, cmd, {
 		stdout_buffered = true,
 		stderr_buffered = true,
 		on_stdout = function(_, data)
@@ -190,7 +190,7 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 		end,
 	})
 
-	if type(job_id) ~= "number" or job_id <= 0 then
+	if not ok_job or type(job_id) ~= "number" or job_id <= 0 then
 		on_fallback()
 		return
 	end
