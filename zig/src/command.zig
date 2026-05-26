@@ -112,7 +112,9 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
         return;
     }
 
-    ctx.child_ptr.kill(io);
+    ctx.child_ptr.kill(io) catch |err| {
+        std.log.err("Failed to kill timed-out process: {}", .{err});
+    };
 
     var stderr_buffer: [128]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);

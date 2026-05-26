@@ -356,9 +356,13 @@ end
 ---@param mode string|nil
 ---@return nil
 function M.show_output(message, mode)
+	local config = ui_common.get_config()
+	if config.singleton then
+		M.close_output(true)
+	end
+
 	local text = type(message) == "string" and message or tostring(message)
 	local level = text:match("^Error:") and vim.log.levels.ERROR or vim.log.levels.WARN
-	local config = ui_common.get_config()
 	local resolved_mode = ui_common.normalize_mode(mode)
 	local lines = ui_common.split_text_lines(text)
 

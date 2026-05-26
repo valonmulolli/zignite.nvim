@@ -166,7 +166,7 @@ fn shebangFiletypeAllocWithIO(io: std.Io, allocator: std.mem.Allocator, filepath
     var file = std.Io.Dir.cwd().openFile(io, filepath, .{}) catch return null;
     defer file.close(io);
 
-    var reader_buf: [1]u8 = undefined;
+    var reader_buf: [256]u8 = undefined;
     var file_reader = file.reader(io, &reader_buf);
     var buffer: [256]u8 = undefined;
     const bytes_read = file_reader.interface.readSliceShort(buffer[0..]) catch return file_reader.err.?;

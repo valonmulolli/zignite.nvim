@@ -133,6 +133,9 @@ local quickfix_client = backend_client.new({
 	protocol = QUICKFIX_PROTOCOL,
 	request_timeout_ms = QUICKFIX_WORKER_REQUEST_TIMEOUT_MS,
 	build_worker_payload = build_worker_payload,
+	build_once_argv = function(_)
+		return nil
+	end,
 })
 
 ---@param lines string[]
