@@ -67,7 +67,7 @@ pub fn runWithIO(
     defer shutdown_requested.store(false, .seq_cst);
 
     while (true) {
-        if (shutdown_requested.load(.seq_cst)) break;
+        if (shutdown_requested.load(.acquire)) break;
         const maybe_line = try frame.readLineAlloc(allocator, reader, QUICKFIX_MAX_LINE);
         if (maybe_line == null) break;
         const line_owned = maybe_line.?;
@@ -207,7 +207,7 @@ fn installShutdownSignalHandlers() void {
 }
 
 fn handleShutdownSignal(_: std.posix.SIG) callconv(.c) void {
-    shutdown_requested.store(true, .seq_cst);
+    shutdown_requested.store(true, .release);
 }
 
 const TestReader = struct {

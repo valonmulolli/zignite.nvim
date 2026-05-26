@@ -101,10 +101,7 @@ function M.run_code(range, mode)
 	ensure_config()
 
 	local buffer_path, filetype = resolve_current_source_context()
-	local current_buf = 0
-	if type(vim.api) == "table" and type(vim.api.nvim_get_current_buf) == "function" then
-		current_buf = tonumber(vim.api.nvim_get_current_buf()) or 0
-	end
+	local current_buf = tonumber(vim.api.nvim_get_current_buf()) or 0
 
 	local request = {
 		path = buffer_path,

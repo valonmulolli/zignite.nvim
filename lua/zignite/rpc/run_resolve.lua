@@ -189,6 +189,9 @@ function M.resolve_sync_request(params)
 	local filetype = type(params) == "table" and params.filetype or nil
 	local selection_text = type(params) == "table" and params.selection_text or nil
 	local has_inline_source = type(selection_text) == "string" and selection_text ~= ""
+	if filetype == nil or filetype == "" then
+		return failed_resolution(filetype or "", "Cannot resolve runner: unknown filetype. Save the buffer to a file first.", "unknown_filetype")
+	end
 	if not can_use_backend_run_resolve(filepath, has_inline_source) then
 		return failed_resolution(
 			filetype,

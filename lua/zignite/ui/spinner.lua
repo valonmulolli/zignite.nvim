@@ -15,6 +15,7 @@ local spinner_frames = {
 	triangle = { "◢", "◣", "◤", "◥" },
 	square = { "◰", "◳", "◲", "◱" },
 	circle = { "◐", "◓", "◑", "◒" },
+	dots2 = { "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" },
 }
 
 ---@param win_id integer
