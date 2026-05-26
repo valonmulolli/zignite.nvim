@@ -127,6 +127,19 @@ fn collectSystemOutputWithIO(
     const result = try build_system.detectWithIO(io, allocator, query.?, options.path, options.project_root);
     defer build_system.freeOwnedResult(allocator, result);
 
+    if (result.system != null) {
+        return try output.resolvedOutputFromSystemResult(allocator, result);
+    }
+
+    if (build_system.Query.bazel_root != query.?) {
+        const fallback = try build_system.detectWithIO(io, allocator, .bazel_root, options.path, options.project_root);
+        defer build_system.freeOwnedResult(allocator, fallback);
+
+        if (fallback.system != null) {
+            return try output.resolvedOutputFromSystemResult(allocator, fallback);
+        }
+    }
+
     return try output.resolvedOutputFromSystemResult(allocator, result);
 }
 
