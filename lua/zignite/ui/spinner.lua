@@ -95,9 +95,12 @@ function M.set_exit_status(win_id, exit_code)
 		or (float_config.border_hl_error or "DiagnosticError")
 	pcall(vim.api.nvim_set_option_value, "winhl", "Normal:Normal,FloatBorder:" .. new_border_hl, { win = win_id })
 
-	local buf = vim.api.nvim_win_get_buf(win_id)
-	local line_count = vim.api.nvim_buf_line_count(buf)
-	if line_count > 0 then
+	local buf = pcall(vim.api.nvim_win_get_buf, win_id)
+	if not buf then
+		return
+	end
+	local ok_count, line_count = pcall(vim.api.nvim_buf_line_count, buf)
+	if ok_count and line_count and line_count > 0 then
 		pcall(vim.api.nvim_win_set_cursor, win_id, { line_count, 0 })
 	end
 end

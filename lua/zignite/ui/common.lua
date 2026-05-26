@@ -210,12 +210,16 @@ function M.get_float_config()
 	local float_config = M.get_config().float or {}
 	local max_width = math.max(20, vim.o.columns - 2)
 	local max_height = math.max(5, vim.o.lines - 2)
-	local width = math.floor(vim.o.columns * float_config.width)
-	local height = math.floor(vim.o.lines * float_config.height)
+	local float_width = type(float_config.width) == "number" and float_config.width or 0.8
+	local float_height = type(float_config.height) == "number" and float_config.height or 0.8
+	local float_x = type(float_config.x) == "number" and float_config.x or 0.5
+	local float_y = type(float_config.y) == "number" and float_config.y or 0.5
+	local width = math.floor(vim.o.columns * float_width)
+	local height = math.floor(vim.o.lines * float_height)
 	width = math.max(20, math.min(width, max_width))
 	height = math.max(5, math.min(height, max_height))
-	local col = math.floor((vim.o.columns - width) * float_config.x)
-	local row = math.floor((vim.o.lines - height) * float_config.y)
+	local col = math.floor((vim.o.columns - width) * float_x)
+	local row = math.floor((vim.o.lines - height) * float_y)
 
 	return {
 		relative = "editor",
