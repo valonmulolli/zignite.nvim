@@ -77,7 +77,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
 
     const term = try child.wait(io);
     stopTimeoutWatcher(io, &finished, &timeout_future);
-    try runCleanup(io, cleanup_command);
+    runCleanup(io, cleanup_command);
     std.process.exit(termToExitCode(term));
 }
 
@@ -122,7 +122,7 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
     stderr_writer.interface.flush() catch {};
 }
 
-fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) !void {
+fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
     const cleanup = cleanup_command orelse return;
     if (std.mem.trim(u8, cleanup, " \t\r\n").len == 0) return;
 
@@ -140,6 +140,19 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) !void {
         std.log.warn("Failed to spawn cleanup command: {}", .{err});
         return;
     };
+
+    var finished = std.atomic.Value(bool).init(false);
+    var context = TimeoutContext{
+        .child_ptr = &child,
+        .duration = 30000,
+        .finished = &finished,
+    };
+    var timeout_future = io.async(timeoutWatcher, .{ io, &context });
+    defer {
+        finished.store(true, .release);
+        _ = timeout_future.cancel(io);
+    }
+
     _ = child.wait(io) catch |err| {
         std.log.warn("Failed to wait for cleanup command: {}", .{err});
     };

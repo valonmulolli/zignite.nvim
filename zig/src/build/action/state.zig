@@ -18,7 +18,10 @@ pub fn getLastCommand(
 ) !?[]const u8 {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    try ensureLoadedLocked(io, allocator, environ_map);
+    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
+        std.log.warn("Failed to load build action state: {}", .{err});
+        return null;
+    };
 
     for (last_commands.items) |entry| {
         if (std.mem.eql(u8, entry.filetype, filetype)) return entry.command_name;
@@ -35,14 +38,19 @@ pub fn setLastCommand(
 ) !void {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    try ensureLoadedLocked(io, allocator, environ_map);
+    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
+        std.log.warn("Failed to load build action state for write: {}", .{err});
+        return;
+    };
 
     for (last_commands.items) |*entry| {
         if (!std.mem.eql(u8, entry.filetype, filetype)) continue;
         const owned_command_name = try state_allocator.dupe(u8, command_name);
         state_allocator.free(entry.command_name);
         entry.command_name = owned_command_name;
-        try persistLocked(io, allocator, environ_map);
+        persistLocked(io, allocator, environ_map) catch |err| {
+            std.log.warn("Failed to persist build action state: {}", .{err});
+        };
         return;
     }
 
@@ -54,7 +62,9 @@ pub fn setLastCommand(
         .filetype = owned_filetype,
         .command_name = owned_command_name,
     });
-    try persistLocked(io, allocator, environ_map);
+    persistLocked(io, allocator, environ_map) catch |err| {
+        std.log.warn("Failed to persist build action state: {}", .{err});
+    };
 }
 
 pub fn clearLastCommand(
