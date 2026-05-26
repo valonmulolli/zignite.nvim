@@ -112,14 +112,16 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
         return;
     }
 
-    ctx.child_ptr.kill(io) catch |err| {
-        std.log.err("Failed to kill timed-out process: {}", .{err});
-    };
+    ctx.child_ptr.kill(io);
 
     var stderr_buffer: [128]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
-    stderr_writer.interface.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration}) catch {};
-    stderr_writer.interface.flush() catch {};
+    stderr_writer.interface.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration}) catch |w_err| {
+        std.log.err("Failed to print timeout message: {}", .{w_err});
+    };
+    stderr_writer.interface.flush() catch |f_err| {
+        std.log.err("Failed to flush timeout message: {}", .{f_err});
+    };
 }
 
 fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
