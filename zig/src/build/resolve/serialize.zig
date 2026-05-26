@@ -65,17 +65,23 @@ pub fn writeResolvedOutputLegacyHeader(
         try stdout.print("MESSAGE\tNo build commands available for filetype: {s}\n", .{filetype});
     }
     if (parsed_output.root) |root| {
-        try stdout.print("ROOT\t{s}\n", .{root});
+        if (!common.hasControlChars(root)) {
+            try stdout.print("ROOT\t{s}\n", .{root});
+        }
     }
     try stdout.print("FILETYPE\t{s}\n", .{filetype});
     if (parsed_output.system) |system| {
-        try stdout.print("SYSTEM\t{s}\n", .{system});
+        if (!common.hasControlChars(system)) {
+            try stdout.print("SYSTEM\t{s}\n", .{system});
+        }
     }
     if (parsed_output.build_ready) |ready| {
         try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
     }
     if (last_command_name) |name| {
-        try stdout.print("LAST_COMMAND_NAME\t{s}\n", .{name});
+        if (!common.hasControlChars(name)) {
+            try stdout.print("LAST_COMMAND_NAME\t{s}\n", .{name});
+        }
     }
     try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
 }
@@ -118,13 +124,16 @@ pub fn writeResolvedCommandOutputJson(
     resolved_command: []const u8,
     argv: []const []u8,
 ) !void {
+    const display_name = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ resolved_filetype, command_name });
+    defer allocator.free(display_name);
+
     var json_out: std.Io.Writer.Allocating = .init(allocator);
     defer json_out.deinit();
 
     const payload = BuildResolvedCommandJson{
         .filetype = resolved_filetype,
         .cwd = cwd,
-        .name = command_name,
+        .name = display_name,
         .exec_command = resolved_command,
         .exec_argv = argv,
         .config_revision = config.getSyncedRevision(),
@@ -141,12 +150,22 @@ pub fn writeResolvedCommandOutputLegacy(
     resolved_command: []const u8,
     argv: []const []u8,
 ) !void {
-    try stdout.print("FILETYPE\t{s}\n", .{resolved_filetype});
-    try stdout.print("CWD\t{s}\n", .{cwd});
-    try stdout.print("NAME\t{s}: {s}\n", .{ resolved_filetype, command_name });
-    try stdout.print("EXEC_COMMAND\t{s}\n", .{resolved_command});
+    if (!common.hasControlChars(resolved_filetype)) {
+        try stdout.print("FILETYPE\t{s}\n", .{resolved_filetype});
+    }
+    if (!common.hasControlChars(cwd)) {
+        try stdout.print("CWD\t{s}\n", .{cwd});
+    }
+    if (!common.hasControlChars(resolved_filetype) and !common.hasControlChars(command_name)) {
+        try stdout.print("NAME\t{s}: {s}\n", .{ resolved_filetype, command_name });
+    }
+    if (!common.hasControlChars(resolved_command)) {
+        try stdout.print("EXEC_COMMAND\t{s}\n", .{resolved_command});
+    }
     for (argv) |arg| {
-        try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
+        if (!common.hasControlChars(arg)) {
+            try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
+        }
     }
     try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
 }
@@ -166,7 +185,7 @@ const BuildResolvedCommandJson = struct {
         try jw.objectField("cwd");
         try jw.write(self.cwd);
         try jw.objectField("name");
-        try jw.print("{s}: {s}", .{ self.filetype, self.name });
+        try jw.write(self.name);
         try jw.objectField("exec_command");
         try jw.write(self.exec_command);
         try jw.objectField("exec_argv");
