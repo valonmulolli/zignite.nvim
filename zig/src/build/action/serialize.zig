@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../../project/core/common.zig");
 const system_command = @import("../../system_command.zig");
 const plan_impl = @import("plan.zig");
 const types = @import("types.zig");
@@ -44,34 +45,52 @@ fn writePlanLegacy(stdout: anytype, plan: types.Plan) !void {
         try stdout.print("REASON\t{s}\n", .{@tagName(reason)});
     }
     if (plan.message) |message| {
-        try stdout.print("MESSAGE\t{s}\n", .{message});
+        if (!common.hasControlChars(message)) {
+            try stdout.print("MESSAGE\t{s}\n", .{message});
+        }
     }
     if (plan.resolved_command_name) |name| {
-        try stdout.print("COMMAND_NAME\t{s}\n", .{name});
+        if (!common.hasControlChars(name)) {
+            try stdout.print("COMMAND_NAME\t{s}\n", .{name});
+        }
     }
     if (plan.requires_arguments) {
         try stdout.print("REQUIRES_ARGUMENTS\t1\n", .{});
     }
     if (plan.argument_prompt) |prompt| {
-        try stdout.print("ARGUMENT_PROMPT\t{s}\n", .{prompt});
+        if (!common.hasControlChars(prompt)) {
+            try stdout.print("ARGUMENT_PROMPT\t{s}\n", .{prompt});
+        }
     }
     if (plan.argument_help) |help| {
-        try stdout.print("ARGUMENT_HELP\t{s}\n", .{help});
+        if (!common.hasControlChars(help)) {
+            try stdout.print("ARGUMENT_HELP\t{s}\n", .{help});
+        }
     }
     if (plan.filetype) |filetype| {
-        try stdout.print("FILETYPE\t{s}\n", .{filetype});
+        if (!common.hasControlChars(filetype)) {
+            try stdout.print("FILETYPE\t{s}\n", .{filetype});
+        }
     }
     if (plan.cwd) |cwd| {
-        try stdout.print("CWD\t{s}\n", .{cwd});
+        if (!common.hasControlChars(cwd)) {
+            try stdout.print("CWD\t{s}\n", .{cwd});
+        }
     }
     if (plan.name) |name| {
-        try stdout.print("NAME\t{s}\n", .{name});
+        if (!common.hasControlChars(name)) {
+            try stdout.print("NAME\t{s}\n", .{name});
+        }
     }
     if (plan.exec_command) |command_text| {
-        try stdout.print("EXEC_COMMAND\t{s}\n", .{command_text});
+        if (!common.hasControlChars(command_text)) {
+            try stdout.print("EXEC_COMMAND\t{s}\n", .{command_text});
+        }
     }
     for (plan.exec_argv.items) |arg| {
-        try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
+        if (!common.hasControlChars(arg)) {
+            try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
+        }
     }
     try stdout.print("CONFIG_REVISION\t{d}\n", .{plan.config_revision});
 }

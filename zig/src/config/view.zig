@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 const filetype_policy = @import("../filetype_policy.zig");
 const store = @import("store.zig");
 
@@ -133,6 +134,11 @@ pub fn listBuildCommands(
             allocator.free(owned_name);
             return err;
         };
+        if (common.hasControlChars(owned_name) or common.hasControlChars(owned_command)) {
+            allocator.free(owned_name);
+            allocator.free(owned_command);
+            continue;
+        }
         commands.append(allocator, .{
             .name = owned_name,
             .command = owned_command,
