@@ -75,7 +75,10 @@ pub fn clearLastCommand(
 ) void {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    ensureLoadedLocked(io, allocator, environ_map) catch return;
+    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
+        std.log.warn("Failed to load build action state for clear: {}", .{err});
+        return;
+    };
 
     var index: usize = 0;
     while (index < last_commands.items.len) : (index += 1) {
@@ -85,7 +88,9 @@ pub fn clearLastCommand(
         state_allocator.free(entry.filetype);
         state_allocator.free(entry.command_name);
         _ = last_commands.swapRemove(index);
-        persistLocked(io, allocator, environ_map) catch {};
+        persistLocked(io, allocator, environ_map) catch |err| {
+            std.log.warn("Failed to persist cleared build action state: {}", .{err});
+        };
         return;
     }
 }

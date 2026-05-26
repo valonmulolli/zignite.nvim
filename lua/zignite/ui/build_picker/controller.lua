@@ -208,16 +208,19 @@ function M.open(opts)
 			) or nil,
 		})
 		command_lines = updated_command_lines
+		if not pcall(vim.api.nvim_win_is_valid, win) or not pcall(vim.api.nvim_buf_is_valid, buf) then
+			return
+		end
 		if vim.api.nvim_win_set_config then
 			vim.api.nvim_win_set_config(win, updated_win_opts)
 		end
-		vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, updated_lines)
-		vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+		pcall(vim.api.nvim_set_option_value, "modifiable", true, { buf = buf })
+		pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, updated_lines)
+		pcall(vim.api.nvim_set_option_value, "modifiable", false, { buf = buf })
 
-		vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
+		pcall(vim.api.nvim_buf_clear_namespace, buf, ns_id, 0, -1)
 		if argument_state ~= nil then
-			vim.api.nvim_win_set_cursor(win, { 2, 0 })
+			pcall(vim.api.nvim_win_set_cursor, win, { 2, 0 })
 			return
 		end
 		if #filtered_commands == 0 or selected_index < 1 then
@@ -225,8 +228,8 @@ function M.open(opts)
 		end
 
 		local cursor_line = command_lines[selected_index] or 2
-		vim.api.nvim_win_set_cursor(win, { cursor_line, 0 })
-		vim.api.nvim_buf_set_extmark(buf, ns_id, cursor_line - 1, 0, {
+		pcall(vim.api.nvim_win_set_cursor, win, { cursor_line, 0 })
+		pcall(vim.api.nvim_buf_set_extmark, buf, ns_id, cursor_line - 1, 0, {
 			virt_text = { { "▶ ", "Special" } },
 			virt_text_pos = "overlay",
 		})

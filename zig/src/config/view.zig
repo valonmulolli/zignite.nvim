@@ -48,8 +48,9 @@ fn rootObject() ?std.json.ObjectMap {
 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-        const parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), raw, .{}) catch {
+        const parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), raw, .{}) catch |err| {
             arena.deinit();
+            std.log.warn("Failed to parse synced config JSON: {}", .{err});
             return null;
         };
 
