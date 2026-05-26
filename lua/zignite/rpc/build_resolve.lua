@@ -47,58 +47,48 @@ local function failed_build_resolution(filetype, message, reason)
 	}
 end
 
----@param filetype string|nil
----@param message string|nil
----@param reason string|nil
----@return table
-local function failed_action_resolution(filetype, message, reason)
-	return {
-		ok = false,
-		reason = reason or "backend_unavailable",
-		filetype = type(filetype) == "string" and filetype or "",
-		message = message,
-	}
+---@param params table
+---@return { path: string|nil, filetype: string|nil, extras: {name:string,value:string|nil}[] }
+local function unpack_build_params(params)
+	local p = type(params) == "table" and params or {}
+	local extras = {}
+	if p.command_name then extras[#extras + 1] = { name = "command-name", value = p.command_name } end
+	if p.command_args then extras[#extras + 1] = { name = "command-args", value = p.command_args } end
+	if p.action then extras[#extras + 1] = { name = "action", value = p.action } end
+	return { path = p.path, filetype = p.filetype, extras = extras }
 end
 
+---@param req_begin string
+---@param req_end string
+---@param backend_flag string
 ---@param request_id integer
 ---@param params table
 ---@return string|nil
-local function build_worker_payload(request_id, params)
-	local filepath = type(params) == "table" and params.path or nil
-	local filetype = type(params) == "table" and params.filetype or nil
-	local command_name = type(params) == "table" and params.command_name or nil
-	local command_args = type(params) == "table" and params.command_args or nil
+local function compose_worker_payload(req_begin, req_end, backend_flag, request_id, params)
+	local p = unpack_build_params(params)
 	return common_path_request.compose_worker_payload(
-		BUILD_RESOLVE_REQ_BEGIN,
-		BUILD_RESOLVE_REQ_END,
+		req_begin,
+		req_end,
 		request_id,
-		"--build-resolve",
-		filepath,
-		filetype,
-		{
-			{ name = "command-name", value = command_name },
-			{ name = "command-args", value = command_args },
-		},
+		backend_flag,
+		p.path,
+		p.filetype,
+		p.extras,
 		input_guard.contains_control_characters
 	)
 end
 
+---@param backend_flag string
 ---@param params table
 ---@return string[]|nil
-local function build_once_argv(params)
-	local filepath = type(params) == "table" and params.path or nil
-	local filetype = type(params) == "table" and params.filetype or nil
-	local command_name = type(params) == "table" and params.command_name or nil
-	local command_args = type(params) == "table" and params.command_args or nil
+local function compose_once_argv(backend_flag, params)
+	local p = unpack_build_params(params)
 	return common_path_request.compose_once_argv(
 		backend_client.ZIG_EXECUTABLE,
-		"--build-resolve",
-		filepath,
-		filetype,
-		{
-			{ name = "command-name", value = command_name },
-			{ name = "command-args", value = command_args },
-		},
+		backend_flag,
+		p.path,
+		p.filetype,
+		p.extras,
 		input_guard.contains_control_characters
 	)
 end
@@ -110,56 +100,13 @@ local resolve_client = backend_client.new({
 	worker_wait_ms = BUILD_RESOLVE_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_RESOLVE_ASYNC_TIMEOUT_MS,
 	reset_on_sync_timeout = true,
-	build_worker_payload = build_worker_payload,
-	build_once_argv = build_once_argv,
+	build_worker_payload = function(request_id, params)
+		return compose_worker_payload(BUILD_RESOLVE_REQ_BEGIN, BUILD_RESOLVE_REQ_END, "--build-resolve", request_id, params)
+	end,
+	build_once_argv = function(params)
+		return compose_once_argv("--build-resolve", params)
+	end,
 })
-
----@param request_id integer
----@param params table
----@return string|nil
-local function build_action_worker_payload(request_id, params)
-	local filepath = type(params) == "table" and params.path or nil
-	local filetype = type(params) == "table" and params.filetype or nil
-	local action = type(params) == "table" and params.action or nil
-	local command_name = type(params) == "table" and params.command_name or nil
-	local command_args = type(params) == "table" and params.command_args or nil
-	return common_path_request.compose_worker_payload(
-		BUILD_ACTION_REQ_BEGIN,
-		BUILD_ACTION_REQ_END,
-		request_id,
-		"--build-action",
-		filepath,
-		filetype,
-		{
-			{ name = "action", value = action },
-			{ name = "command-name", value = command_name },
-			{ name = "command-args", value = command_args },
-		},
-		input_guard.contains_control_characters
-	)
-end
-
----@param params table
----@return string[]|nil
-local function build_action_once_argv(params)
-	local filepath = type(params) == "table" and params.path or nil
-	local filetype = type(params) == "table" and params.filetype or nil
-	local action = type(params) == "table" and params.action or nil
-	local command_name = type(params) == "table" and params.command_name or nil
-	local command_args = type(params) == "table" and params.command_args or nil
-	return common_path_request.compose_once_argv(
-		backend_client.ZIG_EXECUTABLE,
-		"--build-action",
-		filepath,
-		filetype,
-		{
-			{ name = "action", value = action },
-			{ name = "command-name", value = command_name },
-			{ name = "command-args", value = command_args },
-		},
-		input_guard.contains_control_characters
-	)
-end
 
 local action_client = backend_client.new({
 	executable = backend_client.ZIG_EXECUTABLE,
@@ -168,8 +115,12 @@ local action_client = backend_client.new({
 	worker_wait_ms = BUILD_ACTION_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_ACTION_ASYNC_TIMEOUT_MS,
 	reset_on_sync_timeout = true,
-	build_worker_payload = build_action_worker_payload,
-	build_once_argv = build_action_once_argv,
+	build_worker_payload = function(request_id, params)
+		return compose_worker_payload(BUILD_ACTION_REQ_BEGIN, BUILD_ACTION_REQ_END, "--build-action", request_id, params)
+	end,
+	build_once_argv = function(params)
+		return compose_once_argv("--build-action", params)
+	end,
 })
 
 ---@param resolved table|nil
@@ -232,7 +183,7 @@ end
 ---@return table|nil
 function M.resolve_action_sync(filepath, filetype, action, command_name, command_args)
 	if not config_sync.ensure_current() then
-		return failed_action_resolution(
+		return failed_build_resolution(
 			filetype,
 			string.format("Failed to resolve build action for %s.", tostring(filetype or "")),
 			"config_sync_failed"
@@ -252,7 +203,7 @@ function M.resolve_action_sync(filepath, filetype, action, command_name, command
 		command_args = command_args,
 	})
 	if type(lines) ~= "table" then
-		return failed_action_resolution(
+		return failed_build_resolution(
 			filetype,
 			string.format("Failed to resolve build action for %s. Backend unavailable or timed out.", tostring(filetype or "")),
 			"backend_unavailable"
@@ -260,7 +211,7 @@ function M.resolve_action_sync(filepath, filetype, action, command_name, command
 	end
 	local resolved = json_result.decode(lines)
 	if type(resolved) ~= "table" then
-		return failed_action_resolution(
+		return failed_build_resolution(
 			filetype,
 			string.format("Failed to resolve build action for %s.", tostring(filetype or "")),
 			"invalid_backend_response"
@@ -291,7 +242,7 @@ function M.resolve_action_interactive(filepath, filetype, action, command_name, 
 	local plan = resolve_with_args(provided_args)
 	if plan.requires_arguments == true then
 		if type(prompt_args) ~= "function" then
-			return failed_action_resolution(
+			return failed_build_resolution(
 				filetype,
 				string.format("Failed to collect required arguments for build action in %s.", tostring(filetype or "")),
 				"prompt_unavailable"
@@ -299,7 +250,7 @@ function M.resolve_action_interactive(filepath, filetype, action, command_name, 
 		end
 		local command_args = prompt_args(plan, provided_args)
 		if command_args == false or command_args == nil then
-			return failed_action_resolution(
+			return failed_build_resolution(
 				filetype,
 				nil,
 				"cancelled"
@@ -311,78 +262,69 @@ function M.resolve_action_interactive(filepath, filetype, action, command_name, 
 	return plan
 end
 
+---@param filetype string
+---@param reason string
+---@return table
+local function build_resolve_failure(filetype, reason)
+	local messages = {
+		config_sync_failed = "Failed to resolve build commands for %s.",
+		backend_unavailable = "Failed to resolve build commands for %s. Backend unavailable or timed out.",
+		invalid_backend_response = "Failed to resolve build commands for %s.",
+	}
+	return normalize_resolved_output(failed_build_resolution(
+		filetype,
+		string.format(messages[reason] or "Failed to resolve build commands for %s.", tostring(filetype or "")),
+		reason
+	))
+end
+
+---@param lines string[]|nil
+---@param filetype string
+---@param on_done fun(result: table):nil
+---@return boolean
+local function handle_resolve_lines(lines, filetype, on_done)
+	if type(lines) ~= "table" then
+		on_done(build_resolve_failure(filetype, "backend_unavailable"))
+		return false
+	end
+	local resolved = json_result.decode(lines)
+	if type(resolved) ~= "table" then
+		on_done(build_resolve_failure(filetype, "invalid_backend_response"))
+		return false
+	end
+	on_done(normalize_resolved_output(resolved))
+	return true
+end
+
 ---@param filepath string
 ---@param filetype string
 ---@param on_done fun(result: table|nil):nil
 ---@return boolean
 function M.resolve_async(filepath, filetype, on_done)
 	if not config_sync.ensure_current() then
-		on_done(normalize_resolved_output(failed_build_resolution(
-			filetype,
-			string.format("Failed to resolve build commands for %s.", tostring(filetype or "")),
-			"config_sync_failed"
-		)))
+		on_done(build_resolve_failure(filetype, "config_sync_failed"))
 		return false
 	end
-	local started = resolve_client.async_request({
+	if resolve_client.async_request({
 		path = filepath,
 		filetype = filetype,
 	}, function(lines)
-		if type(lines) ~= "table" then
-			on_done(normalize_resolved_output(failed_build_resolution(
-				filetype,
-				string.format("Failed to resolve build commands for %s. Backend unavailable or timed out.", tostring(filetype or "")),
-				"backend_unavailable"
-			)))
-			return
-		end
-		local resolved = json_result.decode(lines)
-		if type(resolved) ~= "table" then
-			on_done(normalize_resolved_output(failed_build_resolution(
-				filetype,
-				string.format("Failed to resolve build commands for %s.", tostring(filetype or "")),
-				"invalid_backend_response"
-			)))
-			return
-		end
-		on_done(normalize_resolved_output(resolved))
-	end)
-	if started then
+		handle_resolve_lines(lines, filetype, on_done)
+	end) then
 		return true
 	end
 
-	started = resolve_client.once_request_async({
+	if resolve_client.once_request_async({
 		path = filepath,
 		filetype = filetype,
 	}, function(lines)
-		if type(lines) ~= "table" then
-			on_done(normalize_resolved_output(failed_build_resolution(
-				filetype,
-				string.format("Failed to resolve build commands for %s. Backend unavailable or timed out.", tostring(filetype or "")),
-				"backend_unavailable"
-			)))
-			return
-		end
-		local resolved = json_result.decode(lines)
-		if type(resolved) ~= "table" then
-			on_done(normalize_resolved_output(failed_build_resolution(
-				filetype,
-				string.format("Failed to resolve build commands for %s.", tostring(filetype or "")),
-				"invalid_backend_response"
-			)))
-			return
-		end
-		on_done(normalize_resolved_output(resolved))
-	end)
-	if not started then
-		on_done(normalize_resolved_output(failed_build_resolution(
-			filetype,
-			string.format("Failed to resolve build commands for %s. Backend unavailable or timed out.", tostring(filetype or "")),
-			"backend_unavailable"
-		)))
-		return false
+		handle_resolve_lines(lines, filetype, on_done)
+	end) then
+		return true
 	end
-	return true
+
+	on_done(build_resolve_failure(filetype, "backend_unavailable"))
+	return false
 end
 
 ---@param filepath string

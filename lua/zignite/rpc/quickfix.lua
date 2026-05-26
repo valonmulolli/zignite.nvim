@@ -141,7 +141,7 @@ local quickfix_client = backend_client.new({
 ---@param lines string[]
 ---@param force_truncated boolean
 ---@return string[]
-local function with_truncation_notice(lines, force_truncated)
+function M.with_truncation_notice(lines, force_truncated)
 	if not force_truncated or lines[1] == "[zignite] quickfix output truncated" then
 		return lines
 	end
@@ -182,7 +182,7 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 				return
 			end
 			if exit_code == 0 then
-				on_success(with_truncation_notice(output_lines, force_truncated))
+				on_success(M.with_truncation_notice(output_lines, force_truncated))
 				return
 			end
 			failed = true
@@ -234,7 +234,7 @@ local function run_worker(raw_lines, flags, force_truncated, on_success, on_fall
 			on_fallback()
 			return
 		end
-		on_success(with_truncation_notice(lines, force_truncated))
+		on_success(M.with_truncation_notice(lines, force_truncated))
 	end)
 end
 

@@ -4,9 +4,36 @@ if vim.g.loaded_zignite then
 end
 vim.g.loaded_zignite = true
 
+local VALID_MODES = { "float", "tab", "split", "vsplit" }
+
 ---@return table
 local function zignite()
 	return require("zignite.init")
+end
+
+---@param mode string|nil
+---@return string|nil
+local function normalize_mode(mode)
+	if mode and vim.tbl_contains(VALID_MODES, mode) then
+		return mode
+	end
+	return nil
+end
+
+---@param mode string|nil
+---@return string|nil
+local function parse_mode(fargs, offset)
+	local mode = fargs and fargs[offset or 1]
+	if mode and vim.tbl_contains(VALID_MODES, mode) then
+		return mode
+	end
+	return nil
+end
+
+---@param mode string
+---@return nil
+local function notify_invalid_mode(mode)
+	vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
 end
 
 ---@return string[]
@@ -30,36 +57,20 @@ end
 
 -- Create the :RunCode user command for visual selection
 vim.api.nvim_create_user_command("RunCode", function(opts)
-	local mode = nil
-	if opts.fargs[1] then
-		local valid_modes = { "float", "tab", "split", "vsplit" }
-		if vim.tbl_contains(valid_modes, opts.fargs[1]) then
-			mode = opts.fargs[1]
-		else
-			vim.notify(
-				"Invalid mode: " .. opts.fargs[1] .. ". Valid modes: float, tab, split, vsplit",
-				vim.log.levels.ERROR
-			)
-			return
-		end
+	local mode = normalize_mode(opts.fargs[1])
+	if opts.fargs[1] and not mode then
+		notify_invalid_mode(opts.fargs[1])
+		return
 	end
 	zignite().run_code(opts.range, mode)
 end, { range = true, nargs = "?" })
 
 -- Create the :RunFile user command with optional mode
 vim.api.nvim_create_user_command("RunFile", function(opts)
-	local mode = nil
-	if opts.fargs[1] then
-		local valid_modes = { "float", "tab", "split", "vsplit" }
-		if vim.tbl_contains(valid_modes, opts.fargs[1]) then
-			mode = opts.fargs[1]
-		else
-			vim.notify(
-				"Invalid mode: " .. opts.fargs[1] .. ". Valid modes: float, tab, split, vsplit",
-				vim.log.levels.ERROR
-			)
-			return
-		end
+	local mode = normalize_mode(opts.fargs[1])
+	if opts.fargs[1] and not mode then
+		notify_invalid_mode(opts.fargs[1])
+		return
 	end
 	zignite().run_code(0, mode)
 end, { nargs = "?" })
@@ -89,8 +100,10 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 		return
 	end
 
-	if opts.fargs[2] and vim.tbl_contains({ "float", "tab", "split", "vsplit" }, opts.fargs[2]) then
-		mode = opts.fargs[2]
+	mode = parse_mode(opts.fargs, 2)
+	if opts.fargs[2] and not mode then
+		args_start = 2
+	elseif mode then
 		args_start = 3
 	end
 
@@ -121,7 +134,7 @@ end, {
 
 		local commands = {}
 		for _, cmd_name in ipairs(build_cmds) do
-			if ArgLead == "" or cmd_name:sub(1, #ArgLead) == ArgLead then
+			if ArgLead == "" or vim.startswith(cmd_name, ArgLead) then
 				table.insert(commands, cmd_name)
 			end
 		end
@@ -130,10 +143,9 @@ end, {
 })
 
 vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
-	local mode = opts.fargs[1]
-
-	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
-		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
+	local mode = normalize_mode(opts.fargs[1])
+	if opts.fargs[1] and not mode then
+		notify_invalid_mode(opts.fargs[1])
 		return
 	end
 
@@ -141,10 +153,9 @@ vim.api.nvim_create_user_command("RunBuildSelect", function(opts)
 end, { nargs = "?" })
 
 vim.api.nvim_create_user_command("RunBuildLast", function(opts)
-	local mode = opts.fargs[1]
-
-	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
-		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
+	local mode = normalize_mode(opts.fargs[1])
+	if opts.fargs[1] and not mode then
+		notify_invalid_mode(opts.fargs[1])
 		return
 	end
 
@@ -152,10 +163,9 @@ vim.api.nvim_create_user_command("RunBuildLast", function(opts)
 end, { nargs = "?" })
 
 vim.api.nvim_create_user_command("RunLive", function(opts)
-	local mode = opts.fargs[1]
-
-	if mode and not vim.tbl_contains({ "float", "tab", "split", "vsplit" }, mode) then
-		vim.notify("Invalid mode: " .. mode .. ". Valid modes: float, tab, split, vsplit", vim.log.levels.ERROR)
+	local mode = normalize_mode(opts.fargs[1])
+	if opts.fargs[1] and not mode then
+		notify_invalid_mode(opts.fargs[1])
 		return
 	end
 

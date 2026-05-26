@@ -173,6 +173,22 @@ end
 ---@param options table
 ---@param revision integer
 ---@return boolean
+local function sync_sync(options, revision)
+	local request = build_sync_request(options, revision)
+	if type(request) ~= "table" then
+		return false
+	end
+
+	local lines = config_client.sync_request(request)
+	if type(lines) ~= "table" then
+		return false
+	end
+	return accept_synced_revision(lines, revision)
+end
+
+---@param options table
+---@param revision integer
+---@return boolean
 local function sync_async(options, revision)
 	local request = build_sync_request(options, revision)
 	if type(request) ~= "table" then
@@ -186,22 +202,6 @@ local function sync_async(options, revision)
 			notify_backend_warnings(lines, synced_revision)
 		end
 	end)
-end
-
----@param options table
----@param revision integer
----@return boolean
-local function sync_sync(options, revision)
-	local request = build_sync_request(options, revision)
-	if type(request) ~= "table" then
-		return false
-	end
-
-	local lines = config_client.sync_request(request)
-	if type(lines) ~= "table" then
-		return false
-	end
-	return accept_synced_revision(lines, revision)
 end
 
 ---@param options table
@@ -236,10 +236,8 @@ local function sync_once(options, revision)
 	return tonumber(synced_revision) == tonumber(revision)
 end
 
----@param options table
----@param revision integer
 ---@return boolean
-local function ensure_synced(options, revision)
+function M.ensure_synced(options, revision)
 	local target_revision = tonumber(revision) or 0
 	if target_revision <= 0 then
 		return false
@@ -260,13 +258,6 @@ local function ensure_synced(options, revision)
 		return true
 	end
 	return false
-end
-
----@param options table
----@param revision integer
----@return boolean
-function M.ensure_synced(options, revision)
-	return ensure_synced(options, revision)
 end
 
 ---@return boolean

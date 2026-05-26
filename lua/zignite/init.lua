@@ -12,12 +12,7 @@ local ERRORS = {
 	VISUAL_EMPTY = "Error: Visual selection is empty.",
 }
 
-local table_unpack = unpack or (type(table) == "table" and table.unpack)
-
----@return nil
-local function ensure_config()
-	config.ensure()
-end
+local table_unpack = table.unpack
 
 ---@param requested_filetype string|nil
 ---@return string, string
@@ -93,7 +88,7 @@ end
 ---@param provided_args string|nil
 ---@return nil
 local function run_current_build_action(mode, action, command_name, provided_args)
-	ensure_config()
+	config.ensure()
 	local filepath, filetype = resolve_current_source_context()
 	run_build_action_for(filepath, filetype, mode, action, command_name, provided_args)
 end
@@ -102,7 +97,7 @@ end
 ---@param mode string
 ---@return nil
 function M.run_code(range, mode)
-	ensure_config()
+	config.ensure()
 
 	local buffer_path, filetype = resolve_current_source_context()
 	local current_buf = tonumber(vim.api.nvim_get_current_buf()) or 0
@@ -146,7 +141,7 @@ end
 ---@param exec_opts table|nil
 ---@return nil
 function M.execute_command(system_command, mode, display_name, exec_opts)
-	ensure_config()
+	config.ensure()
 	mode = ui_common.normalize_mode(mode)
 
 	if mode == "float" then
@@ -179,7 +174,7 @@ end
 ---@param mode string
 ---@return nil
 function M.select_build_command(mode)
-	ensure_config()
+	config.ensure()
 
 	local filepath, filetype = resolve_current_source_context()
 	picker_controller.open({
@@ -206,7 +201,7 @@ end
 
 ---@return nil
 function M.close_runner()
-	ensure_config()
+	config.ensure()
 	local should_stop = ui_common.should_stop_on_close(nil)
 	ui_windows.close_output(should_stop)
 	if not should_stop then

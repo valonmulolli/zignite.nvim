@@ -48,7 +48,7 @@ function M.setup()
 			return os.tmpname()
 		end,
 		getpos = function()
-			return { 0, 1, 1, 0 }
+			return { 1, 1, 1, 0 }
 		end,
 	}
 	vim.v = vim.v or { shell_error = 0 }
@@ -199,7 +199,7 @@ function M.setup()
 			return { "test" }
 		end,
 		nvim_getpos = function()
-			return { 0, 1, 1, 0 }
+			return { 1, 1, 1, 0 }
 		end,
 	}
 

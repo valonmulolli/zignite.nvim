@@ -26,17 +26,6 @@ local function copy_lines(lines)
 end
 
 ---@param lines string[]
----@return string[]
-local function append_truncation_notice(lines)
-	---@type string[]
-	local out = { "[zignite] quickfix output truncated" }
-	for i = 1, #lines do
-		out[#out + 1] = lines[i]
-	end
-	return out
-end
-
----@param lines string[]
 ---@param max_bytes integer
 ---@return string[], boolean
 local function tail_lines_by_bytes(lines, max_bytes)
@@ -123,7 +112,7 @@ end
 local function populate_quickfix_lua(lines, quickfix_opts, truncated)
 	local processed = copy_lines(lines)
 	if truncated then
-		processed = append_truncation_notice(processed)
+		processed = quickfix_rpc.with_truncation_notice(processed, true)
 	end
 
 	if quickfix_opts.strip_ansi == false then
