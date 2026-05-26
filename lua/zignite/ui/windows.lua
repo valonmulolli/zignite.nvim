@@ -15,12 +15,6 @@ local function trim_text(value)
 	return (value:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
----@param stop_jobs boolean|nil
----@return boolean
-local function should_stop_on_close(stop_jobs)
-	return ui_common.should_stop_on_close(stop_jobs)
-end
-
 ---@param buf integer
 ---@param lines string[]
 ---@return nil
@@ -197,7 +191,7 @@ end
 ---@return nil
 function M.close_output(stop_jobs)
 	spinner.stop_spinner()
-	registry.close_all(should_stop_on_close(stop_jobs))
+	registry.close_all(ui_common.should_stop_on_close(stop_jobs))
 end
 
 ---@param command_name string
@@ -275,7 +269,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local close_key = float_config.close_key or "<Esc>"
 	---@return nil
 	local function close_float_runner()
-		registry.close_by_win_id(win, should_stop_on_close(nil))
+		registry.close_by_win_id(win, ui_common.should_stop_on_close(nil))
 	end
 
 	vim.keymap.set("n", close_key, close_float_runner, { buffer = buf, silent = true, nowait = true })

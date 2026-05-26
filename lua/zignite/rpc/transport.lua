@@ -12,7 +12,7 @@ local function get_plugin_path()
 		if type(vim.fn) == "table" and type(vim.fn.filereadable) == "function" and vim.fn.filereadable(path) == 1 then
 			return true
 		end
-		local uv = vim.uv or vim.loop
+		local uv = vim.uv
 		if uv and type(uv.fs_stat) == "function" then
 			return uv.fs_stat(path) ~= nil
 		end
@@ -40,8 +40,8 @@ local function get_plugin_path()
 		local cwd
 		if vim.uv and type(vim.uv.cwd) == "function" then
 			cwd = vim.uv.cwd()
-		elseif vim.loop and type(vim.loop.cwd) == "function" then
-			cwd = vim.loop.cwd()
+		elseif vim.uv and type(vim.uv.cwd) == "function" then
+			cwd = vim.uv.cwd()
 		elseif vim.fn and type(vim.fn.getcwd) == "function" then
 			cwd = vim.fn.getcwd()
 		else
