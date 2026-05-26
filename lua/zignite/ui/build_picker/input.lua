@@ -43,7 +43,9 @@ function M.open_filter_prompt(opts)
 		while true do
 			opts.set_filter_query(current_query)
 			opts.apply_filter()
-			opts.render_picker()
+			if not opts.render_picker() then
+				break
+			end
 
 			local ok, key = pcall(vim.fn.getcharstr)
 			if not ok or key == nil then
@@ -148,14 +150,18 @@ function M.open_prompt_buffer_argument_entry(opts)
 		end
 	end
 
+	local close_picker = opts.close_picker
+	local run_build = opts.run_build_command
+	local selected_name = opts.selected.name
+	local build_mode = opts.mode
 	vim.fn.prompt_setcallback(prompt_buf, function(text)
 		local entered = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
 		if entered == "" then
 			restore_picker_view()
 			return
 		end
-		opts.close_picker()
-		opts.run_build_command(opts.selected.name, opts.mode, entered)
+		close_picker()
+		run_build(selected_name, build_mode, entered)
 	end)
 
 	vim.api.nvim_win_set_buf(opts.win, prompt_buf)

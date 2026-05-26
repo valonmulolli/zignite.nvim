@@ -209,11 +209,10 @@ function M.resolve_sync_request(params)
 		lines = resolve_client.once_request(request)
 	end
 	if type(lines) ~= "table" then
-		return failed_resolution(
-			filetype,
-			string.format("Failed to resolve runner for filetype: %s. Backend unavailable or timed out.", tostring(filetype or "")),
-			"backend_unavailable"
-		)
+		local fail_msg = has_inline_source
+			and "Failed to resolve runner for inline source. Backend unavailable and fallback path does not support inline source."
+			or string.format("Failed to resolve runner for filetype: %s. Backend unavailable or timed out.", tostring(filetype or ""))
+		return failed_resolution(filetype, fail_msg, "backend_unavailable")
 	end
 	local resolved = normalize_resolved_output(json_result.decode(lines), filetype)
 	if type(resolved) == "table" then
