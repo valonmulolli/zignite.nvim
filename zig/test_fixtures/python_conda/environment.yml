@@ -1,0 +1,4 @@
+name: demo-conda
+dependencies:
+  - python=3.12
+  - pytest

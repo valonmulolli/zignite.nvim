@@ -3,6 +3,7 @@
 /zig/.zig-cache/
 .zig-cache/
 zig-cache/
+.zignite-zig-cache/
 /zig/zig-out/
 
 # Neovim plugin development

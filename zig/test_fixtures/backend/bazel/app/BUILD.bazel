@@ -1,9 +1,0 @@
-cc_binary(
-    name = "main",
-    srcs = ["main.cc"],
-)
-
-cc_test(
-    name = "main_test",
-    srcs = ["main_test.cc"],
-)
