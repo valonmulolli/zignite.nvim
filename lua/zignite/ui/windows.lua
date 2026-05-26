@@ -387,6 +387,9 @@ function M.show_output(message, mode)
 	end
 
 	local term_config = config.term
+	if level == vim.log.levels.ERROR and lines[1] and not lines[1]:match("^Error:") then
+		table.insert(lines, 1, "Error: " .. lines[1])
+	end
 	local buf = vim.api.nvim_create_buf(false, true)
 	set_message_buffer(buf, lines)
 	local win, previous_win, previous_tab = open_mode_window(resolved_mode, buf, term_config)

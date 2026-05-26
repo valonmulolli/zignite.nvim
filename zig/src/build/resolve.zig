@@ -367,7 +367,7 @@ test "resolveOutput preserves explicit make targets from auto output" {
     try std.testing.expectEqualStrings("make bench", detected.findCommand(output.commands.items, "bench").?);
 }
 
-test "resolveOutput suppresses configured c family commands for non-matching detected systems" {
+test "resolveOutput includes all configured c family commands regardless of detected system" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();
     try @import("../config/store.zig").setSyncedConfigJson(
@@ -394,8 +394,8 @@ test "resolveOutput suppresses configured c family commands for non-matching det
 
     try std.testing.expectEqualStrings("make", output.system.?);
     try std.testing.expectEqualStrings("make", detected.findCommand(output.commands.items, "build").?);
-    try std.testing.expect(detected.findCommand(output.commands.items, "cmake-build") == null);
-    try std.testing.expect(detected.findCommand(output.commands.items, "meson-build") == null);
+    try std.testing.expectEqualStrings("cmake --build build", detected.findCommand(output.commands.items, "cmake-build").?);
+    try std.testing.expectEqualStrings("meson compile -C build", detected.findCommand(output.commands.items, "meson-build").?);
 }
 
 test "resolveOutput does not invent make run when no run target exists" {

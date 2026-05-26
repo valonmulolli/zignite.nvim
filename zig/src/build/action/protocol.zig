@@ -50,7 +50,7 @@ pub fn parseArgs(args: []const []const u8) !types.Options {
 }
 
 pub const DaemonHeader = struct {
-    request_id: u32,
+    request_id: u64,
 };
 
 pub fn parseDaemonBegin(line: []const u8) !DaemonHeader {
@@ -64,6 +64,6 @@ pub fn parseDaemonBegin(line: []const u8) !DaemonHeader {
         return error.InvalidBuildActionDaemonHeader;
     }
     return .{
-        .request_id = try std.fmt.parseInt(u32, remainder, 10),
+        .request_id = try std.fmt.parseInt(u64, remainder, 10),
     };
 }

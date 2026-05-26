@@ -147,7 +147,25 @@ fn parseRuleName(line: []const u8) ?[]const u8 {
 
 fn countParenDelta(text: []const u8) isize {
     var delta: isize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
     for (text) |ch| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null and ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
         if (ch == '(') delta += 1;
         if (ch == ')') delta -= 1;
     }
@@ -228,9 +246,28 @@ fn findEnclosedList(block: []const u8, open_idx: usize, open_ch: u8, close_ch: u
     if (open_idx >= block.len or block[open_idx] != open_ch) return null;
     var depth: isize = 0;
     var index = open_idx;
+    var quote: ?u8 = null;
+    var escaped = false;
     while (index < block.len) : (index += 1) {
-        if (block[index] == open_ch) depth += 1;
-        if (block[index] == close_ch) {
+        const ch = block[index];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null and ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == open_ch) depth += 1;
+        if (ch == close_ch) {
             depth -= 1;
             if (depth == 0) {
                 return block[open_idx + 1 .. index];
