@@ -12,6 +12,28 @@
 
 Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, filetype normalization, build/run resolution, project parsing, quickfix processing, and command detection.
 
+## Table of Contents
+
+- [Demo](#demo)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+  - [Commands](#commands)
+  - [Build Command Picker](#build-command-picker)
+  - [Runtime Arguments](#runtime-arguments)
+  - [Quickfix Pipeline](#quickfix-pipeline)
+  - [Variable Substitution](#variable-substitution)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
+
+## Demo
+
+<!-- TODO: Add screen recording / GIF showing picker interaction, visual selection, terminal output -->
+
 ## Features
 
 - **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
@@ -119,8 +141,7 @@ Zignite works out of the box for 20+ languages. The block below shows the defaul
 
 ```lua
 require('zignite').setup({
-    -- Timeout in milliseconds (e.g., 5000 = 5 seconds).
-    -- If a process runs longer than this, the Zig backend will kill it.
+    -- Timeout in milliseconds. nil = no timeout.
     timeout = nil,
 
     keymaps = {
@@ -167,20 +188,14 @@ require('zignite').setup({
     },
 
     quickfix = {
-        enabled = true,             -- Populate quickfix on non-zero exit
-        processor = "auto",         -- "auto" | "lua" | "zig"
-        zig_min_lines = 300,        -- Legacy threshold; auto mode now prefers zig whenever backend is available
-        max_lines = 1000,           -- Keep only last N lines from terminal output
-        max_bytes = 262144,         -- Byte cap for quickfix processing
-        strip_ansi = true,          -- Remove color escape codes in quickfix lines
-        strip_ansi_max_lines = 400, -- Strip ANSI on most recent N lines
-        parse_diagnostics = true,   -- Canonicalize parseable diagnostics in zig mode
-        zig_worker = true,          -- Keep a persistent zig quickfix worker process
-        async_strip = true,         -- Lua fallback: strip ANSI in chunks
-        strip_chunk_size = 200,     -- Lua fallback chunk size
+        enabled = true,
+        max_lines = 1000,
+        max_bytes = 262144,
     },
 })
 ```
+
+See `example_config.lua` for all available options.
 
 ## Usage
 
@@ -188,6 +203,7 @@ require('zignite').setup({
 
 - `:RunFile`: Run the current file using the filetype runner (single-file flow).
 - `:RunCode`: Run the current visual selection, or the current file when used without a visual range.
+- `:RunBuild <name> <mode>`: Run a specific build command by name (e.g., `:RunBuild test vsplit`). Supports tab completion for command names.
 - `:RunBuildSelect`: Open an interactive picker to choose a command (build, test, run, etc.).
 - `:RunBuildLast`: Repeat the most recent `:RunBuild`/picker command for the current filetype.
 - `:RunLive`: Run the best live/watch command for current filetype (`live`, `dev`, `watch`, `serve`, `start`, `preview`).
@@ -286,12 +302,11 @@ Python project support is intentionally limited to:
 - `requirements.txt` / `pip`
 - conda (`environment.yml` / `environment.yaml`)
 
-`zig fetch` is included and prompts for URL/path input when selected. In the
-picker, you can paste a plain GitHub repo URL or `<owner>/<repo>`, and
-Zignite will expand it to the saved Zig form automatically.
+### Runtime Arguments
 
 Any build command can request runtime arguments by using `$zignite_args` in the
-command template. Example:
+command template. When selected, the picker prompts for input and runs the
+expanded command.
 
 ```lua
 build_commands = {
@@ -301,16 +316,13 @@ build_commands = {
 }
 ```
 
-When selected, the picker asks for the argument and runs the expanded command.
-For example, pasting:
+**zig fetch integration**: The `zig fetch` command is detected automatically and
+prompts for URL/path input. Paste a plain GitHub repo URL or `<owner>/<repo>`,
+and Zignite expands it to the saved Zig form:
 
 ```text
 https://github.com/<owner>/<repo>
-```
-
-expands to:
-
-```text
+                      ↓
 zig fetch --save git+https://github.com/<owner>/<repo>
 ```
 
@@ -320,21 +332,19 @@ zig fetch --save git+https://github.com/<owner>/<repo>
 
 ### Quickfix Pipeline
 
-- `quickfix.processor = "auto"`: prefers Zig processing when the backend is available, with immediate Lua fallback on backend errors.
-- `quickfix.processor = "zig"`: always uses Zig processing with immediate Lua fallback on backend errors.
-- `quickfix.zig_worker = true`: keeps quickfix requests on the persistent Zig backend daemon (`--daemon`) to avoid per-run process spawn cost.
-- `quickfix.zig_worker = false`: disables worker reuse and uses one-shot Zig quickfix jobs.
-
-Recommended low-latency setup:
+On non-zero exit, terminal output feeds into the quickfix list so you can jump
+through errors. The pipeline uses Zig processing when available, with an
+automatic Lua fallback.
 
 ```lua
 quickfix = {
-    processor = "auto",
-    zig_worker = true,
-    max_lines = 1000,
-    max_bytes = 262144,
+    enabled = true,
+    max_lines = 1000,   -- Keep only last N lines from terminal output
+    max_bytes = 262144, -- Byte cap for quickfix processing
 }
 ```
+
+See [Quickfix feels slow on huge error logs](#quickfix-feels-slow-on-huge-error-logs) in troubleshooting for tuning guidance.
 
 ### Variable Substitution
 
@@ -404,15 +414,33 @@ The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ k
 
 ### Quickfix feels slow on huge error logs
 
-Tune these options first:
+The quickfix processor handles output in two stages: tail collection (keeps
+only the last `max_lines` lines and caps total bytes at `max_bytes`), then
+optional ANSI stripping + diagnostic parsing. If throughput is the bottleneck,
+lower these caps:
 
 ```lua
 quickfix = {
-    processor = "auto",
-    zig_worker = true,
-    max_lines = 800,          -- lower tail size
-    max_bytes = 196608,       -- lower byte cap
-    strip_ansi_max_lines = 300,
+    max_lines = 800,
+    max_bytes = 196608,
+}
+```
+
+If the Zig daemon worker is the bottleneck, disable it to fall back to
+one-shot Zig invocations:
+
+```lua
+quickfix = {
+    zig_worker = false,
+    processor = "zig",
+}
+```
+
+To skip quickfix entirely for a session, disable it:
+
+```lua
+quickfix = {
+    enabled = false,
 }
 ```
 
@@ -429,13 +457,7 @@ detect_runtime = {
 
 ## Development
 
-### Run tests
-
-```sh
-lua zig/test/runner.lua
-```
-
-### Run the Lua frontend + integration suite
+### Run tests (Lua frontend + Zig integration suite)
 
 ```sh
 lua zig/test/runner.lua
