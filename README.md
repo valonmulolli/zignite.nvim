@@ -102,13 +102,23 @@ If you manage keymaps through Lazy's `keys` field, use Lazy's key format:
 }
 ```
 
-**Native package (vim-pack)**
+**vim.pack (Neovim >= 0.12)**
 
-```bash
-git clone https://github.com/valonmulolli/zignite.nvim \
-  ~/.local/share/nvim/site/pack/vendor/start/zignite.nvim
-cd ~/.local/share/nvim/site/pack/vendor/start/zignite.nvim/zig && \
-  zig build -Doptimize=ReleaseFast
+```lua
+vim.pack.add({
+    src = 'https://github.com/valonmulolli/zignite.nvim',
+    version = 'master',
+})
+
+-- Build the Zig backend after install/update
+vim.api.nvim_create_autocmd('PackChanged', {
+    group = vim.api.nvim_create_augroup('zignite-build', { clear = true }),
+    callback = function(ev)
+        if ev.data.spec.name == 'zignite.nvim' then
+            vim.system({ 'zig', 'build', '-Doptimize=ReleaseFast' }, { cwd = ev.data.path .. '/zig' })
+        end
+    end,
+})
 ```
 
 **Nix / NixOS (flake)**
