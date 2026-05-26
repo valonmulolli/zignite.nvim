@@ -89,7 +89,7 @@ local function encode_synced_config(options, revision)
 		return string.format('{"revision":%d}', revision)
 	end
 
-	return vim.json.encode({
+	local ok, encoded = pcall(vim.json.encode, {
 		build_commands = type(options) == "table" and ensure_object(options.build_commands) or vim.empty_dict(),
 		detect = type(options) == "table" and ensure_object(options.detect) or vim.empty_dict(),
 		runners = type(options) == "table" and ensure_object(options.runners) or vim.empty_dict(),
@@ -97,6 +97,10 @@ local function encode_synced_config(options, revision)
 		timeout = type(options) == "table" and options.timeout or nil,
 		revision = revision,
 	})
+	if not ok or type(encoded) ~= "string" then
+		return string.format('{"revision":%d}', revision)
+	end
+	return encoded
 end
 
 ---@param lines string[]|nil

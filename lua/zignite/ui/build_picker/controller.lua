@@ -59,8 +59,6 @@ function M.open(opts)
 	local selected_index = 1
 	local filter_query = ""
 	local picker_ready = false
-	---@type table|nil
-	local pending_refresh_commands = nil
 	---@type table<integer, integer>
 	local command_lines
 	---@type { prompt: string, value: string, display_command: string, name: string, help_text: string|nil }|nil
@@ -106,13 +104,6 @@ function M.open(opts)
 		if detect_runtime_opts.live_merge == false then
 			return
 		end
-		if not picker_ready then
-			pending_refresh_commands = {
-				command_entries = vim.deepcopy(updated.command_entries or {}),
-				last_command_name = updated.last_command_name,
-			}
-			return
-		end
 		last_selected_name = type(updated.last_command_name) == "string" and updated.last_command_name or last_selected_name
 
 		local preferred_name = nil
@@ -148,13 +139,6 @@ function M.open(opts)
 	end
 
 	replace_command_entries(command_entries, last_selected_name)
-	if pending_refresh_commands then
-		replace_command_entries(
-			pending_refresh_commands.command_entries,
-			pending_refresh_commands.last_command_name or last_selected_name
-		)
-		pending_refresh_commands = nil
-	end
 
 	if #all_commands == 0 and not can_refresh_from_detection then
 		vim.notify(
@@ -246,6 +230,7 @@ function M.open(opts)
 			virt_text = { { "▶ ", "Special" } },
 			virt_text_pos = "overlay",
 		})
+		return true
 	end
 
 	if vim.api.nvim_create_augroup and vim.api.nvim_create_autocmd then
@@ -369,11 +354,7 @@ function M.open(opts)
 	})
 
 	picker_ready = true
-	if pending_refresh_commands then
-		on_picker_refresh(pending_refresh_commands)
-	else
-		render_picker()
-	end
+	render_picker()
 end
 
 return M
