@@ -224,7 +224,7 @@ function M.open(opts)
 			return
 		end
 		if #filtered_commands == 0 or selected_index < 1 then
-			return
+			return true
 		end
 
 		local cursor_line = command_lines[selected_index] or 2

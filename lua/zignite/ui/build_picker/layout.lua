@@ -14,8 +14,10 @@ local function truncate_text(text, max_width)
 	end
 
 	local truncated = value
-	while #truncated > 0 and vim.fn.strdisplaywidth(truncated) > (max_width - 3) do
-		truncated = truncated:sub(1, #truncated - 1)
+	while vim.fn.strdisplaywidth(truncated) > (max_width - 3) do
+		local chars = vim.fn.strchars(truncated)
+		if chars <= 1 then break end
+		truncated = vim.fn.strcharpart(truncated, 0, chars - 1)
 	end
 	return truncated .. "..."
 end

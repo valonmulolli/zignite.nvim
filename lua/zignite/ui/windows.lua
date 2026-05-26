@@ -263,7 +263,11 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	opts.title = " " .. activity_title .. " "
 	opts.footer = ui_common.build_float_footer(float_config, should_focus, ui_common.summarize_command(command))
 
-	local win = vim.api.nvim_open_win(buf, should_focus, opts)
+	local ok_win, win = pcall(vim.api.nvim_open_win, buf, should_focus, opts)
+	if not ok_win then
+		vim.api.nvim_buf_delete(buf, { force = true })
+		return nil, nil, nil
+	end
 	local tracked_runner = registry.track(win, buf)
 
 	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. float_config.border_hl, { win = win })
@@ -375,7 +379,11 @@ function M.show_output(message, mode)
 		local should_focus = float_config.focus ~= false
 		opts.title = level == vim.log.levels.ERROR and " Zignite Error " or " Zignite Message "
 		opts.footer = string.format(" %s: close ", ui_common.format_key_for_display(float_config.close_key or "<Esc>"))
-		local win = vim.api.nvim_open_win(buf, should_focus, opts)
+		local ok_win, win = pcall(vim.api.nvim_open_win, buf, should_focus, opts)
+		if not ok_win then
+			vim.api.nvim_buf_delete(buf, { force = true })
+			return
+		end
 		local border_hl = level == vim.log.levels.ERROR and (float_config.border_hl_error or "DiagnosticError")
 			or (float_config.border_hl or "FloatBorder")
 		vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:" .. border_hl, { win = win })

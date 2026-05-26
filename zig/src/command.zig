@@ -105,7 +105,8 @@ fn termToExitCode(term: std.process.Child.Term) u8 {
 }
 
 fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
-    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(ctx.duration)), .awake) catch |err| switch (err) {
+    const clamped_duration = std.math.cast(u32, ctx.duration) orelse std.math.maxInt(u32);
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(clamped_duration), .awake) catch |err| switch (err) {
         error.Canceled => return,
     };
     if (ctx.finished.load(.acquire)) {

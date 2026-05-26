@@ -320,36 +320,25 @@ fn buildDiscoveredRunSuffixAlloc(
     const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
     defer allocator.free(target_exe);
 
-    const candidate_paths = [_][]const u8{
-        try std.fmt.allocPrint(allocator, "./{s}/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/Debug/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/Debug/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/Release/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/Release/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/RelWithDebInfo/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/RelWithDebInfo/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/MinSizeRel/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/MinSizeRel/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/Debug/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/Debug/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/Release/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/Release/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/RelWithDebInfo/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/RelWithDebInfo/{s}", .{ build_dir, target_exe }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/MinSizeRel/{s}", .{ build_dir, target }),
-        try std.fmt.allocPrint(allocator, "./{s}/bin/MinSizeRel/{s}", .{ build_dir, target_exe }),
-    };
-    defer for (candidate_paths) |candidate| allocator.free(candidate);
+    var candidate_paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (candidate_paths.items) |c| allocator.free(c);
+        candidate_paths.deinit(allocator);
+    }
+    {
+        const subdirs = [_][]const u8{ "", "bin/", "Debug/", "Release/", "RelWithDebInfo/", "MinSizeRel/", "bin/Debug/", "bin/Release/", "bin/RelWithDebInfo/", "bin/MinSizeRel/" };
+        for (subdirs) |subdir| {
+            try candidate_paths.append(allocator, try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target }));
+            try candidate_paths.append(allocator, try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target_exe }));
+        }
+    }
 
     var escaped_candidates: std.ArrayList([]u8) = .empty;
     defer {
         for (escaped_candidates.items) |candidate| allocator.free(candidate);
         escaped_candidates.deinit(allocator);
     }
-    for (candidate_paths) |candidate| {
+    for (candidate_paths.items) |candidate| {
         const escaped = try project_common.quoteShellArgAlloc(allocator, candidate);
         escaped_candidates.append(allocator, escaped) catch |err| {
             allocator.free(escaped);
@@ -361,7 +350,7 @@ fn buildDiscoveredRunSuffixAlloc(
     defer allocator.free(quoted_target);
     const quoted_target_exe = try project_common.quoteShellArgAlloc(allocator, target_exe);
     defer allocator.free(quoted_target_exe);
-    const quoted_default_path = try project_common.quoteShellArgAlloc(allocator, candidate_paths[0]);
+    const quoted_default_path = try project_common.quoteShellArgAlloc(allocator, candidate_paths.items[0]);
     defer allocator.free(quoted_default_path);
     const quoted_build_dir = try project_common.quoteShellArgIfNeededAlloc(allocator, build_dir);
     defer allocator.free(quoted_build_dir);
