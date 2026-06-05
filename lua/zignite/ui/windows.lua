@@ -233,7 +233,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	local config = ui_common.get_config()
 
 	if config.singleton then
-		M.close_output(true)
+		M.close_output(nil)
 	else
 		registry.clean_invalid()
 	end
@@ -308,7 +308,7 @@ end
 function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local config_opts = ui_common.get_config()
 	if config_opts.singleton then
-		M.close_output(true)
+		M.close_output(nil)
 	end
 
 	local term_config = config_opts.term
@@ -345,7 +345,7 @@ end
 function M.show_output(message, mode)
 	local config = ui_common.get_config()
 	if config.singleton then
-		M.close_output(true)
+		M.close_output(nil)
 	end
 
 	local text = type(message) == "string" and message or tostring(message)
