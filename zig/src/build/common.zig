@@ -272,6 +272,7 @@ pub fn discoverBuildRunPathAllocWithIO(
 
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
+        if (entry.depth() > 16) continue;
         if (pathContainsIgnoredBuildDir(entry.path)) continue;
 
         const basename = std.fs.path.basename(entry.path);
