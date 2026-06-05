@@ -311,14 +311,32 @@ fn findReplyIndexAllocWithIO(io: std.Io, allocator: std.mem.Allocator, reply_dir
     };
     defer dir.close(io);
 
+    var best_name: ?[]const u8 = null;
+    var best_index: ?u64 = null;
+    var best_lex: []const u8 = "";
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.startsWith(u8, entry.name, "index-")) continue;
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        return try std.fs.path.join(allocator, &.{ reply_dir, entry.name });
+        const suffix = entry.name["index-".len .. entry.name.len - ".json".len];
+        if (std.fmt.parseInt(u64, suffix, 10)) |parsed| {
+            if (best_index == null or parsed > best_index.?) {
+                best_name = entry.name;
+                best_index = parsed;
+                best_lex = entry.name;
+            }
+        } else |_| {
+            if (best_index == null and std.mem.order(u8, entry.name, best_lex) == .gt) {
+                best_name = entry.name;
+                best_lex = entry.name;
+            }
+        }
     }
 
+    if (best_name) |name| {
+        return try std.fs.path.join(allocator, &.{ reply_dir, name });
+    }
     return null;
 }
 
