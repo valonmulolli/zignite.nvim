@@ -49,6 +49,9 @@ local function test_build_picker_filter_and_preview()
                 run = "echo run",
             },
         },
+        picker = {
+            filter_input = "cmdline",
+        },
     })
 
     vim.bo.filetype = "tinyft"
