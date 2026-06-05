@@ -46,7 +46,6 @@ function M.open(opts)
 	local filtered_commands = {}
 	local selected_index = 1
 	local filter_query = ""
-	local picker_ready = false
 	---@type table<integer, integer>
 	local command_lines
 	---@type { prompt: string, value: string, display_command: string, name: string, help_text: string|nil }|nil
@@ -196,7 +195,7 @@ function M.open(opts)
 			) or nil,
 		})
 		command_lines = updated_command_lines
-		if not pcall(vim.api.nvim_win_is_valid, win) or not pcall(vim.api.nvim_buf_is_valid, buf) then
+		if not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(buf) then
 			return
 		end
 		if vim.api.nvim_win_set_config then
@@ -344,7 +343,6 @@ function M.open(opts)
 		close_picker = close_picker,
 	})
 
-	picker_ready = true
 	render_picker()
 end
 
