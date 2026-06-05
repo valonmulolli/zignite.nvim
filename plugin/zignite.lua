@@ -171,3 +171,14 @@ vim.api.nvim_create_user_command("RunLive", function(opts)
 
 	zignite().run_live(mode)
 end, { nargs = "?" })
+
+vim.api.nvim_create_autocmd("UIEnter", {
+	group = vim.api.nvim_create_augroup("ZignitePreWarm", { clear = true }),
+	callback = function()
+		local ok, config_sync = pcall(require, "zignite.rpc.config_sync")
+		if ok and type(config_sync.sync_current_async) == "function" then
+			pcall(config_sync.sync_current_async)
+		end
+	end,
+	once = true,
+})
