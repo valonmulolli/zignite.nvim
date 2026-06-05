@@ -209,6 +209,10 @@ fn scratchRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.proce
         defer allocator.free(home);
         return std.fs.path.join(allocator, &.{ home, ".cache", "zignite", "run" });
     }
+    if (try getEnvVarOwnedOrNull(allocator, environ_map, "TMPDIR")) |tmpdir| {
+        defer allocator.free(tmpdir);
+        return std.fs.path.join(allocator, &.{ tmpdir, "zignite-run" });
+    }
     return allocator.dupe(u8, "/tmp/zignite-run");
 }
 
