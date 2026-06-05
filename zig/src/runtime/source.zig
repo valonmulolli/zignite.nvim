@@ -1,5 +1,7 @@
 const std = @import("std");
-const scratch_max_entries = 128;
+const scratch_max_entries: usize = 128;
+const scratch_prune_interval: usize = 32;
+var scratch_prune_counter: std.atomic.Value(usize) = .init(0);
 
 pub const InputKind = enum {
     file,
@@ -115,7 +117,10 @@ fn prepareInlineSourceWithKey(
         .sub_path = scratch_path,
         .data = selection_text,
     });
-    pruneScratchRootBestEffort(io, allocator, scratch_root, scratch_path, scratch_max_entries) catch {};
+    const prune_counter = scratch_prune_counter.fetchAdd(1, .monotonic);
+    if (prune_counter % scratch_prune_interval == 0) {
+        pruneScratchRootBestEffort(io, allocator, scratch_root, scratch_path, scratch_max_entries) catch {};
+    }
 
     return .{
         .execution_path = scratch_path,
