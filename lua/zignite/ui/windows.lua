@@ -316,6 +316,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local buf = vim.api.nvim_create_buf(false, true)
 	local win, previous_win, previous_tab = open_mode_window(resolved_mode, buf, term_config)
 	if not win then
+		vim.api.nvim_buf_delete(buf, { force = true })
 		return
 	end
 
@@ -385,6 +386,7 @@ function M.show_output(message, mode)
 	set_message_buffer(buf, lines)
 	local win, previous_win, previous_tab = open_mode_window(resolved_mode, buf, term_config)
 	if not win then
+		vim.api.nvim_buf_delete(buf, { force = true })
 		vim.notify(text, level, { title = "Zignite" })
 		return
 	end
