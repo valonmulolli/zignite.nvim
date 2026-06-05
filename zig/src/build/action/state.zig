@@ -106,16 +106,20 @@ pub fn resetForTests() void {
 
 fn ensureLoadedLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*const std.process.Environ.Map) !void {
     if (loaded_from_disk) return;
-    loaded_from_disk = true;
 
     const state_path = try stateFilePathAlloc(allocator, environ_map);
     defer allocator.free(state_path);
 
     const contents = std.Io.Dir.cwd().readFileAlloc(io, state_path, allocator, .limited(64 * 1024)) catch |err| switch (err) {
-        error.FileNotFound => return,
+        error.FileNotFound => {
+            loaded_from_disk = true;
+            return;
+        },
         else => return err,
     };
     defer allocator.free(contents);
+
+    loaded_from_disk = true;
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |line| {
