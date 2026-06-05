@@ -118,6 +118,16 @@ function M.open_filter_prompt(opts)
 	vim.notify("Build filter prompt is unavailable in this environment", vim.log.levels.WARN)
 end
 
+---@param selected table
+---@return string
+local function get_prompt_buffer_help_line(selected)
+	local help = type(selected) == "table" and selected.argument_help or nil
+	if type(help) == "string" and help ~= "" then
+		return " " .. help .. " "
+	end
+	return " Enter arguments, then press <CR> "
+end
+
 ---@param opts table
 ---@return boolean
 function M.open_prompt_buffer_argument_entry(opts)
