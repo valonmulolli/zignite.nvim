@@ -20,7 +20,7 @@ local RUN_RESOLVE_PROTOCOL = {
 	res_end = RUN_RESOLVE_RES_END,
 	res_err = RUN_RESOLVE_RES_ERR,
 }
-local RUN_RESOLVE_SYNC_WAIT_MS = 750
+local RUN_RESOLVE_SYNC_WAIT_MS = 5000
 local RUN_RESOLVE_ASYNC_TIMEOUT_MS = 1500
 
 ---@param filetype string|nil
@@ -152,7 +152,7 @@ local resolve_client = backend_client.new({
 	protocol = RUN_RESOLVE_PROTOCOL,
 	worker_wait_ms = RUN_RESOLVE_SYNC_WAIT_MS,
 	request_timeout_ms = RUN_RESOLVE_ASYNC_TIMEOUT_MS,
-	reset_on_sync_timeout = true,
+	reset_on_sync_timeout = false,
 	build_worker_payload = build_worker_payload,
 	build_once_argv = build_once_argv,
 })
