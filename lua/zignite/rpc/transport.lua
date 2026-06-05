@@ -618,8 +618,19 @@ function M.new(opts)
 		if not argv then
 			return nil
 		end
-		local output_lines = vim.fn.systemlist(argv)
-		local shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+		local output_lines, shell_error
+		if type(vim.system) == "function" then
+			---@diagnostic disable-next-line: missing-fields
+			local system_result = vim.system(argv, { text = true, timeout = 5000 }):wait()
+			shell_error = system_result.code or 0
+			if system_result.timeout then
+				return nil
+			end
+			output_lines = vim.split(system_result.stdout or "", "\n", { plain = true })
+		else
+			output_lines = vim.fn.systemlist(argv)
+			shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
+		end
 		if type(output_lines) ~= "table" or shell_error ~= 0 then
 			return nil
 		end
