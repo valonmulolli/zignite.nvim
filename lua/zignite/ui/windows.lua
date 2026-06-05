@@ -19,10 +19,13 @@ end
 ---@param lines string[]
 ---@return nil
 local function set_message_buffer(buf, lines)
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
-	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
-	vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+	pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
+	pcall(vim.api.nvim_set_option_value, "modifiable", false, { buf = buf })
+	pcall(vim.api.nvim_set_option_value, "bufhidden", "wipe", { buf = buf })
+	pcall(vim.api.nvim_set_option_value, "buftype", "nofile", { buf = buf })
 end
 
 ---@param win_id integer
@@ -61,24 +64,10 @@ local function is_valid_job_id(job_id)
 end
 
 ---@param buf integer
----@param lines string[]
----@return nil
-local function replace_buffer_message(buf, lines)
-	if not vim.api.nvim_buf_is_valid(buf) then
-		return
-	end
-	pcall(vim.api.nvim_set_option_value, "modifiable", true, { buf = buf })
-	pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
-	pcall(vim.api.nvim_set_option_value, "modifiable", false, { buf = buf })
-	pcall(vim.api.nvim_set_option_value, "bufhidden", "wipe", { buf = buf })
-	pcall(vim.api.nvim_set_option_value, "buftype", "nofile", { buf = buf })
-end
-
----@param buf integer
 ---@param command string|string[]
 ---@return nil
 local function show_jobstart_failure(buf, command)
-	replace_buffer_message(buf, {
+	set_message_buffer(buf, {
 		"Error: Failed to start runner.",
 		"Command: " .. ui_common.summarize_command(command),
 	})
