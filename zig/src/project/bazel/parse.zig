@@ -301,8 +301,8 @@ fn ruleSupportsRun(rule_name: []const u8, block: []const u8) bool {
 
     const lower = std.ascii.allocLowerString(std.heap.page_allocator, rule_name) catch return false;
     defer std.heap.page_allocator.free(lower);
-    if (std.mem.find(u8, lower, "test") != null) return false;
-    if (std.mem.find(u8, lower, "binary") != null or std.mem.find(u8, lower, "_bin") != null) return true;
+    if (std.mem.endsWith(u8, lower, "_test") or std.mem.endsWith(u8, lower, "_spec")) return false;
+    if (std.mem.endsWith(u8, lower, "_binary") or std.mem.endsWith(u8, lower, "_bin")) return true;
     return parseNamedString(block, "main") != null or parseNamedString(block, "entry_point") != null;
 }
 
@@ -313,7 +313,7 @@ fn ruleSupportsTest(rule_name: []const u8, target_name: []const u8, source_entri
 
     const lower_rule = std.ascii.allocLowerString(std.heap.page_allocator, rule_name) catch return false;
     defer std.heap.page_allocator.free(lower_rule);
-    if (std.mem.find(u8, lower_rule, "test") != null or std.mem.find(u8, lower_rule, "spec") != null) {
+    if (std.mem.endsWith(u8, lower_rule, "_test") or std.mem.endsWith(u8, lower_rule, "_spec")) {
         return true;
     }
     if (looksLikeTestName(target_name)) return true;
