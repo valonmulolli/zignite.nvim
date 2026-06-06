@@ -149,7 +149,7 @@ end
 ---@param options table
 ---@param revision integer
 ---@return table|nil
-local function build_sync_request(options, revision)
+local function build_sync_request_module(options, revision)
 	local json_payload = encode_synced_config(options, revision)
 	if type(json_payload) ~= "string" or json_payload == "" then
 		return nil
@@ -158,6 +158,13 @@ local function build_sync_request(options, revision)
 		revision = revision,
 		json = json_payload,
 	}
+end
+
+---@param options table
+---@param revision integer
+---@return table|nil
+local function build_sync_request(options, revision)
+	return build_sync_request_module(options, revision)
 end
 
 ---@param lines string[]|nil
@@ -237,7 +244,7 @@ local function sync_once(options, revision)
 end
 
 ---@return boolean
-function M.ensure_synced(options, revision)
+local function ensure_synced(options, revision)
 	local target_revision = tonumber(revision) or 0
 	if target_revision <= 0 then
 		return false
@@ -258,6 +265,11 @@ function M.ensure_synced(options, revision)
 		return true
 	end
 	return false
+end
+
+---@return boolean
+function M.ensure_synced(options, revision)
+	return ensure_synced(options, revision)
 end
 
 ---@return boolean
