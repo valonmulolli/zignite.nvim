@@ -34,7 +34,7 @@ pub fn resolveOutputWithIO(io: std.Io, allocator: std.mem.Allocator, options: ty
         types.freeOwnedCommands(allocator, configured);
         allocator.free(configured);
     }
-    try overlayCommands(allocator, resolved_filetype, &parsed_output, configured);
+    try overlayCommands(allocator, &parsed_output, configured);
     return parsed_output;
 }
 
@@ -58,17 +58,10 @@ fn overlayBuiltinCommands(
 
 fn overlayCommands(
     allocator: std.mem.Allocator,
-    filetype: []const u8,
     parsed_output: *types.ResolvedOutput,
     entries: []const build_types.CommandEntry,
 ) !void {
     for (entries) |entry| {
-        if (!policy.shouldOverlayConfiguredCommand(
-            filetype,
-            parsed_output.system,
-            parsed_output.commands.items,
-            entry,
-        )) continue;
         try output.upsertOwnedCommand(&parsed_output.commands, allocator, entry.name, entry.command);
     }
 }

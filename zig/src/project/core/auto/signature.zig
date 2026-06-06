@@ -10,11 +10,6 @@ const build_system = @import("../../../build/system.zig");
 
 const Options = types.Options;
 
-pub fn buildJVMAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildJVMAutoSignatureAllocWithIO(threaded.io(), allocator, result);
-}
-
 pub fn buildJVMAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
     const root = result.root orelse return null;
     const system = result.system orelse return null;
@@ -32,15 +27,6 @@ pub fn buildJVMAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator
     }
 
     return null;
-}
-
-pub fn buildCFamilyAutoSignatureAlloc(
-    allocator: std.mem.Allocator,
-    options: Options,
-    result: build_system.Result,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildCFamilyAutoSignatureAllocWithIO(threaded.io(), allocator, options, result);
 }
 
 pub fn buildCFamilyAutoSignatureAllocWithIO(
@@ -107,19 +93,9 @@ fn buildMesonAutoSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: 
     return try signature.toOwnedSlice(allocator);
 }
 
-pub fn buildPythonAutoSignatureAlloc(allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildPythonAutoSignatureAllocWithIO(threaded.io(), allocator, result);
-}
-
 pub fn buildPythonAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
     const root = result.root orelse return null;
     return try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, &.{ "pyproject.toml", "uv.lock", "requirements.txt", "environment.yml", "environment.yaml" });
-}
-
-pub fn buildBazelAutoSignatureAlloc(allocator: std.mem.Allocator, options: Options, result: build_system.Result) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildBazelAutoSignatureAllocWithIO(threaded.io(), allocator, options, result);
 }
 
 pub fn buildBazelAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, options: Options, result: build_system.Result) !?[]u8 {

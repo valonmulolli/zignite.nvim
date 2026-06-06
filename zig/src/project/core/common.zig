@@ -1,10 +1,5 @@
 const std = @import("std");
 
-pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return try readFileAllocWithIO(threaded.io(), allocator, path);
-}
-
 pub fn readFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const max_bytes = 4 * 1024 * 1024;
     return try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_bytes));

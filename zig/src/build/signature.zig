@@ -39,15 +39,6 @@ pub fn buildMarkerSignatureAllocWithIO(
     return try signature.toOwnedSlice(allocator);
 }
 
-pub fn appendSignatureFile(
-    allocator: std.mem.Allocator,
-    signature: *std.ArrayList(u8),
-    path: []const u8,
-) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return appendSignatureFileWithIO(threaded.io(), allocator, signature, path);
-}
-
 pub fn appendSignatureFileWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -65,11 +56,6 @@ pub fn appendSignatureFileWithIO(
     } else {
         try signature.appendSlice(allocator, "missing");
     }
-}
-
-pub fn fileMtimeKeyAlloc(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return fileMtimeKeyAllocWithIO(threaded.io(), allocator, path);
 }
 
 pub fn fileMtimeKeyAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {

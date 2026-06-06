@@ -25,22 +25,12 @@ pub fn writeSystemResult(stdout: anytype, result: build_system.Result) !void {
     }
 }
 
-pub fn writeSystemQueryOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeSystemQueryOutputWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writeSystemQueryOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
     const query = options.query orelse return error.MissingSystemQuery;
     const result = try build_system.detectWithIO(io, allocator, query, options.path, options.project_root);
     defer build_system.freeOwnedResult(allocator, result);
     try writeSystemResult(stdout, result);
     return true;
-}
-
-pub fn writeJVMAuto(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeJVMAutoWithIO(threaded.io(), stdout, allocator, options);
 }
 
 pub fn writeJVMAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
@@ -68,11 +58,6 @@ pub fn writeJVMAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Alloca
     return true;
 }
 
-pub fn writeCFamilyAuto(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeCFamilyAutoWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writeCFamilyAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
     const result = try build_system.detectWithIO(io, allocator, .c_family, options.path, options.project_root);
     defer build_system.freeOwnedResult(allocator, result);
@@ -98,11 +83,6 @@ pub fn writeCFamilyAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
     return true;
 }
 
-pub fn writePythonAuto(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writePythonAutoWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writePythonAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
     const result = try build_system.detectWithIO(io, allocator, .python_root, options.path, options.project_root);
     defer build_system.freeOwnedResult(allocator, result);
@@ -126,11 +106,6 @@ pub fn writePythonAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
 
     try writePythonAutoOutputWithIO(io, stdout, allocator, options);
     return true;
-}
-
-pub fn writeBazelAuto(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeBazelAutoWithIO(threaded.io(), stdout, allocator, options);
 }
 
 pub fn writeBazelAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {

@@ -57,16 +57,6 @@ pub fn detectWithIO(
     return .{ .root = root };
 }
 
-fn findBestRootCandidateAlloc(
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    boundary: ?[]const u8,
-    max_up: usize,
-) !?RootCandidate {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findBestRootCandidateAllocWithIO(threaded.io(), allocator, path, boundary, max_up);
-}
-
 fn findBestRootCandidateAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -116,11 +106,6 @@ fn buildMakeResultWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const
     return try shared.makeResult(allocator, root, "make", null, commands);
 }
 
-fn buildCmakeResult(allocator: std.mem.Allocator, root: []const u8) !Result {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildCmakeResultWithIO(threaded.io(), allocator, root);
-}
-
 fn buildCmakeResultWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !Result {
     const discovered = try common.discoverCmakeBuildDirAllocWithIO(io, std.heap.page_allocator, root);
     defer if (discovered) |value| std.heap.page_allocator.free(value);
@@ -129,26 +114,12 @@ fn buildCmakeResultWithIO(io: std.Io, allocator: std.mem.Allocator, root: []cons
     return try shared.makeResult(allocator, root, "cmake", build_ready, commands);
 }
 
-fn buildMesonResult(allocator: std.mem.Allocator, root: []const u8) !Result {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildMesonResultWithIO(threaded.io(), allocator, root);
-}
-
 fn buildMesonResultWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !Result {
     const discovered = try common.discoverMesonBuildDirAllocWithIO(io, std.heap.page_allocator, root);
     defer if (discovered) |value| std.heap.page_allocator.free(value);
     const build_ready = discovered != null;
     const commands = try buildMesonCommandsAllocWithIO(io, allocator, root, build_ready);
     return try shared.makeResult(allocator, root, "meson", build_ready, commands);
-}
-
-fn buildCmakeCommandsAlloc(
-    allocator: std.mem.Allocator,
-    root: []const u8,
-    build_ready: bool,
-) ![]CommandEntry {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildCmakeCommandsAllocWithIO(threaded.io(), allocator, root, build_ready);
 }
 
 fn buildCmakeCommandsAllocWithIO(
@@ -185,15 +156,6 @@ fn buildCmakeCommandsAllocWithIO(
     try shared.appendOwnedCommand(&commands, allocator, "install", try std.fmt.allocPrint(allocator, "cmake --build {s} --target install", .{shell_build_dir}));
 
     return try commands.toOwnedSlice(allocator);
-}
-
-fn buildMesonCommandsAlloc(
-    allocator: std.mem.Allocator,
-    root: []const u8,
-    build_ready: bool,
-) ![]CommandEntry {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildMesonCommandsAllocWithIO(threaded.io(), allocator, root, build_ready);
 }
 
 fn buildMesonCommandsAllocWithIO(

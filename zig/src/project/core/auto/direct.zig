@@ -9,11 +9,6 @@ const zig_project = @import("../../zig/api.zig");
 
 const Options = types.Options;
 
-pub fn writeCargoAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeCargoAutoOutputWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writeCargoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
     const cargo_toml_path = (try project_io.findParentFileAllocWithIO(io, allocator, options.path, "Cargo.toml", 12)) orelse return true;
     defer allocator.free(cargo_toml_path);
@@ -25,11 +20,6 @@ pub fn writeCargoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.me
         .match_path = options.path,
     }, cargo_contents);
     return true;
-}
-
-pub fn writeGoAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeGoAutoOutputWithIO(threaded.io(), stdout, allocator, options);
 }
 
 pub fn writeGoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
@@ -80,15 +70,6 @@ pub fn writeGoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
         .match_path = options.path,
     }, go_mod_contents);
     return true;
-}
-
-pub fn writeZigAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    if (comptime @import("builtin").is_test) {
-        return writeZigAutoOutputWithIO(std.testing.io, stdout, allocator, options);
-    }
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    return writeZigAutoOutputWithIO(threaded.io(), stdout, allocator, options);
 }
 
 pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
@@ -153,11 +134,6 @@ fn containsName(names: []const []u8, needle: []const u8) bool {
     return false;
 }
 
-pub fn writeCMakeAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeCMakeAutoOutputWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writeCMakeAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
     const cmake_path = (try project_io.findParentFileAllocWithIO(io, allocator, options.path, "CMakeLists.txt", 12)) orelse return true;
     defer allocator.free(cmake_path);
@@ -169,11 +145,6 @@ pub fn writeCMakeAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.me
         .match_path = options.match_path orelse options.path,
     }, cmake_contents);
     return true;
-}
-
-pub fn writeMesonAutoOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeMesonAutoOutputWithIO(threaded.io(), stdout, allocator, options);
 }
 
 pub fn writeMesonAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {

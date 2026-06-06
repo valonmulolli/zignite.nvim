@@ -125,11 +125,6 @@ pub fn handleDaemonFrame(
     try stdout.flush();
 }
 
-pub fn detectToolCommands(allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return detectToolCommandsWithIO(threaded.io(), allocator, tool);
-}
-
 pub fn detectToolCommandsWithIO(io: std.Io, allocator: std.mem.Allocator, tool: Tool) ![][]u8 {
     const output = parse.detectToolOutputWithIO(io, allocator, tool) catch |err| switch (err) {
         error.FileNotFound => return try allocator.alloc([]u8, 0),

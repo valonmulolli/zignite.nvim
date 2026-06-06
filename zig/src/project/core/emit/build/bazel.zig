@@ -32,11 +32,6 @@ pub fn writeBazelProjectOutput(stdout: anytype, allocator: std.mem.Allocator, op
     try writeBazelCommandInfo(stdout, info);
 }
 
-pub fn writeBazelWorkspaceOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeBazelWorkspaceOutputWithIO(threaded.io(), stdout, allocator, options);
-}
-
 pub fn writeBazelWorkspaceOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !void {
     const info = try bazel.buildWorkspaceCommandInfoWithIO(io, allocator, options.path, options.match_path);
     defer bazel.freeOwnedCommandInfo(allocator, info);

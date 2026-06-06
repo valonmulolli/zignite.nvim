@@ -39,16 +39,6 @@ pub fn detectWithIO(
     return .{};
 }
 
-fn findJvmRootAlloc(
-    allocator: std.mem.Allocator,
-    start_path: []const u8,
-    boundary: ?[]const u8,
-    max_up: usize,
-) !?Result {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findJvmRootAllocWithIO(threaded.io(), allocator, start_path, boundary, max_up);
-}
-
 fn findJvmRootAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -152,11 +142,6 @@ fn buildMavenCommandsAlloc(allocator: std.mem.Allocator) ![]CommandEntry {
     try shared.appendDupedCommand(&commands, allocator, "mvn-package", "mvn package");
 
     return try commands.toOwnedSlice(allocator);
-}
-
-fn buildGradleCommandsAlloc(allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildGradleCommandsAllocWithIO(threaded.io(), allocator, root);
 }
 
 fn buildGradleCommandsAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]CommandEntry {

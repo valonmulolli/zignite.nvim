@@ -155,11 +155,6 @@ fn extensionFiletype(filepath: []const u8) ?[]const u8 {
     return null;
 }
 
-fn shebangFiletypeAlloc(allocator: std.mem.Allocator, filepath: []const u8) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return shebangFiletypeAllocWithIO(threaded.io(), allocator, filepath);
-}
-
 fn shebangFiletypeAllocWithIO(io: std.Io, allocator: std.mem.Allocator, filepath: []const u8) !?[]u8 {
     if (filepath.len == 0) return null;
 

@@ -41,7 +41,6 @@ const RUN_RESOLVE_RES_END = "@@ZRUN_RES_END";
 const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
-const QUICKFIX_MAX_LINE = 16 * 1024 * 1024;
 const FRAME_HEADER_MAX_LINE = 4096;
 var shutdown_requested = std.atomic.Value(bool).init(false);
 var signal_handlers_installed = false;

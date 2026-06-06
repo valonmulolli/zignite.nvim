@@ -8,11 +8,6 @@ const types = @import("../../types.zig");
 
 const Options = types.Options;
 
-pub fn writeMesonOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeMesonOutputWithIO(threaded.io(), stdout, allocator, options, contents);
-}
-
 pub fn writeMesonOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     const items = try meson.parseTargetsWithIO(io, allocator, contents, options.path, options.match_path);
     defer meson.freeOwnedTargets(allocator, items);

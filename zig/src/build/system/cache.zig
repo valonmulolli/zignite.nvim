@@ -83,16 +83,6 @@ pub fn resetForTests() void {
     resetCache();
 }
 
-fn detectUncached(
-    allocator: std.mem.Allocator,
-    query: Query,
-    path: []const u8,
-    project_root: ?[]const u8,
-) !Result {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return detectUncachedWithIO(threaded.io(), allocator, query, path, project_root);
-}
-
 fn detectUncachedWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
