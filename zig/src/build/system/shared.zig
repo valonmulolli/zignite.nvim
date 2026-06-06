@@ -88,11 +88,6 @@ pub fn pathHasFileWithIO(io: std.Io, root: []const u8, name: []const u8) bool {
     return true;
 }
 
-pub fn pathHasAnyMarker(root: []const u8, markers: []const []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return pathHasAnyMarkerWithIO(threaded.io(), root, markers);
-}
-
 pub fn pathHasAnyMarkerWithIO(io: std.Io, root: []const u8, markers: []const []const u8) bool {
     for (markers) |marker| {
         if (pathHasFileWithIO(io, root, marker)) return true;
@@ -237,17 +232,6 @@ pub fn replaceDeeperOwnedRoot(
 
     best_root.* = candidate_root;
     return true;
-}
-
-pub fn findRootForFilesWithinAlloc(
-    allocator: std.mem.Allocator,
-    start_path: []const u8,
-    markers: []const []const u8,
-    boundary: ?[]const u8,
-    max_up: usize,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findRootForFilesWithinAllocWithIO(threaded.io(), allocator, start_path, markers, boundary, max_up);
 }
 
 pub fn findRootForFilesWithinAllocWithIO(

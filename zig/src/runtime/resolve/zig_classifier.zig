@@ -2,16 +2,6 @@ const std = @import("std");
 const pathing = @import("../../pathing.zig");
 const project_common = @import("../../project/core/common.zig");
 
-pub fn shouldPreferProjectRunner(
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    context_path: []const u8,
-    project_root: ?[]const u8,
-) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return shouldPreferProjectRunnerWithIO(threaded.io(), allocator, path, context_path, project_root);
-}
-
 pub fn shouldPreferProjectRunnerWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -26,16 +16,6 @@ pub fn shouldPreferProjectRunnerWithIO(
     defer allocator.free(contents);
 
     return sourceRequiresProjectModules(contents);
-}
-
-pub fn findBuildRootAlloc(
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    project_root: ?[]const u8,
-    max_up: usize,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findBuildRootAllocWithIO(threaded.io(), allocator, path, project_root, max_up);
 }
 
 pub fn findBuildRootAllocWithIO(
@@ -68,11 +48,6 @@ pub fn findBuildRootAllocWithIO(
     }
 
     return null;
-}
-
-fn pathHasFile(root: []const u8, name: []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return pathHasFileWithIO(threaded.io(), std.heap.page_allocator, root, name) catch false;
 }
 
 fn pathHasFileWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, name: []const u8) !bool {
@@ -217,7 +192,8 @@ test "findBuildRootAlloc walks parents from relative path" {
     const filepath_relative = try std.fmt.allocPrint(allocator, "{s}/src/main.zig", .{repo_relative});
     defer allocator.free(filepath_relative);
 
-    const root = try findBuildRootAlloc(allocator, filepath_relative, null, 12);
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const root = try findBuildRootAllocWithIO(threaded.io(), allocator, filepath_relative, null, 12);
     defer if (root) |value| allocator.free(value);
 
     try std.testing.expect(root != null);

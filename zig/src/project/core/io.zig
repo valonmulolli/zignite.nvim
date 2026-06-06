@@ -64,16 +64,6 @@ pub fn readProjectFileWithIO(io: std.Io, allocator: std.mem.Allocator, kind: Kin
     return common.readFileAllocWithIO(io, allocator, path);
 }
 
-pub fn findParentFileAlloc(
-    allocator: std.mem.Allocator,
-    start_path: []const u8,
-    name: []const u8,
-    max_up: usize,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findParentFileAllocWithIO(threaded.io(), allocator, start_path, name, max_up);
-}
-
 pub fn findParentFileAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -105,16 +95,6 @@ pub fn findParentFileAllocWithIO(
     }
 
     return null;
-}
-
-pub fn findParentFileAnyAlloc(
-    allocator: std.mem.Allocator,
-    start_path: []const u8,
-    names: []const []const u8,
-    max_up: usize,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findParentFileAnyAllocWithIO(threaded.io(), allocator, start_path, names, max_up);
 }
 
 pub fn findParentFileAnyAllocWithIO(
@@ -152,11 +132,6 @@ pub fn findParentFileAnyAllocWithIO(
     return null;
 }
 
-pub fn pathExists(path: []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return pathExistsWithIO(threaded.io(), path);
-}
-
 pub fn pathExistsWithIO(io: std.Io, path: []const u8) bool {
     std.Io.Dir.cwd().access(io, path, .{}) catch return false;
     return true;
@@ -178,7 +153,7 @@ test "findParentFileAlloc walks parents from relative path" {
     const package_json_relative = try std.fmt.allocPrint(allocator, "{s}/package.json", .{repo_relative});
     defer allocator.free(package_json_relative);
 
-    const found = try findParentFileAlloc(allocator, filepath_relative, "package.json", 12);
+    const found = try findParentFileAllocWithIO(std.testing.io, allocator, filepath_relative, "package.json", 12);
     defer if (found) |value| allocator.free(value);
 
     try std.testing.expect(found != null);
@@ -201,7 +176,7 @@ test "findParentFileAnyAlloc walks parents from relative path" {
     const makefile_relative = try std.fmt.allocPrint(allocator, "{s}/Makefile", .{repo_relative});
     defer allocator.free(makefile_relative);
 
-    const found = try findParentFileAnyAlloc(allocator, filepath_relative, &.{ "GNUmakefile", "Makefile" }, 12);
+    const found = try findParentFileAnyAllocWithIO(std.testing.io, allocator, filepath_relative, &.{ "GNUmakefile", "Makefile" }, 12);
     defer if (found) |value| allocator.free(value);
 
     try std.testing.expect(found != null);

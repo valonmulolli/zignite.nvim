@@ -8,11 +8,6 @@ const types = @import("../../types.zig");
 
 const Options = types.Options;
 
-pub fn writeCmakeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeCmakeOutputWithIO(threaded.io(), stdout, allocator, options, contents);
-}
-
 pub fn writeCmakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
     const items = try cmake.parseTargetsWithIO(io, allocator, contents, options.path, options.match_path);
     defer cmake.freeOwnedTargets(allocator, items);

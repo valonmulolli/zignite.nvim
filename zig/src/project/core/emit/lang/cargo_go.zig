@@ -35,11 +35,6 @@ pub fn writeCargoOutput(stdout: anytype, allocator: std.mem.Allocator, cargo_tom
     }
 }
 
-pub fn writeGoOutput(stdout: anytype, allocator: std.mem.Allocator, project_path: []const u8, contents: []const u8, match_path: ?[]const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeGoOutputWithIO(threaded.io(), stdout, allocator, project_path, contents, match_path);
-}
-
 pub fn writeGoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, project_path: []const u8, contents: []const u8, match_path: ?[]const u8) !void {
     const info = try go.parseInfoWithIO(io, allocator, contents, project_path, match_path);
     defer go.freeOwnedInfo(allocator, info);

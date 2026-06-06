@@ -7,11 +7,6 @@ const project_io = @import("../../io.zig");
 const pyproject = @import("../../../pyproject/api.zig");
 const task_alias = @import("../task_alias.zig");
 
-pub fn writeMakeOutput(stdout: anytype, allocator: std.mem.Allocator, path: []const u8, contents: []const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeMakeOutputWithIO(threaded.io(), stdout, allocator, path, contents);
-}
-
 pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, path: []const u8, contents: []const u8) !void {
     var names: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &names);
@@ -36,18 +31,6 @@ pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
     if (!task_alias.containsName(names.items, "build") and task_alias.findSourceName(names.items, "build") == null) {
         try stdout.print("COMMAND\tbuild\tmake\n", .{});
     }
-}
-
-pub fn writePackageJsonOutput(
-    stdout: anytype,
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    contents: []const u8,
-    package_manager: ?[]const u8,
-    is_auto: bool,
-) !bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writePackageJsonOutputWithIO(threaded.io(), stdout, allocator, path, contents, package_manager, is_auto);
 }
 
 pub fn writePackageJsonOutputWithIO(

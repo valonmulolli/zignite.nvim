@@ -118,10 +118,6 @@ test "resolve live plan json includes wrapped system argv" {
     try std.testing.expectEqualStrings("live", wrapped_argv.items[5]);
 }
 
-pub fn jsonStringify(self: Plan, jw: anytype) !void {
-    try types.Plan.jsonStringify(self, jw);
-}
-
 test "resolve live plan returns execution payload" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();

@@ -72,11 +72,6 @@ pub fn deinitOwnedArgv(allocator: std.mem.Allocator, argv: *std.ArrayList([]u8))
     argv.deinit(allocator);
 }
 
-fn selfExePathAlloc(allocator: std.mem.Allocator) ![]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return selfExePathAllocWithIO(threaded.io(), allocator);
-}
-
 fn selfExePathAllocWithIO(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
     const len = try std.process.executablePath(io, &buffer);

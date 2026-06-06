@@ -62,11 +62,6 @@ pub fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents:
     }
 }
 
-pub fn writeGradleOutput(stdout: anytype, allocator: std.mem.Allocator, build_file_path: []const u8, contents: []const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return writeGradleOutputWithIO(threaded.io(), stdout, allocator, build_file_path, contents);
-}
-
 pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, build_file_path: []const u8, contents: []const u8) !void {
     var names: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &names);

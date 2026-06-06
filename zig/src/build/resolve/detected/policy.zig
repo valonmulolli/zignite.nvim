@@ -32,15 +32,6 @@ pub fn shouldOverlayBuiltinCommand(
     return shouldOverlayCommand(filetype, detected_system, commands, command_entry);
 }
 
-pub fn shouldOverlayConfiguredCommand(
-    _: []const u8,
-    _: ?[]const u8,
-    _: []const build_types.CommandEntry,
-    _: build_types.CommandEntry,
-) bool {
-    return true;
-}
-
 fn shouldOverlayCommand(
     filetype: []const u8,
     detected_system: ?[]const u8,

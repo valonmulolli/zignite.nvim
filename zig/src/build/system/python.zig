@@ -143,11 +143,6 @@ fn detectProfileWithIO(
     return null;
 }
 
-fn findCondaEnvironmentPathAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return findCondaEnvironmentPathAllocWithIO(threaded.io(), allocator, root);
-}
-
 fn findCondaEnvironmentPathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
     const yml = try std.fs.path.join(allocator, &.{ root, "environment.yml" });
     defer allocator.free(yml);

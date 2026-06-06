@@ -1,18 +1,8 @@
 const std = @import("std");
 const project_common = @import("../project/core/common.zig");
 
-pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return project_common.readFileAllocWithIO(threaded.io(), allocator, path);
-}
-
 pub fn readFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return project_common.readFileAllocWithIO(io, allocator, path);
-}
-
-pub fn hasCmakeBuildTree(root: []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return hasCmakeBuildTreeWithIO(threaded.io(), root);
 }
 
 pub fn hasCmakeBuildTreeWithIO(io: std.Io, root: []const u8) bool {
@@ -21,25 +11,10 @@ pub fn hasCmakeBuildTreeWithIO(io: std.Io, root: []const u8) bool {
     return discovered != null;
 }
 
-pub fn hasMesonBuildTree(root: []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return hasMesonBuildTreeWithIO(threaded.io(), root);
-}
-
 pub fn hasMesonBuildTreeWithIO(io: std.Io, root: []const u8) bool {
     const discovered = discoverMesonBuildDirAllocWithIO(io, std.heap.page_allocator, root) catch return false;
     defer if (discovered) |value| std.heap.page_allocator.free(value);
     return discovered != null;
-}
-
-pub fn resolveCmakeBuildDirAlloc(allocator: std.mem.Allocator, root: []const u8) ![]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return resolveCmakeBuildDirAllocWithIO(threaded.io(), allocator, root);
-}
-
-pub fn resolveMesonBuildDirAlloc(allocator: std.mem.Allocator, root: []const u8) ![]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return resolveMesonBuildDirAllocWithIO(threaded.io(), allocator, root);
 }
 
 pub fn resolveCmakeBuildDirAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]u8 {
@@ -48,16 +23,6 @@ pub fn resolveCmakeBuildDirAllocWithIO(io: std.Io, allocator: std.mem.Allocator,
 
 pub fn resolveMesonBuildDirAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]u8 {
     return (try discoverMesonBuildDirAllocWithIO(io, allocator, root)) orelse allocator.dupe(u8, "build");
-}
-
-pub fn discoverCmakeBuildDirAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return discoverCmakeBuildDirAllocWithIO(threaded.io(), allocator, root);
-}
-
-pub fn discoverMesonBuildDirAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return discoverMesonBuildDirAllocWithIO(threaded.io(), allocator, root);
 }
 
 pub fn discoverCmakeBuildDirAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
@@ -286,11 +251,6 @@ pub fn discoverBuildRunPathAllocWithIO(
     return null;
 }
 
-fn buildRelativePathExists(allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return buildRelativePathExistsWithIO(threaded.io(), allocator, root, relative_path);
-}
-
 fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
     const full_path = std.fs.path.join(allocator, &.{ root, relative_path }) catch return false;
     defer allocator.free(full_path);
@@ -387,16 +347,6 @@ const BuildDirMode = enum {
     file_dir,
     parent_of_file_dir,
 };
-
-fn discoverBuildDirForMarkerAlloc(
-    allocator: std.mem.Allocator,
-    root: []const u8,
-    marker_name: []const u8,
-    mode: BuildDirMode,
-) !?[]u8 {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    return discoverBuildDirForMarkerAllocWithIO(threaded.io(), allocator, root, marker_name, mode);
-}
 
 fn discoverBuildDirForMarkerAllocWithIO(
     io: std.Io,
