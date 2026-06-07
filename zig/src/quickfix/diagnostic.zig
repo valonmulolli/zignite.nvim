@@ -61,3 +61,44 @@ fn parseParenDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
 
     return try std.fmt.allocPrint(allocator, "{s}:{d}:{d}: {s}", .{ path, line_no, col_no, normalized_msg });
 }
+
+test "canonicalizeDiagnostic parses colon-style rustc/Go/gcc output" {
+    const allocator = std.testing.allocator;
+
+    const result = try canonicalizeDiagnostic(allocator, "src/main.zig:42:5: error: expected ;");
+    defer if (result) |r| allocator.free(r);
+    try std.testing.expectEqualStrings("src/main.zig:42:5: error: expected ;", result.?);
+}
+
+test "canonicalizeDiagnostic parses parenthesized MSVC/clang output" {
+    const allocator = std.testing.allocator;
+
+    const result = try canonicalizeDiagnostic(allocator, "C:\\proj\\main.cpp(17:3) error C2065: undeclared");
+    defer if (result) |r| allocator.free(r);
+    try std.testing.expectEqualStrings("C:\\proj\\main.cpp:17:3: error C2065: undeclared", result.?);
+}
+
+test "canonicalizeDiagnostic strips --&gt; prefix" {
+    const allocator = std.testing.allocator;
+
+    const result = try canonicalizeDiagnostic(allocator, "--> src/lib.zig:8:2: missing return");
+    defer if (result) |r| allocator.free(r);
+    try std.testing.expectEqualStrings("src/lib.zig:8:2: missing return", result.?);
+}
+
+test "canonicalizeDiagnostic returns null for non-diagnostic lines" {
+    const allocator = std.testing.allocator;
+
+    try std.testing.expect(try canonicalizeDiagnostic(allocator, "") == null);
+    try std.testing.expect(try canonicalizeDiagnostic(allocator, "   ") == null);
+    try std.testing.expect(try canonicalizeDiagnostic(allocator, "Compiling project...") == null);
+    try std.testing.expect(try canonicalizeDiagnostic(allocator, "error: file not found") == null);
+}
+
+test "canonicalizeDiagnostic falls back to 'diagnostic' for empty message" {
+    const allocator = std.testing.allocator;
+
+    const result = try canonicalizeDiagnostic(allocator, "src/main.zig:5:1: ");
+    defer if (result) |r| allocator.free(r);
+    try std.testing.expectEqualStrings("src/main.zig:5:1: diagnostic", result.?);
+}
