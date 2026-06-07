@@ -62,6 +62,36 @@ pub fn writeErrorResponse(
     try writer.print("{s} {d}\n", .{ response_end, request_id });
 }
 
+pub const DispatchErrorFrame = struct {
+    response_begin: []const u8,
+    response_err: []const u8,
+    response_end: []const u8,
+};
+
+/// Catches errors from a `handleDaemonFrame` call, writes the protocol error
+/// frame using the request id parsed from the begin line, and flushes.
+/// Returns `error.UnexpectedEof` unchanged so the daemon can propagate it.
+pub fn handleDispatchError(
+    err: anyerror,
+    writer: anytype,
+    begin_line: []const u8,
+    begin_marker: []const u8,
+    frame: DispatchErrorFrame,
+) !void {
+    if (err == error.UnexpectedEof) return err;
+    if (parseRequestId(begin_line, begin_marker)) |request_id| {
+        try writeErrorResponse(
+            writer,
+            frame.response_begin,
+            frame.response_err,
+            frame.response_end,
+            request_id,
+            @errorName(err),
+        );
+        try writer.flush();
+    }
+}
+
 pub fn readUntilEnd(
     allocator: std.mem.Allocator,
     reader: anytype,
@@ -219,6 +249,57 @@ test "writeErrorResponse emits protocol frame" {
         "@@ZDET_RES_BEGIN 7\n@@ZDET_RES_ERR 7 InvalidDetectTool\n@@ZDET_RES_END 7\n",
         out.written(),
     );
+}
+
+test "handleDispatchError writes frame and flushes for parseable request id" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try handleDispatchError(
+        error.InvalidProjectDaemonHeader,
+        &out.writer,
+        "@@ZPRJ_REQ_BEGIN 11 notavalidmarker",
+        "@@ZPRJ_REQ_BEGIN",
+        .{ .response_begin = "@@ZPRJ_RES_BEGIN", .response_err = "@@ZPRJ_RES_ERR", .response_end = "@@ZPRJ_RES_END" },
+    );
+
+    try std.testing.expectEqualStrings(
+        "@@ZPRJ_RES_BEGIN 11\n@@ZPRJ_RES_ERR 11 InvalidProjectDaemonHeader\n@@ZPRJ_RES_END 11\n",
+        out.written(),
+    );
+}
+
+test "handleDispatchError silently skips when request id is unparseable" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try handleDispatchError(
+        error.InvalidProjectDaemonHeader,
+        &out.writer,
+        "@@ZPRJ_REQ_BEGIN",
+        "@@ZPRJ_REQ_BEGIN",
+        .{ .response_begin = "@@ZPRJ_RES_BEGIN", .response_err = "@@ZPRJ_RES_ERR", .response_end = "@@ZPRJ_RES_END" },
+    );
+
+    try std.testing.expectEqualStrings("", out.written());
+}
+
+test "handleDispatchError propagates UnexpectedEof unchanged" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    const result = handleDispatchError(
+        error.UnexpectedEof,
+        &out.writer,
+        "@@ZPRJ_REQ_BEGIN 5 marker",
+        "@@ZPRJ_REQ_BEGIN",
+        .{ .response_begin = "@@ZPRJ_RES_BEGIN", .response_err = "@@ZPRJ_RES_ERR", .response_end = "@@ZPRJ_RES_END" },
+    );
+    try std.testing.expectError(error.UnexpectedEof, result);
+    try std.testing.expectEqualStrings("", out.written());
 }
 
 test "readUntilEnd forwards lines until matching frame end" {

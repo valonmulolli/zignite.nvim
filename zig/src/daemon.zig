@@ -87,103 +87,73 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
             detect.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, DETECT_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        DETECT_RES_BEGIN,
-                        DETECT_RES_ERR,
-                        DETECT_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    DETECT_REQ_BEGIN,
+                    .{ .response_begin = DETECT_RES_BEGIN, .response_err = DETECT_RES_ERR, .response_end = DETECT_RES_END },
+                );
             };
             continue;
         }
         if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
             project.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, PROJECT_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        PROJECT_RES_BEGIN,
-                        PROJECT_RES_ERR,
-                        PROJECT_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    PROJECT_REQ_BEGIN,
+                    .{ .response_begin = PROJECT_RES_BEGIN, .response_err = PROJECT_RES_ERR, .response_end = PROJECT_RES_END },
+                );
             };
             continue;
         }
         if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
             config.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, CONFIG_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        CONFIG_RES_BEGIN,
-                        CONFIG_RES_ERR,
-                        CONFIG_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    CONFIG_REQ_BEGIN,
+                    .{ .response_begin = CONFIG_RES_BEGIN, .response_err = CONFIG_RES_ERR, .response_end = CONFIG_RES_END },
+                );
             };
             continue;
         }
         if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
             build_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, BUILD_RESOLVE_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        BUILD_RESOLVE_RES_BEGIN,
-                        BUILD_RESOLVE_RES_ERR,
-                        BUILD_RESOLVE_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    BUILD_RESOLVE_REQ_BEGIN,
+                    .{ .response_begin = BUILD_RESOLVE_RES_BEGIN, .response_err = BUILD_RESOLVE_RES_ERR, .response_end = BUILD_RESOLVE_RES_END },
+                );
             };
             continue;
         }
         if (std.mem.startsWith(u8, line, BUILD_ACTION_REQ_BEGIN)) {
             build_action.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, BUILD_ACTION_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        BUILD_ACTION_RES_BEGIN,
-                        BUILD_ACTION_RES_ERR,
-                        BUILD_ACTION_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    BUILD_ACTION_REQ_BEGIN,
+                    .{ .response_begin = BUILD_ACTION_RES_BEGIN, .response_err = BUILD_ACTION_RES_ERR, .response_end = BUILD_ACTION_RES_END },
+                );
             };
             continue;
         }
         if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
             run_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, RUN_RESOLVE_REQ_BEGIN)) |request_id| {
-                    try frame.writeErrorResponse(
-                        stdout,
-                        RUN_RESOLVE_RES_BEGIN,
-                        RUN_RESOLVE_RES_ERR,
-                        RUN_RESOLVE_RES_END,
-                        request_id,
-                        @errorName(err),
-                    );
-                    try stdout.flush();
-                }
+                return frame.handleDispatchError(
+                    err,
+                    stdout,
+                    line,
+                    RUN_RESOLVE_REQ_BEGIN,
+                    .{ .response_begin = RUN_RESOLVE_RES_BEGIN, .response_err = RUN_RESOLVE_RES_ERR, .response_end = RUN_RESOLVE_RES_END },
+                );
             };
             continue;
         }
