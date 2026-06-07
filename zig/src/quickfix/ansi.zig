@@ -42,3 +42,53 @@ pub fn stripAnsiAlloc(allocator: std.mem.Allocator, line: []const u8) ![]u8 {
 
     return try out.toOwnedSlice(allocator);
 }
+
+test "stripAnsiAlloc passes through plain text" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "hello world");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("hello world", out);
+}
+
+test "stripAnsiAlloc strips CSI sequences" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "\x1b[31mred\x1b[0m normal");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("red normal", out);
+}
+
+test "stripAnsiAlloc strips OSC sequences terminated by BEL" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "before\x1b]0;title\x07after");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("beforeafter", out);
+}
+
+test "stripAnsiAlloc strips OSC sequences terminated by ST" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "before\x1b]0;title\x1b\\after");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("beforeafter", out);
+}
+
+test "stripAnsiAlloc handles adversarial unterminated sequences" {
+    const allocator = std.testing.allocator;
+    // CSI without terminator at end of line should consume rest
+    const out = try stripAnsiAlloc(allocator, "a\x1b[31");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("a", out);
+}
+
+test "stripAnsiAlloc ignores lone ESC bytes" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "a\x1bb");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("a\x1bb", out);
+}
+
+test "stripAnsiAlloc handles empty input" {
+    const allocator = std.testing.allocator;
+    const out = try stripAnsiAlloc(allocator, "");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("", out);
+}

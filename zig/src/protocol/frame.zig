@@ -315,3 +315,27 @@ test "collectOwnedLinesUntilEnd strips tabs and skips empty values" {
     try std.testing.expectEqualStrings("first", lines[0]);
     try std.testing.expectEqualStrings("second", lines[1]);
 }
+
+test "collectOwnedLinesUntilEnd enforces max_bytes" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "aaa",
+        "bbb",
+        "ccc",
+        "@@ZPRJ_REQ_END 1",
+    } };
+
+    const result = collectOwnedLinesUntilEnd(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+        1,
+        .{
+            .strip_leading_tab = false,
+            .skip_empty = false,
+            .max_bytes = 4,
+        },
+    );
+    try std.testing.expectError(error.StreamTooLong, result);
+}
