@@ -263,6 +263,60 @@ fn joinLines(allocator: std.mem.Allocator, lines: []const []const u8) ![]u8 {
 
 const TestReader = frame.TestReader;
 
+test "parseArgs returns default file input when no --input-kind is supplied" {
+    const options = try parseArgs(&.{
+        "--run-resolve",
+        "--path=/tmp/main.go",
+        "--filetype=go",
+    });
+    try std.testing.expectEqual(source.InputKind.file, options.input_kind);
+    try std.testing.expectEqualStrings("/tmp/main.go", options.path);
+    try std.testing.expectEqualStrings("go", options.filetype);
+    try std.testing.expect(options.context_path == null);
+    try std.testing.expect(options.buffer_id == null);
+    try std.testing.expect(options.selection_text == null);
+}
+
+test "parseArgs accepts --input-kind file and --context-path and --buffer-id" {
+    const options = try parseArgs(&.{
+        "--run-resolve",
+        "--path=/tmp/main.zig",
+        "--filetype=zig",
+        "--input-kind=file",
+        "--context-path=/tmp/main.zig",
+        "--buffer-id=42",
+    });
+    try std.testing.expectEqual(source.InputKind.file, options.input_kind);
+    try std.testing.expectEqualStrings("/tmp/main.zig", options.context_path.?);
+    try std.testing.expectEqual(@as(u32, 42), options.buffer_id.?);
+}
+
+test "parseArgs rejects missing path and missing filetype" {
+    try std.testing.expectError(error.MissingRunResolvePath, parseArgs(&.{
+        "--run-resolve",
+        "--filetype=go",
+    }));
+    try std.testing.expectError(error.MissingRunResolveFiletype, parseArgs(&.{
+        "--run-resolve",
+        "--path=/tmp/main.go",
+    }));
+}
+
+test "parseArgs rejects unknown flags and invalid buffer-id" {
+    try std.testing.expectError(error.InvalidRunResolveFlag, parseArgs(&.{
+        "--run-resolve",
+        "--path=/tmp/main.go",
+        "--filetype=go",
+        "--bogus",
+    }));
+    try std.testing.expectError(error.InvalidCharacter, parseArgs(&.{
+        "--run-resolve",
+        "--path=/tmp/main.go",
+        "--filetype=go",
+        "--buffer-id=notanumber",
+    }));
+}
+
 test "parseArgsWithPayload validates explicit and inferred inline input kinds" {
     const options = try parseArgsWithPayload(&.{
         "--run-resolve",
