@@ -273,3 +273,65 @@ test "resolveSupportedAlloc maps project manifest filenames to backend filetypes
         try std.testing.expectEqualStrings(case.expected, resolved);
     }
 }
+
+test "resolveSupportedAlloc maps known extensions directly" {
+    const allocator = std.testing.allocator;
+
+    const cases = [_]struct {
+        path: []const u8,
+        expected: []const u8,
+    }{
+        .{ .path = "/tmp/main.go", .expected = "go" },
+        .{ .path = "/tmp/main.rs", .expected = "rust" },
+        .{ .path = "/tmp/main.zig", .expected = "zig" },
+        .{ .path = "/tmp/main.lua", .expected = "lua" },
+        .{ .path = "/tmp/main.py", .expected = "python" },
+        .{ .path = "/tmp/main.js", .expected = "javascript" },
+        .{ .path = "/tmp/main.ts", .expected = "typescript" },
+        .{ .path = "/tmp/main.odin", .expected = "odin" },
+        .{ .path = "/tmp/main.jl", .expected = "julia" },
+        .{ .path = "/tmp/main.rb", .expected = "ruby" },
+    };
+
+    for (cases) |case| {
+        const resolved = try resolveSupportedAlloc(allocator, "auto", case.path);
+        defer allocator.free(resolved);
+        try std.testing.expectEqualStrings(case.expected, resolved);
+    }
+}
+
+test "resolveSupportedAlloc keeps aliased filetype when no extension match" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveSupportedAlloc(allocator, "cxx", "/tmp/example.unknown");
+    defer allocator.free(resolved);
+    try std.testing.expectEqualStrings("cpp", resolved);
+}
+
+test "resolveSupportedAlloc returns requested for unknown files" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveSupportedAlloc(allocator, "ruby", "/tmp/example.weird");
+    defer allocator.free(resolved);
+    try std.testing.expectEqualStrings("ruby", resolved);
+}
+
+test "resolveSupportedAlloc trims whitespace from requested filetype" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveSupportedAlloc(allocator, "  c++  ", "/tmp/example.unknown");
+    defer allocator.free(resolved);
+    try std.testing.expectEqualStrings("cpp", resolved);
+}
+
+test "resolveSupportedAlloc prefers extension over filename" {
+    const allocator = std.testing.allocator;
+    // .py extension wins over Makefile basename lookup
+    const resolved = try resolveSupportedAlloc(allocator, "auto", "/tmp/Makefile.py");
+    defer allocator.free(resolved);
+    try std.testing.expectEqualStrings("python", resolved);
+}
+
+test "resolveSupportedAlloc uses filename for extensionless files" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveSupportedAlloc(allocator, "auto", "/tmp/Makefile");
+    defer allocator.free(resolved);
+    try std.testing.expectEqualStrings("cpp", resolved);
+}
