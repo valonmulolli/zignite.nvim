@@ -109,3 +109,31 @@ test "loadRunnerConfig returns builtin cleanup command when present" {
 test "loadRunnerConfig returns null for unknown filetype" {
     try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "unknown")) == null);
 }
+
+test "loadRunnerConfig returns zig and rust builtin commands" {
+    {
+        var runner = (try loadRunnerConfig(std.testing.allocator, "zig")).?;
+        defer runner.deinit(std.testing.allocator);
+        try std.testing.expectEqualStrings("zig run $file", runner.command.?);
+    }
+    {
+        var runner = (try loadRunnerConfig(std.testing.allocator, "rust")).?;
+        defer runner.deinit(std.testing.allocator);
+        try std.testing.expectEqualStrings("rustc $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt", runner.command.?);
+        try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+    }
+}
+
+test "loadRunnerConfig returns java cleanup with $dir placeholder" {
+    var runner = (try loadRunnerConfig(std.testing.allocator, "java")).?;
+    defer runner.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("javac $file && java -cp $dir $fileNameWithoutExt", runner.command.?);
+    try std.testing.expectEqualStrings("rm -f $dir/$fileNameWithoutExt.class", runner.cleanup_command.?);
+}
+
+test "loadRunnerConfig returns haskell with /tmp binary cleanup" {
+    var runner = (try loadRunnerConfig(std.testing.allocator, "haskell")).?;
+    defer runner.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt", runner.command.?);
+    try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+}
