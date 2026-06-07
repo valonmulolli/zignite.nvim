@@ -6,16 +6,34 @@ pub fn stripAnsiAlloc(allocator: std.mem.Allocator, line: []const u8) ![]u8 {
 
     var i: usize = 0;
     while (i < line.len) {
-        if (line[i] == 0x1b and i + 1 < line.len and line[i + 1] == '[') {
-            i += 2;
-            while (i < line.len) : (i += 1) {
-                const ch = line[i];
-                if (ch >= 0x40 and ch <= 0x7e) {
-                    i += 1;
-                    break;
+        if (line[i] == 0x1b and i + 1 < line.len) {
+            const next = line[i + 1];
+            if (next == '[') {
+                i += 2;
+                while (i < line.len) : (i += 1) {
+                    const ch = line[i];
+                    if (ch >= 0x40 and ch <= 0x7e) {
+                        i += 1;
+                        break;
+                    }
                 }
+                continue;
             }
-            continue;
+            if (next == ']') {
+                i += 2;
+                while (i < line.len) : (i += 1) {
+                    const ch = line[i];
+                    if (ch == 0x07) {
+                        i += 1;
+                        break;
+                    }
+                    if (ch == 0x1b and i + 1 < line.len and line[i + 1] == '\\') {
+                        i += 2;
+                        break;
+                    }
+                }
+                continue;
+            }
         }
 
         try out.append(allocator, line[i]);

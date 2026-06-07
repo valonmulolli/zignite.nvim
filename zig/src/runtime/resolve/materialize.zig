@@ -82,7 +82,7 @@ fn substituteVariablesImpl(
     var index: usize = 0;
     while (index < template.len) {
         if (template[index] == '%' and index + 1 < template.len and template[index + 1] == '%') {
-            try appendResolvedVariable(allocator, &out, file, shell_escape);
+            try out.append(allocator, '%');
             index += 2;
             continue;
         }

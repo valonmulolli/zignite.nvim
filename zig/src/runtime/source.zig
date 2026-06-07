@@ -101,7 +101,7 @@ fn prepareInlineSourceWithKey(
     const scratch_root = try scratchRootAlloc(allocator, environ_map);
     defer allocator.free(scratch_root);
 
-    try std.Io.Dir.cwd().createDirPath(io, scratch_root);
+    _ = try std.Io.Dir.cwd().createDirPathStatus(io, scratch_root, .default_dir);
 
     const scratch_path = try stableScratchPathAlloc(
         allocator,

@@ -383,7 +383,10 @@ fn discoverBuildDirForMarkerAllocWithIO(
         best = try allocator.dupe(u8, build_dir);
     }
 
-    if (best) |value| return try allocator.dupe(u8, value);
+    if (best) |value| {
+        best = null;
+        return value;
+    }
     return null;
 }
 

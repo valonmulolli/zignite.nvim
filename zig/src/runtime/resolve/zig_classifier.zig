@@ -103,14 +103,21 @@ pub fn sourceRequiresProjectModules(contents: []const u8) bool {
             continue;
         }
 
-        if (std.mem.startsWith(u8, contents[i..], "@import(\"")) {
-            const import_start = i + "@import(\"".len;
-            const rest = contents[import_start..];
-            const end = std.mem.findScalar(u8, rest, '"') orelse return false;
-            const name = rest[0..end];
-            if (isProjectModuleImport(name)) return true;
-            i = import_start + end + 1;
-            continue;
+        if (std.mem.startsWith(u8, contents[i..], "@import")) {
+            var paren_idx = i + "@import".len;
+            while (paren_idx < contents.len and (contents[paren_idx] == ' ' or contents[paren_idx] == '\t' or contents[paren_idx] == '\n' or contents[paren_idx] == '\r')) : (paren_idx += 1) {}
+            if (paren_idx < contents.len and contents[paren_idx] == '(') {
+                var string_idx = paren_idx + 1;
+                while (string_idx < contents.len and (contents[string_idx] == ' ' or contents[string_idx] == '\t' or contents[string_idx] == '\n' or contents[string_idx] == '\r')) : (string_idx += 1) {}
+                if (string_idx < contents.len and contents[string_idx] == '"') {
+                    const rest = contents[string_idx + 1 ..];
+                    const end = std.mem.findScalar(u8, rest, '"') orelse return false;
+                    const name = rest[0..end];
+                    if (isProjectModuleImport(name)) return true;
+                    i = string_idx + 1 + end + 1;
+                    continue;
+                }
+            }
         }
 
         i += 1;

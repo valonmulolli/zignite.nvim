@@ -108,12 +108,19 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
     const clamped_duration = std.math.cast(u32, ctx.duration) orelse std.math.maxInt(u32);
     std.Io.sleep(io, std.Io.Duration.fromMilliseconds(clamped_duration), .awake) catch |err| switch (err) {
         error.Canceled => return,
+        else => {
+            std.log.err("Timeout watcher sleep failed: {}", .{err});
+            return;
+        },
     };
     if (ctx.finished.load(.acquire)) {
         return;
     }
 
-    ctx.child_ptr.kill(io);
+    ctx.child_ptr.kill(io) catch |err| {
+        std.log.err("Failed to kill timed-out process: {}", .{err});
+        return;
+    };
 
     var stderr_buffer: [128]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
