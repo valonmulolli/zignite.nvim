@@ -103,15 +103,17 @@ pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     var quoted: std.ArrayList(u8) = .empty;
     errdefer quoted.deinit(allocator);
 
-    try quoted.append(allocator, '\'');
-    for (value) |ch| {
-        if (ch == '\'') {
-            try quoted.appendSlice(allocator, "'\"'\"'");
-        } else {
-            try quoted.append(allocator, ch);
-        }
+    try quoted.ensureTotalCapacity(allocator, value.len + 2);
+    quoted.appendAssumeCapacity('\'');
+    var run_start: usize = 0;
+    for (value, 0..) |ch, i| {
+        if (ch != '\'') continue;
+        if (i > run_start) quoted.appendSliceAssumeCapacity(value[run_start..i]);
+        quoted.appendSliceAssumeCapacity("'\"'\"'");
+        run_start = i + 1;
     }
-    try quoted.append(allocator, '\'');
+    if (run_start < value.len) quoted.appendSliceAssumeCapacity(value[run_start..]);
+    quoted.appendAssumeCapacity('\'');
 
     return try quoted.toOwnedSlice(allocator);
 }
