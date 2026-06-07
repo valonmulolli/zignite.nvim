@@ -164,3 +164,72 @@ test "normalizePathAlloc collapses separators and trims trailing slash" {
 
     try std.testing.expectEqualStrings("C:/work/demo/src", normalized);
 }
+
+test "hasControlChars detects newline, tab, and DEL" {
+    try std.testing.expect(!hasControlChars(""));
+    try std.testing.expect(!hasControlChars("safe text 42"));
+    try std.testing.expect(hasControlChars("line\nbreak"));
+    try std.testing.expect(hasControlChars("tab\there"));
+    try std.testing.expect(hasControlChars("delete\x7F"));
+    try std.testing.expect(hasControlChars("\x01bell"));
+}
+
+test "pushUniqueName deduplicates and rejects empty/control inputs" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer deinitOwnedNameList(allocator, &names);
+
+    try pushUniqueName(allocator, &names, "BUILD");
+    try pushUniqueName(allocator, &names, "BUILD");
+    try pushUniqueName(allocator, &names, "TEST");
+    try pushUniqueName(allocator, &names, "");
+    try pushUniqueName(allocator, &names, "BAD\nNAME");
+
+    try std.testing.expectEqual(@as(usize, 2), names.items.len);
+    try std.testing.expectEqualStrings("BUILD", names.items[0]);
+    try std.testing.expectEqualStrings("TEST", names.items[1]);
+}
+
+test "trimSpaces strips all four whitespace variants" {
+    try std.testing.expectEqualStrings("hello", trimSpaces("  \t\r\nhello \t\r\n"));
+    try std.testing.expectEqualStrings("", trimSpaces(""));
+    try std.testing.expectEqualStrings("", trimSpaces(" \t\r\n"));
+    try std.testing.expectEqualStrings("inner only", trimSpaces("inner only"));
+}
+
+test "stripTrailingCR removes only the final CR" {
+    try std.testing.expectEqualStrings("hello", stripTrailingCR("hello\r"));
+    try std.testing.expectEqualStrings("hello\rworld", stripTrailingCR("hello\rworld"));
+    try std.testing.expectEqualStrings("", stripTrailingCR(""));
+    try std.testing.expectEqualStrings("a", stripTrailingCR("a"));
+}
+
+test "makeRelativeToRootAlloc strips the root prefix and leading slash" {
+    const allocator = std.testing.allocator;
+
+    const in_root = try makeRelativeToRootAlloc(allocator, "/project", "/project/src/main.zig");
+    defer allocator.free(in_root);
+    try std.testing.expectEqualStrings("src/main.zig", in_root);
+
+    const no_root = try makeRelativeToRootAlloc(allocator, "/elsewhere", "/project/main.zig");
+    defer allocator.free(no_root);
+    try std.testing.expectEqualStrings("main.zig", no_root);
+
+    const empty_root = try makeRelativeToRootAlloc(allocator, "", "/project/main.zig");
+    defer allocator.free(empty_root);
+    try std.testing.expectEqualStrings("main.zig", empty_root);
+}
+
+test "quoteShellArgIfNeededAlloc quotes empty string" {
+    const allocator = std.testing.allocator;
+    const quoted = try quoteShellArgIfNeededAlloc(allocator, "");
+    defer allocator.free(quoted);
+    try std.testing.expectEqualStrings("''", quoted);
+}
+
+test "quoteShellArgAlloc wraps simple arg without escaping" {
+    const allocator = std.testing.allocator;
+    const quoted = try quoteShellArgAlloc(allocator, "simple");
+    defer allocator.free(quoted);
+    try std.testing.expectEqualStrings("'simple'", quoted);
+}

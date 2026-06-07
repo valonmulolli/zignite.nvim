@@ -325,3 +325,102 @@ test "runWithIO syncs config and resolves build commands through daemon" {
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tcustom\tmake custom\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
 }
+
+test "runWithIO writes project error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZPRJ_REQ_BEGIN 3 notavalidmarker /path",
+        "@@ZPRJ_REQ_END 3",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZPRJ_RES_BEGIN 3\n@@ZPRJ_RES_ERR 3 InvalidProjectDaemonHeader\n@@ZPRJ_RES_END 3\n") != null);
+}
+
+test "runWithIO writes build_resolve error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZBR_REQ_BEGIN 5",
+        "@@ZBR_REQ_END 5",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZBR_RES_BEGIN 5\n@@ZBR_RES_ERR 5 MissingBuildResolvePath\n@@ZBR_RES_END 5\n") != null);
+}
+
+test "runWithIO writes build_action error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZBA_REQ_BEGIN 6",
+        "@@ZBA_REQ_END 6",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZBA_RES_BEGIN 6\n@@ZBA_RES_ERR 6") != null);
+}
+
+test "runWithIO writes run_resolve error frame for malformed header with request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZRUN_REQ_BEGIN 8",
+        "@@ZRUN_REQ_END 8",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZRUN_RES_BEGIN 8\n@@ZRUN_RES_ERR 8") != null);
+}
+
+test "runWithIO silently skips lines that match no dispatcher" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "garbage line with no marker",
+        "@@ZDET_REQ_BEGIN 9 cargo",
+        "@@ZDET_REQ_END 9",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "garbage") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZDET_RES_BEGIN 9") != null);
+}
+
+test "runWithIO writes error when quickfix stream ends before close marker" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZQF_BEGIN 7 100 2048 2 50 0",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZQF_RES_ERR 7") != null);
+}
+
+test "runWithIO does not error response when request id is unparseable" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZDET_REQ_BEGIN",
+        "@@ZDET_REQ_END",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expectEqualStrings("", out.written());
+}
