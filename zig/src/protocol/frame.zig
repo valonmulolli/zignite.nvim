@@ -92,6 +92,31 @@ pub fn handleDispatchError(
     }
 }
 
+pub const BeginFrame = struct {
+    request_id: u64,
+    it: std.mem.TokenIterator(u8, .scalar),
+};
+
+/// Splits a daemon begin line, validates the marker, and parses the request id.
+/// Returns the request id and a token iterator over the remaining fields.
+/// Callers should consume additional fields via `it.next()` and reject extras
+/// by checking that `it.next() == null` once all expected fields are parsed.
+pub fn parseBeginFrame(
+    line: []const u8,
+    begin_marker: []const u8,
+    invalid_err: anyerror,
+) !BeginFrame {
+    var it = std.mem.tokenizeScalar(u8, line, ' ');
+    const marker = it.next() orelse return invalid_err;
+    if (!std.mem.eql(u8, marker, begin_marker)) return invalid_err;
+    const request_id = try std.fmt.parseInt(
+        u64,
+        it.next() orelse return invalid_err,
+        10,
+    );
+    return .{ .request_id = request_id, .it = it };
+}
+
 pub fn readUntilEnd(
     allocator: std.mem.Allocator,
     reader: anytype,
@@ -300,6 +325,26 @@ test "handleDispatchError propagates UnexpectedEof unchanged" {
     );
     try std.testing.expectError(error.UnexpectedEof, result);
     try std.testing.expectEqualStrings("", out.written());
+}
+
+test "parseBeginFrame extracts request id and returns iterator over remainder" {
+    var result = try parseBeginFrame("@@ZBR_REQ_BEGIN 7 --build-resolve --filetype=c", "@@ZBR_REQ_BEGIN", error.InvalidHeader);
+    try std.testing.expectEqual(@as(u64, 7), result.request_id);
+    try std.testing.expectEqualStrings("--build-resolve", result.it.next().?);
+    try std.testing.expectEqualStrings("--filetype=c", result.it.next().?);
+    try std.testing.expect(result.it.next() == null);
+}
+
+test "parseBeginFrame errors on wrong marker" {
+    try std.testing.expectError(error.InvalidHeader, parseBeginFrame("@@ZDET_REQ_BEGIN 5", "@@ZBR_REQ_BEGIN", error.InvalidHeader));
+}
+
+test "parseBeginFrame errors on missing request id" {
+    try std.testing.expectError(error.InvalidHeader, parseBeginFrame("@@ZBR_REQ_BEGIN", "@@ZBR_REQ_BEGIN", error.InvalidHeader));
+}
+
+test "parseBeginFrame errors on non-numeric request id" {
+    try std.testing.expectError(error.InvalidCharacter, parseBeginFrame("@@ZBR_REQ_BEGIN abc", "@@ZBR_REQ_BEGIN", error.InvalidHeader));
 }
 
 test "readUntilEnd forwards lines until matching frame end" {
