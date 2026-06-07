@@ -170,3 +170,32 @@ test "cpp builtins extend c builtins with cmake test only" {
     try std.testing.expectEqualStrings("cmake-test", cxx_builtin_commands[c_family_cmake_builtin_commands.len].name);
     try std.testing.expect(commandSystem("c", "cmake-test") == null);
 }
+
+test "listBuildCommands returns empty list for unknown filetype" {
+    const allocator = std.testing.allocator;
+    const commands = try listBuildCommands(allocator, "unknown");
+    defer allocator.free(commands);
+    try std.testing.expectEqual(@as(usize, 0), commands.len);
+}
+
+test "listBuildCommands returns rust commands with system field null" {
+    const allocator = std.testing.allocator;
+    const commands = try listBuildCommands(allocator, "rust");
+    defer {
+        for (commands) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.command);
+        }
+        allocator.free(commands);
+    }
+
+    try std.testing.expectEqual(@as(usize, 7), commands.len);
+    try std.testing.expectEqualStrings("cargo build", commands[0].command);
+    try std.testing.expectEqualStrings("cargo clean", commands[6].command);
+}
+
+test "commandSystem returns null for unknown filetype or name" {
+    try std.testing.expect(commandSystem("unknown", "build") == null);
+    try std.testing.expect(commandSystem("go", "nonexistent") == null);
+    try std.testing.expect(commandSystem("rust", "cmake-test") == null);
+}
