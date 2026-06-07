@@ -125,3 +125,40 @@ test "detect command records include rendered templates" {
     try std.testing.expectEqualStrings("metadata\tcargo metadata", commands[0]);
     try std.testing.expectEqualStrings("run\tcargo run", commands[1]);
 }
+
+test "detect command records use $file placeholder for zig run/test/fmt" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .zig, &.{ "run", "test", "fmt" });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 3), commands.len);
+    try std.testing.expectEqualStrings("run\tzig run $file", commands[0]);
+    try std.testing.expectEqualStrings("test\tzig test $file", commands[1]);
+    try std.testing.expectEqualStrings("fmt\tzig fmt $file", commands[2]);
+}
+
+test "detect command records fall through to default for unknown names" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .zig, &.{"custom"});
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("custom\tzig custom", commands[0]);
+}
+
+test "detect command records use $zignite_args placeholder for argument-taking cargo subcommands" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .cargo, &.{ "add", "search" });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("add\tcargo add $zignite_args", commands[0]);
+    try std.testing.expectEqualStrings("search\tcargo search $zignite_args", commands[1]);
+}
+
+test "detect command records map odin subcommands" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .odin, &.{ "build", "test" });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("build\todin build .", commands[0]);
+    try std.testing.expectEqualStrings("test\todin test .", commands[1]);
+}
