@@ -181,6 +181,59 @@ fn writeResolvedCommandOutput(stdout: anytype, allocator: std.mem.Allocator, io:
 
 const TestReader = frame.TestReader;
 
+test "parseArgs returns required path and filetype" {
+    const options = try parseArgs(&.{
+        "--build-resolve",
+        "--path=/tmp/main.zig",
+        "--filetype=zig",
+    });
+    try std.testing.expectEqualStrings("/tmp/main.zig", options.path);
+    try std.testing.expectEqualStrings("zig", options.filetype);
+    try std.testing.expect(options.command_name == null);
+    try std.testing.expect(options.command_args == null);
+    try std.testing.expect(options.project_root == null);
+}
+
+test "parseArgs accepts command-name, command-args, and project-root" {
+    const options = try parseArgs(&.{
+        "--build-resolve",
+        "--path=/tmp/main.zig",
+        "--filetype=zig",
+        "--command-name=build",
+        "--command-args=--release",
+        "--project-root=/tmp",
+    });
+    try std.testing.expectEqualStrings("build", options.command_name.?);
+    try std.testing.expectEqualStrings("--release", options.command_args.?);
+    try std.testing.expectEqualStrings("/tmp", options.project_root.?);
+}
+
+test "parseArgs rejects missing path and missing filetype" {
+    try std.testing.expectError(error.MissingBuildResolvePath, parseArgs(&.{
+        "--build-resolve",
+        "--filetype=zig",
+    }));
+    try std.testing.expectError(error.MissingBuildResolveFiletype, parseArgs(&.{
+        "--build-resolve",
+        "--path=/tmp/main.zig",
+    }));
+}
+
+test "parseArgs rejects unknown flags" {
+    try std.testing.expectError(error.InvalidBuildResolveFlag, parseArgs(&.{
+        "--build-resolve",
+        "--path=/tmp/main.zig",
+        "--filetype=zig",
+        "--bogus",
+    }));
+    try std.testing.expectError(error.InvalidBuildResolveFlag, parseArgs(&.{
+        "--build-resolve",
+        "--path=/tmp/main.zig",
+        "--filetype=zig",
+        "--input-kind=file",
+    }));
+}
+
 test "runMode merges synced configured build commands with backend commands" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();
