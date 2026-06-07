@@ -170,3 +170,152 @@ fn splitFirstTab(line: []const u8) ?[2][]const u8 {
     const index = std.mem.findScalar(u8, line, '\t') orelse return null;
     return .{ line[0..index], line[index + 1 ..] };
 }
+
+const TestEntry = struct {
+    name: []const u8,
+    command: []const u8,
+};
+
+fn makeEntries(allocator: std.mem.Allocator, defs: []const TestEntry) ![]build_types.CommandEntry {
+    var list: std.ArrayList(build_types.CommandEntry) = .empty;
+    errdefer {
+        for (list.items) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.command);
+        }
+        list.deinit(allocator);
+    }
+    for (defs) |def| {
+        const owned_name = try allocator.dupe(u8, def.name);
+        const owned_command = allocator.dupe(u8, def.command) catch |err| {
+            allocator.free(owned_name);
+            return err;
+        };
+        try list.append(allocator, .{ .name = owned_name, .command = owned_command });
+    }
+    return try list.toOwnedSlice(allocator);
+}
+
+fn freeEntries(allocator: std.mem.Allocator, entries: []build_types.CommandEntry) void {
+    for (entries) |entry| {
+        allocator.free(entry.name);
+        allocator.free(entry.command);
+    }
+    allocator.free(entries);
+}
+
+test "findCommand returns null for empty list and non-matching name" {
+    const allocator = std.testing.allocator;
+    const entries = try makeEntries(allocator, &.{});
+    defer allocator.free(entries);
+
+    try std.testing.expect(findCommand(&.{}, "build") == null);
+    try std.testing.expect(findCommand(entries, "build") == null);
+}
+
+test "findCommand returns command when name matches" {
+    const allocator = std.testing.allocator;
+    const entries = try makeEntries(allocator, &.{
+        .{ .name = "build", .command = "cargo build" },
+        .{ .name = "test", .command = "cargo test" },
+    });
+    defer freeEntries(allocator, entries);
+
+    try std.testing.expectEqualStrings("cargo build", findCommand(entries, "build").?);
+    try std.testing.expectEqualStrings("cargo test", findCommand(entries, "test").?);
+    try std.testing.expect(findCommand(entries, "lint") == null);
+}
+
+test "findPreferredCommandName prefers preferred list over commands" {
+    const allocator = std.testing.allocator;
+    const preferred = try makeEntries(allocator, &.{.{ .name = "test", .command = "ctest" }});
+    defer freeEntries(allocator, preferred);
+    const commands = try makeEntries(allocator, &.{
+        .{ .name = "build", .command = "make" },
+        .{ .name = "test", .command = "make test" },
+    });
+    defer freeEntries(allocator, commands);
+
+    try std.testing.expectEqualStrings("test", findPreferredCommandName(preferred, commands, &.{ "build", "test" }).?);
+}
+
+test "findPreferredCommandName falls back to commands when not in preferred" {
+    const allocator = std.testing.allocator;
+    const preferred = try makeEntries(allocator, &.{});
+    defer freeEntries(allocator, preferred);
+    const commands = try makeEntries(allocator, &.{
+        .{ .name = "build", .command = "make" },
+    });
+    defer freeEntries(allocator, commands);
+
+    try std.testing.expectEqualStrings("build", findPreferredCommandName(preferred, commands, &.{ "build", "test" }).?);
+    try std.testing.expect(findPreferredCommandName(preferred, commands, &.{"lint"}) == null);
+}
+
+test "upsertOwnedCommand updates existing entry and frees old command" {
+    const allocator = std.testing.allocator;
+    var list: std.ArrayList(build_types.CommandEntry) = .empty;
+    defer {
+        for (list.items) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.command);
+        }
+        list.deinit(allocator);
+    }
+
+    try upsertOwnedCommand(&list, allocator, "build", "old make");
+    try upsertOwnedCommand(&list, allocator, "build", "new make");
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+    try std.testing.expectEqualStrings("build", list.items[0].name);
+    try std.testing.expectEqualStrings("new make", list.items[0].command);
+}
+
+test "appendImplicitPreferred adds missing keys from commands list" {
+    const allocator = std.testing.allocator;
+    const commands = try makeEntries(allocator, &.{
+        .{ .name = "build", .command = "make" },
+        .{ .name = "test", .command = "make test" },
+        .{ .name = "custom", .command = "make custom" },
+    });
+    defer freeEntries(allocator, commands);
+
+    var preferred: std.ArrayList(build_types.CommandEntry) = .empty;
+    defer {
+        for (preferred.items) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.command);
+        }
+        preferred.deinit(allocator);
+    }
+
+    try appendImplicitPreferred(allocator, &preferred, commands);
+    try std.testing.expect(preferred.items.len >= 2);
+    try std.testing.expect(findCommand(preferred.items, "build") != null);
+    try std.testing.expect(findCommand(preferred.items, "test") != null);
+    try std.testing.expect(findCommand(preferred.items, "custom") == null);
+}
+
+test "parseProjectOutput parses full root/system/build-ready/command/preferred lines" {
+    const allocator = std.testing.allocator;
+    const output = "ROOT\t/project\nSYSTEM\tcmake\nBUILD_READY\t1\nCOMMAND\tbuild\tcmake --build build\nPREFERRED\tbuild\tcmake --build build\nCOMMAND\ttest\tctest\n";
+    var parsed = try parseProjectOutput(allocator, output);
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectEqualStrings("/project", parsed.root.?);
+    try std.testing.expectEqualStrings("cmake", parsed.system.?);
+    try std.testing.expect(parsed.build_ready.?);
+    try std.testing.expectEqual(@as(usize, 2), parsed.commands.items.len);
+    try std.testing.expectEqual(@as(usize, 1), parsed.preferred.items.len);
+    try std.testing.expectEqualStrings("cmake --build build", parsed.commands.items[0].command);
+}
+
+test "parseProjectOutput ignores unknown and malformed lines" {
+    const allocator = std.testing.allocator;
+    const output = "RANDOM\tdata\nCOMMAND\nCOMMAND\tbuild\nCOMMAND\t\t\n";
+    var parsed = try parseProjectOutput(allocator, output);
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), parsed.commands.items.len);
+    try std.testing.expect(parsed.root == null);
+    try std.testing.expect(parsed.system == null);
+}
