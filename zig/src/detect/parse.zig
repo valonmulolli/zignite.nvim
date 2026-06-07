@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 const types = @import("types.zig");
 
 const Tool = types.Tool;
@@ -62,19 +63,15 @@ pub fn parseDetectCommandNames(allocator: std.mem.Allocator, tool: Tool, output:
 }
 
 pub fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
+    return common.stripTrailingCR(line);
 }
-
 fn parseZigHelpCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8), output: []const u8) !void {
     var in_commands_section = false;
     var lines = std.mem.splitScalar(u8, output, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = stripTrailingCR(raw_line);
-        const trimmed = trimSpaces(line);
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
         if (!in_commands_section) {
             if (std.mem.eql(u8, trimmed, "Commands:")) {
                 in_commands_section = true;
@@ -95,8 +92,8 @@ fn parseGoHelpCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayLis
     var lines = std.mem.splitScalar(u8, output, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = stripTrailingCR(raw_line);
-        const trimmed = trimSpaces(line);
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
         if (!in_commands_section) {
             if (std.mem.eql(u8, trimmed, "The commands are:")) {
                 in_commands_section = true;
@@ -120,8 +117,8 @@ fn parseCargoCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList
     var lines = std.mem.splitScalar(u8, output, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = stripTrailingCR(raw_line);
-        const trimmed = trimSpaces(line);
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
         if (!in_commands_section) {
             if (std.mem.eql(u8, trimmed, "Installed Commands:")) {
                 in_commands_section = true;
@@ -142,8 +139,8 @@ fn parseOdinCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList(
     var lines = std.mem.splitScalar(u8, output, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = stripTrailingCR(raw_line);
-        const trimmed = trimSpaces(line);
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
         if (!in_commands_section) {
             if (std.mem.eql(u8, trimmed, "Commands:")) {
                 in_commands_section = true;
@@ -189,14 +186,6 @@ fn isCargoNoiseLine(line: []const u8) bool {
     return std.mem.find(u8, line, "alias:") != null or
         std.mem.find(u8, line, "DEPRECATED:") != null or
         std.mem.find(u8, line, "REMOVED:") != null;
-}
-
-fn trimSpaces(input: []const u8) []const u8 {
-    var start: usize = 0;
-    var end: usize = input.len;
-    while (start < end and std.ascii.isWhitespace(input[start])) : (start += 1) {}
-    while (end > start and std.ascii.isWhitespace(input[end - 1])) : (end -= 1) {}
-    return input[start..end];
 }
 
 test "parse cargo commands skips aliases and removed entries" {

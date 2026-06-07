@@ -72,7 +72,7 @@ fn findBestRootCandidateAllocWithIO(
         kind: CandidateKind,
         markers: []const []const u8,
     }{
-        .{ .kind = .bazel, .markers = &.{ "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" } },
+        .{ .kind = .bazel, .markers = bazel.markers },
         .{ .kind = .meson, .markers = &.{"meson.build"} },
         .{ .kind = .cmake, .markers = &.{"CMakeLists.txt"} },
         .{ .kind = .make, .markers = make.marker_names },

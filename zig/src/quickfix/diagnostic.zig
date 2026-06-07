@@ -1,11 +1,12 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 
 pub fn canonicalizeDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
-    var trimmed = trimSpaces(line);
+    var trimmed = common.trimSpaces(line);
     if (trimmed.len == 0) return null;
 
     if (std.mem.startsWith(u8, trimmed, "-->")) {
-        trimmed = trimSpaces(trimmed[3..]);
+        trimmed = common.trimSpaces(trimmed[3..]);
     }
 
     if (try parseParenDiagnostic(allocator, trimmed)) |diag| return diag;
@@ -24,7 +25,7 @@ fn parseColonDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
         if (j == line_start or j >= line.len or line[j] != ':') continue;
 
         const line_no = std.fmt.parseInt(usize, line[line_start..j], 10) catch continue;
-        const path = trimSpaces(line[0..i]);
+        const path = common.trimSpaces(line[0..i]);
         if (path.len == 0 or std.mem.findAny(u8, path, "/\\.") == null) continue;
 
         const after_line = j + 1;
@@ -38,7 +39,7 @@ fn parseColonDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
             msg_start = k + 1;
         }
 
-        const msg = trimSpaces(line[msg_start..]);
+        const msg = common.trimSpaces(line[msg_start..]);
         const normalized_msg = if (msg.len == 0) "diagnostic" else msg;
         return try std.fmt.allocPrint(allocator, "{s}:{d}:{d}: {s}", .{ path, line_no, col_no, normalized_msg });
     }
@@ -50,21 +51,13 @@ fn parseParenDiagnostic(allocator: std.mem.Allocator, line: []const u8) !?[]u8 {
     const colon_idx = std.mem.findScalarPos(u8, line, open_idx + 1, ':') orelse return null;
     const close_idx = std.mem.findScalarPos(u8, line, colon_idx + 1, ')') orelse return null;
 
-    const path = trimSpaces(line[0..open_idx]);
+    const path = common.trimSpaces(line[0..open_idx]);
     if (path.len == 0 or std.mem.findAny(u8, path, "/\\.") == null) return null;
 
     const line_no = std.fmt.parseInt(usize, line[open_idx + 1 .. colon_idx], 10) catch return null;
     const col_no = std.fmt.parseInt(usize, line[colon_idx + 1 .. close_idx], 10) catch return null;
-    const msg = trimSpaces(line[close_idx + 1 ..]);
+    const msg = common.trimSpaces(line[close_idx + 1 ..]);
     const normalized_msg = if (msg.len == 0) "diagnostic" else msg;
 
     return try std.fmt.allocPrint(allocator, "{s}:{d}:{d}: {s}", .{ path, line_no, col_no, normalized_msg });
-}
-
-fn trimSpaces(input: []const u8) []const u8 {
-    var start: usize = 0;
-    var end: usize = input.len;
-    while (start < end and std.ascii.isWhitespace(input[start])) : (start += 1) {}
-    while (end > start and std.ascii.isWhitespace(input[end - 1])) : (end -= 1) {}
-    return input[start..end];
 }

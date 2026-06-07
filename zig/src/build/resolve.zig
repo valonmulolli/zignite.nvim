@@ -179,20 +179,7 @@ fn writeResolvedCommandOutput(stdout: anytype, allocator: std.mem.Allocator, io:
     );
 }
 
-const TestReader = struct {
-    pub fn readUntilDelimiterOrEofAlloc(
-        self: *TestReader,
-        allocator: std.mem.Allocator,
-        delimiter: u8,
-        max_line: usize,
-    ) !?[]u8 {
-        _ = self;
-        _ = allocator;
-        _ = delimiter;
-        _ = max_line;
-        return null;
-    }
-};
+const TestReader = frame.TestReader;
 
 test "runMode merges synced configured build commands with backend commands" {
     const allocator = std.testing.allocator;

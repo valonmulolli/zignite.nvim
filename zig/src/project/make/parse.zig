@@ -1,5 +1,6 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
+const project_io = @import("../core/io.zig");
 
 pub fn parseTargetsFromFileAlloc(
     allocator: std.mem.Allocator,
@@ -65,7 +66,7 @@ fn parseTargetsFromFileInner(
     defer common.deinitOwnedNameList(allocator, &includes);
 
     for (includes.items) |include_path| {
-        if (!pathExistsWithIO(io, include_path)) continue;
+        if (!project_io.pathExistsWithIO(io, include_path)) continue;
         try parseTargetsFromFileInner(io, allocator, include_path, names, visited);
     }
 }
@@ -92,7 +93,7 @@ fn collectReferencedFilesInner(
     defer common.deinitOwnedNameList(allocator, &includes);
 
     for (includes.items) |include_path| {
-        if (!pathExistsWithIO(io, include_path)) continue;
+        if (!project_io.pathExistsWithIO(io, include_path)) continue;
         try collectReferencedFilesInner(io, allocator, include_path, visited);
     }
 }
@@ -228,12 +229,7 @@ fn isSupportedIncludePath(path: []const u8) bool {
 
 fn pathExists(path: []const u8) bool {
     var threaded: std.Io.Threaded = .init_single_threaded;
-    return pathExistsWithIO(threaded.io(), path);
-}
-
-fn pathExistsWithIO(io: std.Io, path: []const u8) bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
-    return true;
+    return project_io.pathExistsWithIO(threaded.io(), path);
 }
 
 fn isValidMakeTarget(target: []const u8) bool {

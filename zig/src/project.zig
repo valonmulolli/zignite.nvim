@@ -216,20 +216,7 @@ fn parseProjectDaemonBegin(line: []const u8) !ProjectDaemonRequestHeader {
     return .{ .request_id = request_id };
 }
 
-const TestReader = struct {
-    pub fn readUntilDelimiterOrEofAlloc(
-        self: *TestReader,
-        allocator: std.mem.Allocator,
-        delimiter: u8,
-        max_line: usize,
-    ) !?[]u8 {
-        _ = self;
-        _ = allocator;
-        _ = delimiter;
-        _ = max_line;
-        return null;
-    }
-};
+const TestReader = frame.TestReader;
 
 test "handleDaemonFrame writes project error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
