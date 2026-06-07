@@ -200,3 +200,20 @@ test "helper lookups expose aliased frontend filetypes too" {
     try std.testing.expectEqualStrings("js_package_scripts", detectKeyForFiletype("tsx").?);
     try std.testing.expectEqual(project_types.Kind.package_json_auto, autoKindForFiletype("javascriptreact").?);
 }
+
+test "find returns null for unknown filetypes" {
+    try std.testing.expect(find("") == null);
+    try std.testing.expect(find("nope") == null);
+    try std.testing.expect(find("Ruby") == null);
+}
+
+test "detectKeyForFiletype returns null for filetypes without detect entries" {
+    try std.testing.expect(detectKeyForFiletype("python") == null);
+    try std.testing.expect(detectKeyForFiletype("bash") == null);
+    try std.testing.expect(detectKeyForFiletype("unknown") == null);
+}
+
+test "autoKindForFiletype returns null for filetypes without auto entries" {
+    try std.testing.expect(autoKindForFiletype("bash") == null);
+    try std.testing.expect(autoKindForFiletype("unknown") == null);
+}
