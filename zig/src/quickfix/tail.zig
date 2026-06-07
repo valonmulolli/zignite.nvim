@@ -33,13 +33,17 @@ pub fn collectTailLineViews(
         }
         if (line.len > 0) {
             try lines.append(allocator, line);
-            total_bytes += line.len + 1;
+        }
+        total_bytes += line.len + 1;
+        if (lines.items.len > 0) {
             while (total_bytes > max_bytes and start_idx + 1 < lines.items.len) {
                 total_bytes -= lines.items[start_idx].len + 1;
                 start_idx += 1;
                 truncated = true;
             }
             if (total_bytes > max_bytes) truncated = true;
+        } else {
+            truncated = true;
         }
         start = i + 1;
     }

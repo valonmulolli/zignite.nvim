@@ -141,10 +141,8 @@ fn cloneResult(allocator: std.mem.Allocator, result: Result) !Result {
         }
         for (result.commands, 0..) |entry, index| {
             const owned_name = try allocator.dupe(u8, entry.name);
-            const owned_command = allocator.dupe(u8, entry.command) catch |err| {
-                allocator.free(owned_name);
-                return err;
-            };
+            errdefer allocator.free(owned_name);
+            const owned_command = try allocator.dupe(u8, entry.command);
             commands[index] = .{
                 .name = owned_name,
                 .command = owned_command,
