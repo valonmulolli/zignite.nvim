@@ -104,6 +104,32 @@ fn termToExitCode(term: std.process.Child.Term) u8 {
     };
 }
 
+test "termToExitCode passes through small exit codes" {
+    try std.testing.expectEqual(@as(u8, 0), termToExitCode(.{ .exited = 0 }));
+    try std.testing.expectEqual(@as(u8, 1), termToExitCode(.{ .exited = 1 }));
+    try std.testing.expectEqual(@as(u8, 127), termToExitCode(.{ .exited = 127 }));
+    try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .exited = 255 }));
+}
+
+test "termToExitCode clamps large unknown status to 255" {
+    try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
+}
+
+test "termToExitCode encodes signals as 128 + signal number" {
+    try std.testing.expectEqual(@as(u8, 130), termToExitCode(.{ .signal = .INT }));
+    try std.testing.expectEqual(@as(u8, 143), termToExitCode(.{ .signal = .TERM }));
+    try std.testing.expectEqual(@as(u8, 137), termToExitCode(.{ .signal = .KILL }));
+}
+
+test "termToExitCode encodes stopped as 128 + signal number" {
+    try std.testing.expectEqual(@as(u8, 128 + @intFromEnum(std.posix.SIG.STOP)), termToExitCode(.{ .stopped = .STOP }));
+}
+
+test "termToExitCode treats unknown as raw status" {
+    try std.testing.expectEqual(@as(u8, 42), termToExitCode(.{ .unknown = 42 }));
+    try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
+}
+
 fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
     const clamped_duration = std.math.cast(u32, ctx.duration) orelse std.math.maxInt(u32);
     if (std.Io.sleep(io, std.Io.Duration.fromMilliseconds(clamped_duration), .awake)) |_| {} else |err| switch (err) {

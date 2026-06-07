@@ -71,3 +71,55 @@ pub fn collectTailLineViews(
         .truncated = truncated,
     };
 }
+
+test "collectTailLineViews handles empty input" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "", 100);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), result.items.len);
+    try std.testing.expectEqual(@as(usize, 0), result.start_idx);
+    try std.testing.expect(!result.truncated);
+}
+
+test "collectTailLineViews handles input with only empty lines" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "\n\n\n", 100);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), result.items.len);
+    try std.testing.expect(result.truncated);
+}
+
+test "collectTailLineViews skips empty lines but counts bytes" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "a\n\nb\n", 100);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), result.items.len);
+    try std.testing.expectEqualStrings("a", result.items[0]);
+    try std.testing.expectEqualStrings("b", result.items[1]);
+    try std.testing.expect(!result.truncated);
+}
+
+test "collectTailLineViews strips trailing CR" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "a\r\nb\r\n", 100);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), result.items.len);
+    try std.testing.expectEqualStrings("a", result.items[0]);
+    try std.testing.expectEqualStrings("b", result.items[1]);
+}
+
+test "collectTailLineViews truncates by max_bytes" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "aaaa\nbbbb\ncccc\ndddd\n", 10);
+    defer result.deinit(allocator);
+    try std.testing.expect(result.truncated);
+    try std.testing.expect(result.start_idx > 0);
+}
+
+test "collectTailLineViews keeps tail line without newline" {
+    const allocator = std.testing.allocator;
+    var result = try collectTailLineViews(allocator, "a\nb\nc", 100);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), result.items.len);
+    try std.testing.expectEqualStrings("c", result.items[2]);
+}
