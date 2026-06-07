@@ -247,3 +247,41 @@ test "parse zig commands stops at general options" {
     try std.testing.expectEqualStrings("build-exe", commands[0]);
     try std.testing.expectEqualStrings("fmt", commands[1]);
 }
+
+test "parse odin commands excludes help and stops at flags" {
+    const allocator = std.testing.allocator;
+    const output =
+        \\Commands:
+        \\  build      compile and create an executable
+        \\  doc        generate documentation
+        \\  help       display help information
+        \\
+        \\Flags:
+        \\  -file:string
+    ;
+    const commands = try parseDetectCommandNames(allocator, .odin, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 2), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
+    try std.testing.expectEqualStrings("doc", commands[1]);
+}
+
+test "parse detect commands handles CR-LF line endings" {
+    const allocator = std.testing.allocator;
+    const output = "The commands are:\r\n    build       compile packages\r\n    test        test packages\r\n";
+    const commands = try parseDetectCommandNames(allocator, .go, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 2), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
+    try std.testing.expectEqualStrings("test", commands[1]);
+}
+
+test "parse detect commands returns empty list for non-commands output" {
+    const allocator = std.testing.allocator;
+    const output = "no commands here\njust text\n";
+    const commands = try parseDetectCommandNames(allocator, .zig, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+    try std.testing.expectEqual(@as(usize, 0), commands.len);
+}
