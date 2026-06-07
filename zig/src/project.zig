@@ -202,18 +202,9 @@ fn parseKind(value: []const u8) !Kind {
 }
 
 fn parseProjectDaemonBegin(line: []const u8) !ProjectDaemonRequestHeader {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return error.InvalidProjectDaemonHeader;
-    if (!std.mem.eql(u8, marker, PROJECT_DAEMON_REQ_BEGIN)) {
-        return error.InvalidProjectDaemonHeader;
-    }
-
-    const request_id = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidProjectDaemonHeader, 10);
-    if (it.next() != null) {
-        return error.InvalidProjectDaemonHeader;
-    }
-
-    return .{ .request_id = request_id };
+    var begin = try frame.parseBeginFrame(line, PROJECT_DAEMON_REQ_BEGIN, error.InvalidProjectDaemonHeader);
+    if (begin.it.next() != null) return error.InvalidProjectDaemonHeader;
+    return .{ .request_id = begin.request_id };
 }
 
 const TestReader = frame.TestReader;

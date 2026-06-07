@@ -142,20 +142,12 @@ fn detectToolCommandsFromOutput(allocator: std.mem.Allocator, tool: Tool, output
 }
 
 fn parseDetectDaemonBegin(line: []const u8) !DetectDaemonRequestHeader {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return error.InvalidDetectDaemonHeader;
-    if (!std.mem.eql(u8, marker, DETECT_DAEMON_REQ_BEGIN)) {
-        return error.InvalidDetectDaemonHeader;
-    }
-
-    const request_id = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidDetectDaemonHeader, 10);
-    const tool = try parseTool(it.next() orelse return error.InvalidDetectDaemonHeader);
-    if (it.next() != null) {
-        return error.InvalidDetectDaemonHeader;
-    }
+    var begin = try frame.parseBeginFrame(line, DETECT_DAEMON_REQ_BEGIN, error.InvalidDetectDaemonHeader);
+    const tool = try parseTool(begin.it.next() orelse return error.InvalidDetectDaemonHeader);
+    if (begin.it.next() != null) return error.InvalidDetectDaemonHeader;
 
     return .{
-        .request_id = request_id,
+        .request_id = begin.request_id,
         .tool = tool,
     };
 }

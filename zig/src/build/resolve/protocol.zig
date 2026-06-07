@@ -1,4 +1,5 @@
 const std = @import("std");
+const frame = @import("../../protocol/frame.zig");
 
 pub const ResolveDaemonRequestHeader = struct {
     request_id: u64,
@@ -12,15 +13,7 @@ pub const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
 pub const BUILD_RESOLVE_MAX_LINE = 16384;
 
 pub fn parseResolveDaemonBegin(line: []const u8) !ResolveDaemonRequestHeader {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return error.InvalidBuildResolveDaemonHeader;
-    if (!std.mem.eql(u8, marker, BUILD_RESOLVE_REQ_BEGIN)) {
-        return error.InvalidBuildResolveDaemonHeader;
-    }
-
-    const request_id = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidBuildResolveDaemonHeader, 10);
-    if (it.next() != null) {
-        return error.InvalidBuildResolveDaemonHeader;
-    }
-    return .{ .request_id = request_id };
+    var begin = try frame.parseBeginFrame(line, BUILD_RESOLVE_REQ_BEGIN, error.InvalidBuildResolveDaemonHeader);
+    if (begin.it.next() != null) return error.InvalidBuildResolveDaemonHeader;
+    return .{ .request_id = begin.request_id };
 }

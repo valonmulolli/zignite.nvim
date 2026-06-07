@@ -130,20 +130,12 @@ fn writeWarnings(stdout: anytype, warnings: [][]u8) !void {
 }
 
 fn parseConfigDaemonBegin(line: []const u8) !ConfigDaemonRequestHeader {
-    var it = std.mem.tokenizeScalar(u8, line, ' ');
-    const marker = it.next() orelse return error.InvalidConfigDaemonHeader;
-    if (!std.mem.eql(u8, marker, CONFIG_DAEMON_REQ_BEGIN)) {
-        return error.InvalidConfigDaemonHeader;
-    }
-
-    const request_id = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidConfigDaemonHeader, 10);
-    const revision = try std.fmt.parseInt(u64, it.next() orelse return error.InvalidConfigDaemonHeader, 10);
-    if (it.next() != null) {
-        return error.InvalidConfigDaemonHeader;
-    }
+    var begin = try frame.parseBeginFrame(line, CONFIG_DAEMON_REQ_BEGIN, error.InvalidConfigDaemonHeader);
+    const revision = try std.fmt.parseInt(u64, begin.it.next() orelse return error.InvalidConfigDaemonHeader, 10);
+    if (begin.it.next() != null) return error.InvalidConfigDaemonHeader;
 
     return .{
-        .request_id = request_id,
+        .request_id = begin.request_id,
         .revision = revision,
     };
 }
