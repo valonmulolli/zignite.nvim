@@ -204,21 +204,39 @@ const FiletypeExtension = enum {
 
 fn scratchRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.process.Environ.Map) ![]u8 {
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "ZIGNITE_RUN_CACHE_DIR")) |root| {
-        return root;
+        if (isSafePathComponent(root)) return root;
+        allocator.free(root);
     }
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "XDG_CACHE_HOME")) |xdg_cache_home| {
         defer allocator.free(xdg_cache_home);
-        return std.fs.path.join(allocator, &.{ xdg_cache_home, "zignite", "run" });
+        if (isSafePathComponent(xdg_cache_home)) {
+            return std.fs.path.join(allocator, &.{ xdg_cache_home, "zignite", "run" });
+        }
     }
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "HOME")) |home| {
         defer allocator.free(home);
-        return std.fs.path.join(allocator, &.{ home, ".cache", "zignite", "run" });
+        if (isSafePathComponent(home)) {
+            return std.fs.path.join(allocator, &.{ home, ".cache", "zignite", "run" });
+        }
     }
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "TMPDIR")) |tmpdir| {
         defer allocator.free(tmpdir);
-        return std.fs.path.join(allocator, &.{ tmpdir, "zignite-run" });
+        if (isSafePathComponent(tmpdir)) {
+            return std.fs.path.join(allocator, &.{ tmpdir, "zignite-run" });
+        }
     }
     return allocator.dupe(u8, "/tmp/zignite-run");
+}
+
+fn isSafePathComponent(value: []const u8) bool {
+    if (value.len == 0) return false;
+    if (std.mem.indexOfScalar(u8, value, 0) != null) return false;
+    if (std.mem.indexOfScalar(u8, value, '\n') != null) return false;
+    var it = std.mem.tokenizeAny(u8, value, "/");
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) return false;
+    }
+    return true;
 }
 
 fn getEnvVarOwnedOrNull(

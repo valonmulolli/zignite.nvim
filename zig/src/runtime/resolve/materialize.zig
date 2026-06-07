@@ -167,7 +167,9 @@ fn hasUnsupportedShellSyntax(command: []const u8) bool {
         } else {
             if (ch == '\'' or ch == '"') {
                 quote = ch;
-            } else if (ch == '`' or ch == '|' or ch == ';' or ch == '<' or ch == '>' or ch == '&') {
+            } else if (ch == '`' or ch == '|' or ch == ';' or ch == '<' or ch == '>' or ch == '&' or
+                ch == '*' or ch == '?' or ch == '~' or ch == '\n')
+            {
                 return true;
             } else if (ch == '$' and index + 1 < command.len and command[index + 1] == '(') {
                 return true;

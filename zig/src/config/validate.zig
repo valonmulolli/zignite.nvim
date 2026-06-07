@@ -126,6 +126,13 @@ fn validateRunner(
                         "Invalid config runners.{s}.cleanup_command: expected string, got {s}",
                         .{ filetype, valueTypeName(cleanup) },
                     );
+                } else if (std.mem.indexOfAny(u8, cleanup.string, "\r\n\x00") != null) {
+                    try pushWarning(
+                        allocator,
+                        warnings,
+                        "Invalid config runners.{s}.cleanup_command: contains control characters",
+                        .{filetype},
+                    );
                 }
             }
 
@@ -136,6 +143,13 @@ fn validateRunner(
                         warnings,
                         "Invalid config runners.{s}.cwd: expected string, got {s}",
                         .{ filetype, valueTypeName(cwd) },
+                    );
+                } else if (std.mem.indexOfAny(u8, cwd.string, "\r\n\x00") != null) {
+                    try pushWarning(
+                        allocator,
+                        warnings,
+                        "Invalid config runners.{s}.cwd: contains control characters",
+                        .{filetype},
                     );
                 }
             }

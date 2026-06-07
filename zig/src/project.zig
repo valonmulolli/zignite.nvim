@@ -145,6 +145,7 @@ pub fn handleDaemonFrame(
         .{
             .strip_leading_tab = true,
             .skip_empty = true,
+            .max_bytes = 4 * 1024 * 1024,
         },
     );
     defer {
