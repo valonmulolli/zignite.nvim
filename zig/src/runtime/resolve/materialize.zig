@@ -104,17 +104,17 @@ fn substituteVariablesImpl(
         }
 
         const name = template[index + 1 .. end];
-        const replacement = if (std.mem.eql(u8, name, "dir"))
+        const replacement = if (std.ascii.eqlIgnoreCase(name, "dir"))
             dir
-        else if (std.mem.eql(u8, name, "file"))
+        else if (std.ascii.eqlIgnoreCase(name, "file"))
             file
-        else if (std.mem.eql(u8, name, "fileName"))
+        else if (std.ascii.eqlIgnoreCase(name, "fileName"))
             file_name
-        else if (std.mem.eql(u8, name, "fileNameWithoutExt"))
+        else if (std.ascii.eqlIgnoreCase(name, "fileNameWithoutExt"))
             file_name_without_ext
-        else if (std.mem.eql(u8, name, "fileExt"))
+        else if (std.ascii.eqlIgnoreCase(name, "fileExt"))
             file_ext
-        else if (std.mem.eql(u8, name, "dirName"))
+        else if (std.ascii.eqlIgnoreCase(name, "dirName"))
             dir_name
         else
             null;

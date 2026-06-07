@@ -5,6 +5,7 @@ const pathing = @import("../../../pathing.zig");
 const build_system = @import("../../system.zig");
 const build_types = @import("../../system/types.zig");
 const project = @import("../../../project.zig");
+const materialize = @import("../../../runtime/resolve/materialize.zig");
 const output = @import("output.zig");
 const policy = @import("policy.zig");
 const types = @import("../types.zig");
@@ -44,7 +45,7 @@ pub fn collectConfiguredCommands(
 
     for (configured) |entry| {
         const owned_name = try allocator.dupe(u8, entry.name);
-        const owned_command = substituteVariablesShellAlloc(allocator, entry.command, path) catch |err| {
+        const owned_command = materialize.substituteVariablesShell(allocator, entry.command, path, null) catch |err| {
             allocator.free(owned_name);
             return err;
         };
@@ -141,86 +142,6 @@ fn collectSystemOutputWithIO(
     }
 
     return try output.resolvedOutputFromSystemResult(allocator, result);
-}
-
-fn substituteVariablesShellAlloc(
-    allocator: std.mem.Allocator,
-    template: []const u8,
-    path: []const u8,
-) ![]u8 {
-    const file = path;
-    const dir = pathing.dirOrDot(path);
-    const file_name = std.fs.path.basename(path);
-    const file_name_without_ext = std.fs.path.stem(file_name);
-    const file_ext_with_dot = std.fs.path.extension(file_name);
-    const file_ext = if (file_ext_with_dot.len > 0) file_ext_with_dot[1..] else "";
-    const dir_name = std.fs.path.basename(dir);
-
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(allocator);
-
-    var index: usize = 0;
-    while (index < template.len) {
-        if (template[index] == '%' and index + 1 < template.len and template[index + 1] == '%') {
-            try appendShellValue(allocator, &out, file);
-            index += 2;
-            continue;
-        }
-        if (template[index] != '$') {
-            try out.append(allocator, template[index]);
-            index += 1;
-            continue;
-        }
-
-        var end: usize = index + 1;
-        while (end < template.len and (std.ascii.isAlphanumeric(template[end]) or template[end] == '_')) : (end += 1) {}
-        if (end == index + 1) {
-            try out.append(allocator, template[index]);
-            index += 1;
-            continue;
-        }
-
-        const name = template[index + 1 .. end];
-        const replacement = if (std.mem.eql(u8, name, "dir") or std.mem.eql(u8, name, "DIR"))
-            dir
-        else if (std.mem.eql(u8, name, "file") or std.mem.eql(u8, name, "FILE"))
-            file
-        else if (std.mem.eql(u8, name, "fileName") or std.mem.eql(u8, name, "FILENAME"))
-            file_name
-        else if (std.mem.eql(u8, name, "fileNameWithoutExt") or std.mem.eql(u8, name, "FILENAMEWITHOUTEXT"))
-            file_name_without_ext
-        else if (std.mem.eql(u8, name, "fileExt") or std.mem.eql(u8, name, "FILEEXT"))
-            file_ext
-        else if (std.mem.eql(u8, name, "dirName") or std.mem.eql(u8, name, "DIRNAME"))
-            dir_name
-        else
-            null;
-
-        if (replacement) |value| {
-            try appendShellValue(allocator, &out, value);
-        } else {
-            try out.appendSlice(allocator, template[index..end]);
-        }
-        index = end;
-    }
-
-    return out.toOwnedSlice(allocator);
-}
-
-fn appendShellValue(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    value: []const u8,
-) !void {
-    try out.append(allocator, '\'');
-    for (value) |ch| {
-        if (ch == '\'') {
-            try out.appendSlice(allocator, "'\"'\"'");
-        } else {
-            try out.append(allocator, ch);
-        }
-    }
-    try out.append(allocator, '\'');
 }
 
 test "resolveDetectedOutput tolerates malformed package json auto output" {

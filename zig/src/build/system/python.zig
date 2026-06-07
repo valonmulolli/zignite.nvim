@@ -180,10 +180,7 @@ fn readCondaEnvironmentNameAllocWithIO(io: std.Io, allocator: std.mem.Allocator,
 }
 
 fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
+    return project_common.stripTrailingCR(line);
 }
 
 fn stripHashComment(line: []const u8) []const u8 {

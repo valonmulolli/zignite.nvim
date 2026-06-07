@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 
 fn readerSupportsMethod(comptime T: type, comptime name: []const u8) bool {
     if (std.meta.hasMethod(T, name)) return true;
@@ -27,10 +28,7 @@ pub fn readLineAlloc(
 }
 
 pub fn stripTrailingCR(line: []const u8) []const u8 {
-    if (line.len > 0 and line[line.len - 1] == '\r') {
-        return line[0 .. line.len - 1];
-    }
-    return line;
+    return common.stripTrailingCR(line);
 }
 
 pub fn isFrameEndLine(line: []const u8, marker_name: []const u8, request_id: u64) bool {
@@ -167,8 +165,8 @@ pub fn skipUntilEnd(
     return readUntilEnd(allocator, reader, max_line, end_marker, request_id, {}, Skip.onLine);
 }
 
-const TestReader = struct {
-    lines: []const []const u8,
+pub const TestReader = struct {
+    lines: []const []const u8 = &.{},
     index: usize = 0,
     pub fn readUntilDelimiterOrEofAlloc(
         self: *TestReader,

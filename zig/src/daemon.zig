@@ -210,23 +210,7 @@ fn handleShutdownSignal(_: std.posix.SIG) callconv(.c) void {
     shutdown_requested.store(true, .release);
 }
 
-const TestReader = struct {
-    lines: []const []const u8,
-    index: usize = 0,
-    pub fn readUntilDelimiterOrEofAlloc(
-        self: *TestReader,
-        allocator: std.mem.Allocator,
-        delimiter: u8,
-        max_line: usize,
-    ) !?[]u8 {
-        _ = delimiter;
-        if (self.index >= self.lines.len) return null;
-        const line = self.lines[self.index];
-        self.index += 1;
-        if (line.len > max_line) return error.StreamTooLong;
-        return try allocator.dupe(u8, line);
-    }
-};
+const TestReader = frame.TestReader;
 
 test "runWithIO writes quickfix error frame for malformed header with request id" {
     const allocator = std.testing.allocator;

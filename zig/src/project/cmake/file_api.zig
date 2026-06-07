@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_common = @import("../../build/common.zig");
 const common = @import("../core/common.zig");
+const project_io = @import("../core/io.zig");
 const pathing = @import("../../pathing.zig");
 const parse = @import("parse.zig");
 
@@ -25,7 +26,7 @@ pub fn parseTargetsWithIO(
 
     const reply_dir = try std.fs.path.join(allocator, &.{ root, build_dir, ".cmake", "api", "v1", "reply" });
     defer allocator.free(reply_dir);
-    if (!pathExistsWithIO(io, reply_dir)) return null;
+    if (!project_io.pathExistsWithIO(io, reply_dir)) return null;
 
     const normalized_root = try common.normalizePathAlloc(allocator, root);
     defer allocator.free(normalized_root);
@@ -342,12 +343,7 @@ fn findReplyIndexAllocWithIO(io: std.Io, allocator: std.mem.Allocator, reply_dir
 
 fn pathExists(path: []const u8) bool {
     var threaded: std.Io.Threaded = .init_single_threaded;
-    return pathExistsWithIO(threaded.io(), path);
-}
-
-fn pathExistsWithIO(io: std.Io, path: []const u8) bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
-    return true;
+    return project_io.pathExistsWithIO(threaded.io(), path);
 }
 
 fn getField(value: std.json.Value, name: []const u8) ?std.json.Value {
