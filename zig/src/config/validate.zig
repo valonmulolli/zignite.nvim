@@ -318,3 +318,55 @@ test "collectWarnings accepts valid backend config entries" {
 
     try std.testing.expectEqual(@as(usize, 0), warnings.len);
 }
+
+test "collectWarnings rejects cleanup_command and cwd with control characters" {
+    const allocator = std.testing.allocator;
+    const warnings = try collectWarnings(allocator,
+        \\{
+        \\  "runners": {
+        \\    "go": { "cmd": "go run $file", "cleanup_command": "rm -f /tmp/out\nrm -rf /", "cwd": "/tmp\r\n" }
+        \\  }
+        \\}
+    );
+    defer freeWarnings(allocator, warnings);
+
+    try std.testing.expectEqual(@as(usize, 2), warnings.len);
+    try std.testing.expect(std.mem.find(u8, warnings[0], "cleanup_command: contains control characters") != null);
+    try std.testing.expect(std.mem.find(u8, warnings[1], "cwd: contains control characters") != null);
+}
+
+test "collectWarnings accepts null timeout and rejects non-positive numbers" {
+    const allocator = std.testing.allocator;
+
+    {
+        const warnings = try collectWarnings(allocator,
+            \\{ "timeout": null }
+        );
+        defer freeWarnings(allocator, warnings);
+        try std.testing.expectEqual(@as(usize, 0), warnings.len);
+    }
+
+    {
+        const warnings = try collectWarnings(allocator,
+            \\{ "timeout": 0 }
+        );
+        defer freeWarnings(allocator, warnings);
+        try std.testing.expectEqual(@as(usize, 1), warnings.len);
+        try std.testing.expect(std.mem.find(u8, warnings[0], "expected positive number") != null);
+    }
+
+    {
+        const warnings = try collectWarnings(allocator,
+            \\{ "timeout": -5 }
+        );
+        defer freeWarnings(allocator, warnings);
+        try std.testing.expectEqual(@as(usize, 1), warnings.len);
+    }
+}
+
+test "collectWarnings rejects non-object root" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidConfigRoot, collectWarnings(allocator, "[1, 2, 3]"));
+    try std.testing.expectError(error.InvalidConfigRoot, collectWarnings(allocator, "42"));
+    try std.testing.expectError(error.InvalidConfigRoot, collectWarnings(allocator, "\"a string\""));
+}
