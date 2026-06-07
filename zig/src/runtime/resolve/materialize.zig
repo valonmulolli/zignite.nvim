@@ -87,8 +87,11 @@ fn substituteVariablesImpl(
             continue;
         }
         if (template[index] != '$') {
-            try out.append(allocator, template[index]);
-            index += 1;
+            const start = index;
+            while (index < template.len and template[index] != '$' and
+                !(template[index] == '%' and index + 1 < template.len and template[index + 1] == '%')) : (index += 1)
+            {}
+            try out.appendSlice(allocator, template[start..index]);
             continue;
         }
 

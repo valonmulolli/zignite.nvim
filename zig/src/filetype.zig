@@ -50,110 +50,118 @@ pub fn resolveSupportedAllocWithIO(
 }
 
 fn aliasFiletype(requested: []const u8) []const u8 {
-    if (std.mem.eql(u8, requested, "c++")) return "cpp";
-    if (std.mem.eql(u8, requested, "bash")) return "sh";
-    if (std.mem.eql(u8, requested, "cxx")) return "cpp";
-    if (std.mem.eql(u8, requested, "javascriptreact")) return "javascript";
-    if (std.mem.eql(u8, requested, "jsx")) return "javascript";
-    if (std.mem.eql(u8, requested, "typescriptreact")) return "typescript";
-    if (std.mem.eql(u8, requested, "tsx")) return "typescript";
-    if (std.mem.eql(u8, requested, "cmake")) return "cpp";
-    if (std.mem.eql(u8, requested, "make")) return "cpp";
-    if (std.mem.eql(u8, requested, "meson")) return "cpp";
-    if (std.mem.eql(u8, requested, "groovy")) return "java";
-    if (std.mem.eql(u8, requested, "objcpp")) return "cpp";
-    if (std.mem.eql(u8, requested, "objc")) return "c";
-    if (std.mem.eql(u8, requested, "cuda")) return "cpp";
-    return requested;
+    return alias_map.get(requested) orelse requested;
 }
+
+const alias_map = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "c++", "cpp" },
+    .{ "bash", "sh" },
+    .{ "cxx", "cpp" },
+    .{ "javascriptreact", "javascript" },
+    .{ "jsx", "javascript" },
+    .{ "typescriptreact", "typescript" },
+    .{ "tsx", "typescript" },
+    .{ "cmake", "cpp" },
+    .{ "make", "cpp" },
+    .{ "meson", "cpp" },
+    .{ "groovy", "java" },
+    .{ "objcpp", "cpp" },
+    .{ "objc", "c" },
+    .{ "cuda", "cpp" },
+});
 
 fn filenameFiletype(filepath: []const u8) ?[]const u8 {
     const base = std.fs.path.basename(filepath);
-    if (std.mem.eql(u8, base, "BUILD")) return "bzl";
-    if (std.mem.eql(u8, base, "BUILD.bazel")) return "bzl";
-    if (std.mem.eql(u8, base, "Cargo.toml")) return "rust";
-    if (std.mem.eql(u8, base, "CMakeLists.txt")) return "cpp";
-    if (std.mem.eql(u8, base, "GNUmakefile")) return "cpp";
-    if (std.mem.eql(u8, base, "MODULE.bazel")) return "bzl";
-    if (std.mem.eql(u8, base, "Makefile")) return "cpp";
-    if (std.mem.eql(u8, base, "WORKSPACE")) return "bzl";
-    if (std.mem.eql(u8, base, "WORKSPACE.bazel")) return "bzl";
-    if (std.mem.eql(u8, base, "build.gradle")) return "java";
-    if (std.mem.eql(u8, base, "build.gradle.kts")) return "kotlin";
-    if (std.mem.eql(u8, base, "go.mod")) return "go";
-    if (std.mem.eql(u8, base, "go.work")) return "go";
-    if (std.mem.eql(u8, base, "makefile")) return "cpp";
-    if (std.mem.eql(u8, base, "meson.build")) return "cpp";
-    if (std.mem.eql(u8, base, "package.json")) return "javascript";
-    if (std.mem.eql(u8, base, "pnpm-lock.yaml")) return "javascript";
-    if (std.mem.eql(u8, base, "pom.xml")) return "java";
-    if (std.mem.eql(u8, base, "pyproject.toml")) return "python";
-    if (std.mem.eql(u8, base, "requirements.txt")) return "python";
-    if (std.mem.eql(u8, base, "settings.gradle")) return "java";
-    if (std.mem.eql(u8, base, "settings.gradle.kts")) return "kotlin";
-    if (std.mem.eql(u8, base, "uv.lock")) return "python";
-    if (std.mem.eql(u8, base, "yarn.lock")) return "javascript";
-    return null;
+    return filename_map.get(base);
 }
+
+const filename_map = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "BUILD", "bzl" },
+    .{ "BUILD.bazel", "bzl" },
+    .{ "Cargo.toml", "rust" },
+    .{ "CMakeLists.txt", "cpp" },
+    .{ "GNUmakefile", "cpp" },
+    .{ "MODULE.bazel", "bzl" },
+    .{ "Makefile", "cpp" },
+    .{ "WORKSPACE", "bzl" },
+    .{ "WORKSPACE.bazel", "bzl" },
+    .{ "build.gradle", "java" },
+    .{ "build.gradle.kts", "kotlin" },
+    .{ "go.mod", "go" },
+    .{ "go.work", "go" },
+    .{ "makefile", "cpp" },
+    .{ "meson.build", "cpp" },
+    .{ "package.json", "javascript" },
+    .{ "pnpm-lock.yaml", "javascript" },
+    .{ "pom.xml", "java" },
+    .{ "pyproject.toml", "python" },
+    .{ "requirements.txt", "python" },
+    .{ "settings.gradle", "java" },
+    .{ "settings.gradle.kts", "kotlin" },
+    .{ "uv.lock", "python" },
+    .{ "yarn.lock", "javascript" },
+});
 
 fn extensionFiletype(filepath: []const u8) ?[]const u8 {
     const ext_with_dot = std.fs.path.extension(filepath);
     if (ext_with_dot.len <= 1) return null;
     const ext = ext_with_dot[1..];
-
-    if (std.mem.eql(u8, ext, "bash")) return "sh";
-    if (std.mem.eql(u8, ext, "c")) return "c";
-    if (std.mem.eql(u8, ext, "cc")) return "cpp";
-    if (std.mem.eql(u8, ext, "cjs")) return "javascript";
-    if (std.mem.eql(u8, ext, "cpp")) return "cpp";
-    if (std.mem.eql(u8, ext, "cts")) return "typescript";
-    if (std.mem.eql(u8, ext, "cu")) return "cpp";
-    if (std.mem.eql(u8, ext, "cuh")) return "cpp";
-    if (std.mem.eql(u8, ext, "cxx")) return "cpp";
-    if (std.mem.eql(u8, ext, "dart")) return "dart";
-    if (std.mem.eql(u8, ext, "ex")) return "elixir";
-    if (std.mem.eql(u8, ext, "exs")) return "elixir";
-    if (std.mem.eql(u8, ext, "f")) return "fortran";
-    if (std.mem.eql(u8, ext, "f03")) return "fortran";
-    if (std.mem.eql(u8, ext, "f08")) return "fortran";
-    if (std.mem.eql(u8, ext, "f90")) return "fortran";
-    if (std.mem.eql(u8, ext, "f95")) return "fortran";
-    if (std.mem.eql(u8, ext, "for")) return "fortran";
-    if (std.mem.eql(u8, ext, "go")) return "go";
-    if (std.mem.eql(u8, ext, "h")) return "c";
-    if (std.mem.eql(u8, ext, "hh")) return "cpp";
-    if (std.mem.eql(u8, ext, "hs")) return "haskell";
-    if (std.mem.eql(u8, ext, "htm")) return "html";
-    if (std.mem.eql(u8, ext, "html")) return "html";
-    if (std.mem.eql(u8, ext, "hpp")) return "cpp";
-    if (std.mem.eql(u8, ext, "hxx")) return "cpp";
-    if (std.mem.eql(u8, ext, "java")) return "java";
-    if (std.mem.eql(u8, ext, "jl")) return "julia";
-    if (std.mem.eql(u8, ext, "js")) return "javascript";
-    if (std.mem.eql(u8, ext, "json")) return "json";
-    if (std.mem.eql(u8, ext, "kt")) return "kotlin";
-    if (std.mem.eql(u8, ext, "kts")) return "kotlin";
-    if (std.mem.eql(u8, ext, "lua")) return "lua";
-    if (std.mem.eql(u8, ext, "mjs")) return "javascript";
-    if (std.mem.eql(u8, ext, "mts")) return "typescript";
-    if (std.mem.eql(u8, ext, "odin")) return "odin";
-    if (std.mem.eql(u8, ext, "perl")) return "perl";
-    if (std.mem.eql(u8, ext, "php")) return "php";
-    if (std.mem.eql(u8, ext, "pl")) return "perl";
-    if (std.mem.eql(u8, ext, "pm")) return "perl";
-    if (std.mem.eql(u8, ext, "py")) return "python";
-    if (std.mem.eql(u8, ext, "pyw")) return "python";
-    if (std.mem.eql(u8, ext, "r")) return "r";
-    if (std.mem.eql(u8, ext, "rb")) return "ruby";
-    if (std.mem.eql(u8, ext, "rs")) return "rust";
-    if (std.mem.eql(u8, ext, "sh")) return "sh";
-    if (std.mem.eql(u8, ext, "swift")) return "swift";
-    if (std.mem.eql(u8, ext, "ts")) return "typescript";
-    if (std.mem.eql(u8, ext, "tsx")) return "typescript";
-    if (std.mem.eql(u8, ext, "zig")) return "zig";
-    if (std.mem.eql(u8, ext, "zsh")) return "zsh";
-    return null;
+    return ext_map.get(ext);
 }
+
+const ext_map = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "bash", "sh" },
+    .{ "c", "c" },
+    .{ "cc", "cpp" },
+    .{ "cjs", "javascript" },
+    .{ "cpp", "cpp" },
+    .{ "cts", "typescript" },
+    .{ "cu", "cpp" },
+    .{ "cuh", "cpp" },
+    .{ "cxx", "cpp" },
+    .{ "dart", "dart" },
+    .{ "ex", "elixir" },
+    .{ "exs", "elixir" },
+    .{ "f", "fortran" },
+    .{ "f03", "fortran" },
+    .{ "f08", "fortran" },
+    .{ "f90", "fortran" },
+    .{ "f95", "fortran" },
+    .{ "for", "fortran" },
+    .{ "go", "go" },
+    .{ "h", "c" },
+    .{ "hh", "cpp" },
+    .{ "hs", "haskell" },
+    .{ "htm", "html" },
+    .{ "html", "html" },
+    .{ "hpp", "cpp" },
+    .{ "hxx", "cpp" },
+    .{ "java", "java" },
+    .{ "jl", "julia" },
+    .{ "js", "javascript" },
+    .{ "json", "json" },
+    .{ "kt", "kotlin" },
+    .{ "kts", "kotlin" },
+    .{ "lua", "lua" },
+    .{ "mjs", "javascript" },
+    .{ "mts", "typescript" },
+    .{ "odin", "odin" },
+    .{ "perl", "perl" },
+    .{ "php", "php" },
+    .{ "pl", "perl" },
+    .{ "pm", "perl" },
+    .{ "py", "python" },
+    .{ "pyw", "python" },
+    .{ "r", "r" },
+    .{ "rb", "ruby" },
+    .{ "rs", "rust" },
+    .{ "sh", "sh" },
+    .{ "swift", "swift" },
+    .{ "ts", "typescript" },
+    .{ "tsx", "typescript" },
+    .{ "zig", "zig" },
+    .{ "zsh", "zsh" },
+});
 
 fn shebangFiletypeAllocWithIO(io: std.Io, allocator: std.mem.Allocator, filepath: []const u8) !?[]u8 {
     if (filepath.len == 0) return null;

@@ -152,10 +152,7 @@ const entries = [_]Entry{
 };
 
 pub fn find(filetype: []const u8) ?Entry {
-    for (entries) |entry| {
-        if (std.mem.eql(u8, entry.filetype, filetype)) return entry;
-    }
-    return null;
+    return entries_map.get(filetype);
 }
 
 pub fn detectKeyForFiletype(filetype: []const u8) ?[]const u8 {
@@ -169,6 +166,12 @@ pub fn autoKindForFiletype(filetype: []const u8) ?project_types.Kind {
 pub fn systemQueryForFiletype(filetype: []const u8) ?build_system.Query {
     return if (find(filetype)) |entry| entry.system_query else null;
 }
+
+const entries_map = blk: {
+    var kvs: [entries.len]struct { []const u8, Entry } = undefined;
+    for (entries, 0..) |entry, i| kvs[i] = .{ entry.filetype, entry };
+    break :blk std.StaticStringMap(Entry).initComptime(&kvs);
+};
 
 test "find returns shared filetype policy entry" {
     const cpp = find("cpp").?;

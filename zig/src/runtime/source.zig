@@ -312,20 +312,22 @@ fn pruneScratchRootBestEffort(
     }
 
     const current_name = std.fs.path.basename(current_path);
-    while (items.items.len > max_entries) {
-        var oldest_index: ?usize = null;
-        var oldest_mtime: i96 = std.math.maxInt(i96);
-
-        for (items.items, 0..) |item, index| {
-            if (std.mem.eql(u8, item.name, current_name)) continue;
-            if (item.mtime < oldest_mtime) {
-                oldest_mtime = item.mtime;
-                oldest_index = index;
-            }
+    for (items.items) |*item| {
+        if (std.mem.eql(u8, item.name, current_name)) {
+            item.mtime = std.math.maxInt(i96);
         }
+    }
+    std.mem.sort(Entry, items.items, {}, struct {
+        fn lessThan(_: void, lhs: Entry, rhs: Entry) bool {
+            return lhs.mtime < rhs.mtime;
+        }
+    }.lessThan);
 
-        const victim_index = oldest_index orelse break;
-        const victim = items.swapRemove(victim_index);
+    while (items.items.len > max_entries) {
+        const victim = items.orderedRemove(0);
+        if (victim.mtime == std.math.maxInt(i96)) {
+            break;
+        }
         dir.deleteFile(io, victim.name) catch {};
         allocator.free(victim.name);
     }
