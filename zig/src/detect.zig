@@ -154,6 +154,32 @@ fn parseDetectDaemonBegin(line: []const u8) !DetectDaemonRequestHeader {
 
 const TestReader = frame.TestReader;
 
+test "parseArgs returns tool when --tool= is provided" {
+    const options = try parseArgs(&.{
+        "--detect",
+        "--tool=zig",
+    });
+    try std.testing.expectEqual(Tool.zig, options.tool);
+}
+
+test "parseArgs accepts all four tool variants" {
+    try std.testing.expectEqual(Tool.zig, (try parseArgs(&.{ "--detect", "--tool=zig" })).tool);
+    try std.testing.expectEqual(Tool.go, (try parseArgs(&.{ "--detect", "--tool=go" })).tool);
+    try std.testing.expectEqual(Tool.cargo, (try parseArgs(&.{ "--detect", "--tool=cargo" })).tool);
+    try std.testing.expectEqual(Tool.odin, (try parseArgs(&.{ "--detect", "--tool=odin" })).tool);
+}
+
+test "parseArgs rejects missing --tool" {
+    try std.testing.expectError(error.MissingDetectTool, parseArgs(&.{"--detect"}));
+    try std.testing.expectError(error.MissingDetectTool, parseArgs(&.{}));
+}
+
+test "parseArgs rejects unknown tools and unknown flags" {
+    try std.testing.expectError(error.InvalidDetectTool, parseArgs(&.{ "--detect", "--tool=ruby" }));
+    try std.testing.expectError(error.InvalidDetectTool, parseArgs(&.{ "--detect", "--tool=" }));
+    try std.testing.expectError(error.InvalidDetectFlag, parseArgs(&.{ "--detect", "--bogus" }));
+}
+
 test "handleDaemonFrame writes detect error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{};
