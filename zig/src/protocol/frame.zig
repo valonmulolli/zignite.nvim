@@ -88,6 +88,7 @@ pub fn readUntilEnd(
 pub const CollectLineOptions = struct {
     strip_leading_tab: bool = false,
     skip_empty: bool = false,
+    max_bytes: ?usize = null,
 };
 
 pub fn collectOwnedLinesUntilEnd(
@@ -104,10 +105,13 @@ pub fn collectOwnedLinesUntilEnd(
         lines.deinit(allocator);
     }
 
+    var total_bytes: usize = 0;
+
     const Collect = struct {
         allocator: std.mem.Allocator,
         lines: *std.ArrayList([]u8),
         options: CollectLineOptions,
+        total_bytes: *usize,
 
         fn onLine(self: @This(), line: []const u8) !void {
             const value = if (self.options.strip_leading_tab and line.len > 0 and line[0] == '\t')
@@ -115,6 +119,12 @@ pub fn collectOwnedLinesUntilEnd(
             else
                 line;
             if (self.options.skip_empty and value.len == 0) return;
+            if (self.options.max_bytes) |cap| {
+                if (self.lines.items.len > 0 and self.total_bytes.* + value.len + 1 > cap) {
+                    return error.StreamTooLong;
+                }
+                self.total_bytes.* += value.len + 1;
+            }
             const owned_value = try self.allocator.dupe(u8, value);
             self.lines.append(self.allocator, owned_value) catch |err| {
                 self.allocator.free(owned_value);
@@ -127,6 +137,7 @@ pub fn collectOwnedLinesUntilEnd(
         .allocator = allocator,
         .lines = &lines,
         .options = options,
+        .total_bytes = &total_bytes,
     };
 
     const completed = try readUntilEnd(

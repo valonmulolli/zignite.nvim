@@ -19,7 +19,7 @@ const DAEMON_REQ_END = "@@ZQF_END";
 const DAEMON_RES_BEGIN = "@@ZQF_RES_BEGIN";
 const DAEMON_RES_ERR = "@@ZQF_RES_ERR";
 const DAEMON_RES_END = "@@ZQF_RES_END";
-const DAEMON_MAX_LINE = 16 * 1024 * 1024;
+const DAEMON_MAX_LINE = 1 * 1024 * 1024;
 
 pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
     const input = try readStdinAll(allocator, io);

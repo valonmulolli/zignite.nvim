@@ -259,7 +259,7 @@ fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root:
 }
 
 fn pathContainsIgnoredBuildDir(path: []const u8) bool {
-    var parts = std.mem.splitScalar(u8, path, '/');
+    var parts = std.mem.splitAny(u8, path, "/\\");
     while (parts.next()) |part| {
         if (std.mem.eql(u8, part, "CMakeFiles") or std.mem.eql(u8, part, "meson-private") or std.mem.eql(u8, part, "meson-logs")) {
             return true;
