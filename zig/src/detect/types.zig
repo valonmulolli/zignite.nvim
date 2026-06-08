@@ -25,3 +25,17 @@ pub fn freeOwnedCommandList(allocator: std.mem.Allocator, commands: [][]u8) void
     }
     allocator.free(commands);
 }
+
+test "parseTool accepts case-insensitive tool names" {
+    try std.testing.expectEqual(Tool.zig, try parseTool("zig"));
+    try std.testing.expectEqual(Tool.zig, try parseTool("ZIG"));
+    try std.testing.expectEqual(Tool.go, try parseTool("go"));
+    try std.testing.expectEqual(Tool.cargo, try parseTool("CARGO"));
+    try std.testing.expectEqual(Tool.odin, try parseTool("Odin"));
+}
+
+test "parseTool rejects unknown tool names" {
+    try std.testing.expectError(error.InvalidDetectTool, parseTool("ruby"));
+    try std.testing.expectError(error.InvalidDetectTool, parseTool("python"));
+    try std.testing.expectError(error.InvalidDetectTool, parseTool(""));
+}

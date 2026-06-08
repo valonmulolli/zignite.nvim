@@ -39,3 +39,30 @@ pub fn reset() void {
     synced_revision = 0;
     synced_generation +%= 1;
 }
+
+test "store: set/get/reset" {
+    reset();
+    try std.testing.expectEqual(@as(u64, 0), getSyncedRevision());
+    try std.testing.expectEqual(@as(?[]const u8, null), getSyncedConfigJson());
+
+    try setSyncedConfigJson("{\"foo\":1}", 42);
+    try std.testing.expectEqual(@as(u64, 42), getSyncedRevision());
+    try std.testing.expectEqualStrings("{\"foo\":1}", getSyncedConfigJson().?);
+
+    try setSyncedConfigJson("bar", 99);
+    try std.testing.expectEqual(@as(u64, 99), getSyncedRevision());
+    try std.testing.expectEqualStrings("bar", getSyncedConfigJson().?);
+
+    reset();
+    try std.testing.expectEqual(@as(u64, 0), getSyncedRevision());
+    try std.testing.expectEqual(@as(?[]const u8, null), getSyncedConfigJson());
+}
+
+test "store: reset after set increments generation" {
+    reset();
+    const gen = getSyncedGeneration();
+    reset();
+    try std.testing.expect(gen +% 1 == getSyncedGeneration());
+    reset();
+    try std.testing.expect(gen +% 2 == getSyncedGeneration());
+}
