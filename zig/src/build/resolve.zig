@@ -67,6 +67,10 @@ pub fn runModeWithEnviron(
     try stdout.flush();
 }
 
+fn buildResolveParseArgs(args: []const []const u8) !Options {
+    return parseArgs(args);
+}
+
 pub fn handleDaemonFrame(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -75,50 +79,29 @@ pub fn handleDaemonFrame(
     stdout: anytype,
     begin_line: []const u8,
 ) !void {
-    const header = protocol.parseResolveDaemonBegin(begin_line) catch |err| {
-        if (frame.parseRequestId(begin_line, BUILD_RESOLVE_REQ_BEGIN)) |request_id| {
-            try frame.writeErrorResponse(
-                stdout,
-                BUILD_RESOLVE_RES_BEGIN,
-                BUILD_RESOLVE_RES_ERR,
-                BUILD_RESOLVE_RES_END,
-                request_id,
-                @errorName(err),
-            );
-            try stdout.flush();
-            return;
+    const ctx = struct {
+        pub const req_begin = BUILD_RESOLVE_REQ_BEGIN;
+        pub const req_end = BUILD_RESOLVE_REQ_END;
+        pub const res_begin = BUILD_RESOLVE_RES_BEGIN;
+        pub const res_end = BUILD_RESOLVE_RES_END;
+        pub const res_err = BUILD_RESOLVE_RES_ERR;
+        pub const max_line = protocol.BUILD_RESOLVE_MAX_LINE;
+        pub const max_bytes = 4 * 1024 * 1024;
+
+        pub fn parseHeader(line: []const u8, _: []const u8) !u64 {
+            return (try protocol.parseResolveDaemonBegin(line)).request_id;
         }
-        return err;
+        pub const parseArgs = buildResolveParseArgs;
+        pub const writeOutput = writeResolvedOutput;
     };
-
-    const request_args = try frame.collectOwnedLinesUntilEnd(
+    return try frame.BuildDaemonFrameHandler(ctx).handle(
         allocator,
+        io,
+        environ_map,
         reader,
-        protocol.BUILD_RESOLVE_MAX_LINE,
-        BUILD_RESOLVE_REQ_END,
-        header.request_id,
-        .{
-            .strip_leading_tab = true,
-            .skip_empty = true,
-            .max_bytes = 4 * 1024 * 1024,
-        },
+        stdout,
+        begin_line,
     );
-    defer {
-        for (request_args) |arg| allocator.free(arg);
-        allocator.free(request_args);
-    }
-
-    try stdout.print("{s} {d}\n", .{ BUILD_RESOLVE_RES_BEGIN, header.request_id });
-    const options = parseArgs(request_args);
-    if (options) |parsed| {
-        writeResolvedOutput(stdout, allocator, io, environ_map, parsed) catch |err| {
-            try stdout.print("{s} {d} {s}\n", .{ BUILD_RESOLVE_RES_ERR, header.request_id, @errorName(err) });
-        };
-    } else |err| {
-        try stdout.print("{s} {d} {s}\n", .{ BUILD_RESOLVE_RES_ERR, header.request_id, @errorName(err) });
-    }
-    try stdout.print("{s} {d}\n", .{ BUILD_RESOLVE_RES_END, header.request_id });
-    try stdout.flush();
 }
 
 fn writeResolvedOutput(

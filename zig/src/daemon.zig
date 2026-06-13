@@ -87,7 +87,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
             detect.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,
@@ -99,7 +99,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
             project.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,
@@ -111,7 +111,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
             config.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,
@@ -123,7 +123,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
             build_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,
@@ -135,7 +135,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, BUILD_ACTION_REQ_BEGIN)) {
             build_action.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,
@@ -147,7 +147,7 @@ pub fn runWithIO(
         }
         if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
             run_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
-                return frame.handleDispatchError(
+                try frame.handleDispatchError(
                     err,
                     stdout,
                     line,

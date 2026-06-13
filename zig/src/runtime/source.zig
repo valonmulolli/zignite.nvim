@@ -319,12 +319,12 @@ fn pruneScratchRootBestEffort(
     }
     std.mem.sort(Entry, items.items, {}, struct {
         fn lessThan(_: void, lhs: Entry, rhs: Entry) bool {
-            return lhs.mtime < rhs.mtime;
+            return lhs.mtime > rhs.mtime;
         }
     }.lessThan);
 
     while (items.items.len > max_entries) {
-        const victim = items.orderedRemove(0);
+        const victim = items.orderedRemove(items.items.len - 1);
         if (victim.mtime == std.math.maxInt(i96)) {
             break;
         }
