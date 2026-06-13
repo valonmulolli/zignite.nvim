@@ -97,6 +97,55 @@ pub const BeginFrame = struct {
     it: std.mem.TokenIterator(u8, .scalar),
 };
 
+pub fn BuildDaemonFrameHandler(comptime ctx: anytype) type {
+    return struct {
+        pub fn handle(
+            allocator: std.mem.Allocator,
+            io: std.Io,
+            environ_map: ?*const std.process.Environ.Map,
+            reader: anytype,
+            stdout: anytype,
+            begin_line: []const u8,
+        ) !void {
+            const headers_match = std.mem.startsWith(u8, begin_line, ctx.req_begin);
+            const request_id: u64 = ctx.parseHeader(begin_line, ctx.req_begin) catch |err| {
+                if (headers_match) {
+                    if (parseRequestId(begin_line, ctx.req_begin)) |id| {
+                        try writeErrorResponse(stdout, ctx.res_begin, ctx.res_err, ctx.res_end, id, @errorName(err));
+                        try stdout.flush();
+                    }
+                }
+                return;
+            };
+
+            const args = try collectOwnedLinesUntilEnd(
+                allocator,
+                reader,
+                ctx.max_line,
+                ctx.req_end,
+                request_id,
+                .{ .strip_leading_tab = true, .skip_empty = true, .max_bytes = ctx.max_bytes },
+            );
+            defer {
+                for (args) |a| allocator.free(a);
+                allocator.free(args);
+            }
+
+            try stdout.print("{s} {d}\n", .{ ctx.res_begin, request_id });
+            const parsed = ctx.parseArgs(args);
+            if (parsed) |p| {
+                ctx.writeOutput(stdout, allocator, io, environ_map, p) catch |e| {
+                    try stdout.print("{s} {d} {s}\n", .{ ctx.res_err, request_id, @errorName(e) });
+                };
+            } else |e| {
+                try stdout.print("{s} {d} {s}\n", .{ ctx.res_err, request_id, @errorName(e) });
+            }
+            try stdout.print("{s} {d}\n", .{ ctx.res_end, request_id });
+            try stdout.flush();
+        }
+    };
+}
+
 /// Splits a daemon begin line, validates the marker, and parses the request id.
 /// Returns the request id and a token iterator over the remaining fields.
 /// Callers should consume additional fields via `it.next()` and reject extras

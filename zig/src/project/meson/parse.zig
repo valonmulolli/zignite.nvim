@@ -141,8 +141,33 @@ fn commitBlock(
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
-    const hash_idx = std.mem.findScalar(u8, line, '#') orelse return line;
-    return line[0..hash_idx];
+    var quote: ?u8 = null;
+    var escaped = false;
+
+    for (line, 0..) |ch, index| {
+        if (quote) |active_quote| {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == active_quote) {
+                quote = null;
+            }
+            continue;
+        }
+
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '#') return line[0..index];
+    }
+
+    return line;
 }
 
 fn indexOfExecutable(line: []const u8) ?usize {

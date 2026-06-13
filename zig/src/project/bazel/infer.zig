@@ -196,29 +196,34 @@ fn globPatternMatches(pattern: []const u8, value: []const u8) bool {
 }
 
 fn matchGlob(pattern: []const u8, value: []const u8) bool {
+    return matchGlobDepth(pattern, value, 0);
+}
+
+fn matchGlobDepth(pattern: []const u8, value: []const u8, depth: usize) bool {
+    if (depth > 200) return false;
     if (pattern.len == 0) return value.len == 0;
 
     if (pattern.len >= 2 and pattern[0] == '*' and pattern[1] == '*') {
-        if (matchGlob(pattern[2..], value)) return true;
+        if (matchGlobDepth(pattern[2..], value, depth + 1)) return true;
         if (value.len > 0) {
-            return matchGlob(pattern, value[1..]);
+            return matchGlobDepth(pattern, value[1..], depth + 1);
         }
         return false;
     }
 
     if (pattern[0] == '*') {
-        if (matchGlob(pattern[1..], value)) return true;
+        if (matchGlobDepth(pattern[1..], value, depth + 1)) return true;
         if (value.len > 0 and value[0] != '/') {
-            return matchGlob(pattern, value[1..]);
+            return matchGlobDepth(pattern, value[1..], depth + 1);
         }
         return false;
     }
 
     if (pattern[0] == '?') {
-        return value.len > 0 and matchGlob(pattern[1..], value[1..]);
+        return value.len > 0 and matchGlobDepth(pattern[1..], value[1..], depth + 1);
     }
 
-    return value.len > 0 and pattern[0] == value[0] and matchGlob(pattern[1..], value[1..]);
+    return value.len > 0 and pattern[0] == value[0] and matchGlobDepth(pattern[1..], value[1..], depth + 1);
 }
 
 fn sourceEntriesAreRelatedToFile(

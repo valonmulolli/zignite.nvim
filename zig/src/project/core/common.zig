@@ -93,6 +93,8 @@ pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, f
         var start = root.len;
         if (filepath.len > start and filepath[start] == '/') {
             start += 1;
+        } else if (filepath.len > start) {
+            return try allocator.dupe(u8, std.fs.path.basename(filepath));
         }
         return try allocator.dupe(u8, filepath[start..]);
     }

@@ -297,7 +297,7 @@ fn findCodeModelPathAlloc(
 
     var it = reply.object.iterator();
     while (it.next()) |entry| {
-        if (!std.mem.startsWith(u8, entry.key_ptr.*, "codemodel-v2")) continue;
+        if (!std.mem.startsWith(u8, entry.key_ptr.*, "codemodel-v")) continue;
         const json_file = getStringField(entry.value_ptr.*, "jsonFile") orelse continue;
         return try std.fs.path.join(allocator, &.{ reply_dir, json_file });
     }

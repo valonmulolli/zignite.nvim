@@ -1,4 +1,5 @@
 const std = @import("std");
+const frame = @import("../../protocol/frame.zig");
 const protocol_args = @import("../../protocol/args.zig");
 const types = @import("types.zig");
 
@@ -54,16 +55,7 @@ pub const DaemonHeader = struct {
 };
 
 pub fn parseDaemonBegin(line: []const u8) !DaemonHeader {
-    const prefix = BUILD_ACTION_REQ_BEGIN ++ " ";
-    if (!std.mem.startsWith(u8, line, prefix)) {
-        return error.InvalidBuildActionDaemonHeader;
-    }
-    const remainder = line[prefix.len..];
-    if (remainder.len == 0) return error.InvalidBuildActionDaemonHeader;
-    if (std.mem.findScalar(u8, remainder, ' ')) |_| {
-        return error.InvalidBuildActionDaemonHeader;
-    }
-    return .{
-        .request_id = try std.fmt.parseInt(u64, remainder, 10),
-    };
+    var begin = try frame.parseBeginFrame(line, BUILD_ACTION_REQ_BEGIN, error.InvalidBuildActionDaemonHeader);
+    if (begin.it.next() != null) return error.InvalidBuildActionDaemonHeader;
+    return .{ .request_id = begin.request_id };
 }
