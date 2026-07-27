@@ -142,7 +142,7 @@ local function build_once_argv(params)
 			{ name = "context-path", value = context_path },
 			{ name = "buffer-id", value = buffer_id and tostring(math.floor(tonumber(buffer_id))) or nil },
 		},
-		input_guard.contains_control_characters
+		input_guard.is_invalid_payload_value
 	)
 end
 

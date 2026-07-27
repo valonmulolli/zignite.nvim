@@ -177,12 +177,18 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 		on_stdout = function(_, data)
 			append_output_lines(output_lines, data)
 		end,
-		on_exit = function(_, exit_code)
+		on_exit = function(_, exit_code, data)
 			if failed then
 				return
 			end
 			if exit_code == 0 then
-				on_success(M.with_truncation_notice(output_lines, force_truncated))
+				local lines = output_lines
+				-- Neovim >= 0.10 delivers buffered output in on_exit's third argument
+				if type(data) == "table" and #data > 0 then
+					lines = {}
+					append_output_lines(lines, data)
+				end
+				on_success(M.with_truncation_notice(lines, force_truncated))
 				return
 			end
 			failed = true
@@ -213,9 +219,7 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 	end
 	local ok_close = pcall(vim.fn.chanclose, job_id, "stdin")
 	if not ok_close then
-		failed = true
-		stop_job()
-		on_fallback()
+		-- Process may have already exited; on_exit handles the result.
 	end
 end
 
