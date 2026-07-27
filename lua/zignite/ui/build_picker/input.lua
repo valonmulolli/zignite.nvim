@@ -125,7 +125,7 @@ local function get_prompt_buffer_help_line(selected)
 	if type(help) == "string" and help ~= "" then
 		return " " .. help .. " "
 	end
-	return " Enter arguments, then press <CR> "
+	return ""
 end
 
 ---@param opts table

@@ -99,7 +99,7 @@ local function build_lines(args)
 			" " .. prompt .. " ",
 			" > " .. truncate_text(shown_value, math.max(12, args.width_cap - 4)),
 		}
-		local help_text = args.help_text or "Type arguments, then press Enter to run"
+		local help_text = args.help_text or ""
 		lines[#lines + 1] = ""
 		lines[#lines + 1] = truncate_text(help_text, math.max(20, args.width_cap - 2))
 		local preview_text = truncate_text(args.preview_text or "(none)", math.max(12, args.width_cap - 8))
