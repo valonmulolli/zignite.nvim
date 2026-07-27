@@ -103,16 +103,14 @@ function M.check()
 		end)
 		if ping_ok and ping_result == true then
 			vim.health.ok("Daemon process is responsive (ping/pong)")
-		elseif ping_ok and ping_result == nil then
-			-- ping_async not available (old client), skip
-		else
+		elseif ping_ok and ping_result ~= nil then
 			vim.health.warn("Daemon process did not respond to health ping (may be starting or busy)")
 		end
 	end
 
 	do
-		local ok, config = pcall(require, "zignite.config")
-		if ok and type(config) == "table" then
+		local config_ok, config = pcall(require, "zignite.config")
+		if config_ok and type(config) == "table" then
 			vim.health.ok("Config module loaded")
 			local opts = config.options
 			if opts and not vim.tbl_isempty(opts) then

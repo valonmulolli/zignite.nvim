@@ -128,8 +128,6 @@ function M.run_code(range, mode)
 		)
 		return
 	end
-	local planned_execution_path = type(execution.execution_path) == "string" and execution.execution_path or request.path
-
 	M.execute_command(execution.system_argv, mode, execution.name or resolved_filetype, {
 		cwd = execution.cwd,
 	})
