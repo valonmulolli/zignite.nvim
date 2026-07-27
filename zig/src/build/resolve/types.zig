@@ -12,6 +12,12 @@ pub const Options = struct {
 pub const ResolvedOutput = struct {
     filetype: ?[]u8 = null,
     root: ?[]u8 = null,
+    /// Owned string identifying the build system that produced these commands.
+    /// Matches the ownership contract of build/system/types.zig Result.system
+    /// (which is ?[]const u8 because it borrows from static data). When we dupe
+    /// from that borrowed source we store the result as ?[]u8 internally so
+    /// deinit can free it without a cast. Public callers should treat it as
+    /// readable const — we keep []u8 only to simplify deinit.
     system: ?[]u8 = null,
     build_ready: ?bool = null,
     commands: std.ArrayList(build_types.CommandEntry) = .empty,

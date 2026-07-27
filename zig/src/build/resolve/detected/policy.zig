@@ -29,22 +29,12 @@ pub fn shouldOverlayBuiltinCommand(
             return false;
         }
     }
-    return shouldOverlayCommand(filetype, detected_system, commands, command_entry);
+    return shouldOverlayCommand(commands, command_entry);
 }
 
 fn shouldOverlayCommand(
-    filetype: []const u8,
-    detected_system: ?[]const u8,
     commands: []const build_types.CommandEntry,
     command_entry: build_types.CommandEntry,
 ) bool {
-    if (detected_system) |system| {
-        if (builtin.commandSystem(filetype, command_entry.name)) |builtin_system| {
-            if (!std.mem.eql(u8, builtin_system, system)) {
-                return false;
-            }
-        }
-    }
-
     return output.findCommand(commands, command_entry.name) == null;
 }
