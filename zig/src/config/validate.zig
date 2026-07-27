@@ -55,6 +55,12 @@ fn validateRoot(
         }
     }
 
+    if (root.get("project")) |project| {
+        if (project != .object) {
+            try pushWarning(allocator, warnings, "Invalid config project: expected object, got {s}", .{valueTypeName(project)});
+        }
+    }
+
     if (root.get("timeout")) |timeout| {
         try validateTimeout(allocator, warnings, timeout);
     }

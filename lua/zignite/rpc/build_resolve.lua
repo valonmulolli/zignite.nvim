@@ -99,7 +99,7 @@ local resolve_client = backend_client.new({
 	protocol = BUILD_RESOLVE_PROTOCOL,
 	worker_wait_ms = BUILD_RESOLVE_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_RESOLVE_ASYNC_TIMEOUT_MS,
-	reset_on_sync_timeout = true,
+	reset_on_sync_timeout = false,
 	build_worker_payload = function(request_id, params)
 		return compose_worker_payload(BUILD_RESOLVE_REQ_BEGIN, BUILD_RESOLVE_REQ_END, "--build-resolve", request_id, params)
 	end,
@@ -114,7 +114,7 @@ local action_client = backend_client.new({
 	protocol = BUILD_ACTION_PROTOCOL,
 	worker_wait_ms = BUILD_ACTION_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_ACTION_ASYNC_TIMEOUT_MS,
-	reset_on_sync_timeout = true,
+	reset_on_sync_timeout = false,
 	build_worker_payload = function(request_id, params)
 		return compose_worker_payload(BUILD_ACTION_REQ_BEGIN, BUILD_ACTION_REQ_END, "--build-action", request_id, params)
 	end,
