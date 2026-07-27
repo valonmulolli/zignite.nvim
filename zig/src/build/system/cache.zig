@@ -16,6 +16,15 @@ const Result = types.Result;
 const page_allocator = std.heap.page_allocator;
 const max_cache_entries = 256;
 
+/// Negative results (no project markers found) are cached with a
+/// detection-count-based refresh interval. Within this window of
+/// `detectWithIO` calls, repeated lookups return the cached empty result
+/// without walking the filesystem. After the window, the cache is
+/// invalidated and a fresh detection runs automatically.
+const NEGATIVE_CACHE_REFRESH_INTERVAL = 50;
+
+var detection_count: u64 = 0;
+
 const CacheEntry = struct {
     signature: []u8,
     result: Result,
@@ -48,6 +57,7 @@ pub fn detectWithIO(
     path: []const u8,
     project_root: ?[]const u8,
 ) !Result {
+    detection_count +%= 1;
     ensureCacheInit();
 
     const cache_key = try std.fmt.allocPrint(allocator, "{s}\x1f{s}\x1f{s}", .{
@@ -155,13 +165,27 @@ fn cloneResult(allocator: std.mem.Allocator, result: Result) !Result {
     return cloned;
 }
 
+/// Returns a counter-based signature for negative (no-system) results.
+/// The signature advances every NEGATIVE_CACHE_REFRESH_INTERVAL calls
+/// to detectWithIO across all queries, causing an automatic cache miss
+/// that triggers a fresh detection.
+fn negativeSignatureAlloc(allocator: std.mem.Allocator) !?[]u8 {
+    const slot = detection_count / NEGATIVE_CACHE_REFRESH_INTERVAL;
+    const sig = try std.fmt.allocPrint(allocator, "negative_{d}", .{slot});
+    return @as(?[]u8, sig);
+}
+
 fn buildSignatureAlloc(
     io: std.Io,
     allocator: std.mem.Allocator,
     query: Query,
     result: Result,
 ) !?[]u8 {
-    const root = result.root orelse return null;
+    const root = result.root orelse return try negativeSignatureAlloc(allocator);
+
+    // c_family may return a non-null root with a null system when no
+    // project markers are found. Cache this negative result too.
+    if (result.system == null) return try negativeSignatureAlloc(allocator);
 
     return switch (query) {
         .c_family => blk: {
@@ -260,6 +284,50 @@ fn buildMesonSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: []co
     return try signature.toOwnedSlice(allocator);
 }
 
+test "negative detection result is cached within TTL window" {
+    const allocator = std.testing.allocator;
+    resetForTests();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "empty_project/src");
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "empty_project", "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    // First detection: no markers should exist → negative result.
+    // c_family returns a non-null root (the base path) but null system.
+    const first = try detect(allocator, .c_family, filepath, root);
+    defer types.freeOwnedResult(allocator, first);
+    try std.testing.expect(first.root != null);
+    try std.testing.expect(first.system == null);
+    try std.testing.expectEqual(@as(usize, 0), first.commands.len);
+
+    // Create a marker file within the refresh interval
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty_project/Makefile", .data = "run:\n\t@echo run\n" });
+
+    // Second detection: should return the STALE cached negative result
+    // because the refresh interval has not elapsed. This is a known
+    // trade-off: newly created project markers are detected only after
+    // the next cache refresh.
+    const second = try detect(allocator, .c_family, filepath, root);
+    defer types.freeOwnedResult(allocator, second);
+    try std.testing.expect(second.root != null);
+    try std.testing.expect(second.system == null);
+    try std.testing.expectEqual(@as(usize, 0), second.commands.len);
+
+    // After resetting the cache, re-detection MUST find the marker
+    resetForTests();
+    const third = try detect(allocator, .c_family, filepath, root);
+    defer types.freeOwnedResult(allocator, third);
+    try std.testing.expect(third.root != null);
+    try std.testing.expect(third.system != null);
+    try std.testing.expectEqualStrings("make", third.system.?);
+}
+
 test "cached system detection refreshes when the marker signature changes" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -351,4 +419,5 @@ fn resetCache() void {
     cache_arena = std.heap.ArenaAllocator.init(page_allocator);
     cache_map = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
     cache_initialized = true;
+    detection_count = 0;
 }
