@@ -326,7 +326,13 @@ fn ruleSupportsTest(rule_name: []const u8, target_name: []const u8, source_entri
 fn looksLikeTestName(value: []const u8) bool {
     const lower = std.ascii.allocLowerString(std.heap.page_allocator, value) catch return false;
     defer std.heap.page_allocator.free(lower);
-    return std.mem.find(u8, lower, "test") != null or std.mem.find(u8, lower, "spec") != null;
+    if (std.mem.eql(u8, lower, "test") or std.mem.eql(u8, lower, "spec")) return true;
+    // Bazel convention: test targets/files use _test, _spec, test_, or spec_ as word boundaries.
+    // Substring-only match (the old approach) misidentifies contest, fastest, py_attest, spectate.
+    if (std.mem.find(u8, lower, "_test") != null) return true;
+    if (std.mem.find(u8, lower, "_spec") != null) return true;
+    if (std.mem.startsWith(u8, lower, "test_") or std.mem.startsWith(u8, lower, "spec_")) return true;
+    return false;
 }
 
 fn isWhitespace(ch: u8) bool {
