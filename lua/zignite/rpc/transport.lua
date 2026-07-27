@@ -75,6 +75,7 @@ local function get_plugin_path()
 end
 
 M.ZIG_EXECUTABLE = get_plugin_path() .. "/zig/zig-out/bin/zignite"
+M.MARKER_HEALTH = "@@ZHLT_"
 
 ---@param executable string
 ---@return boolean
@@ -214,7 +215,6 @@ local function decode_buffered_lines(buffer, data)
 	end
 
 	if buffer.value == "" then
-		buffer.value = ""
 		return lines
 	end
 
@@ -299,8 +299,16 @@ local stop_shared_worker
 ---@param reset_active_worker boolean
 ---@return nil
 local function abort_request(worker, request, reset_active_worker)
-	if reset_active_worker and (worker.active_request == request or has_queued_request(worker.queue, request)) then
-		stop_shared_worker(worker)
+	if worker.active_request == request then
+		if reset_active_worker then
+			-- Kill the worker to reset wedged state (sync timeouts)
+			stop_shared_worker(worker)
+		else
+			-- Just finalize this request, don't kill the worker
+			worker.active_request = nil
+			finalize_request(request, nil, true)
+			start_next_request(worker)
+		end
 	elseif remove_queued_request(worker.queue, request) then
 		finalize_request(request, nil, true)
 	end
@@ -370,6 +378,13 @@ local function process_protocol_line(worker, line)
 	if not request then
 		return
 	end
+
+	-- Generation guard: if the worker was replaced (e.g., after a crash recovery)
+	-- while this request was queued, drop stale data from the old worker.
+	if request.generation ~= worker.generation then
+		return
+	end
+
 	local protocol = request.protocol
 
 	local begin_id = line:match("^" .. protocol.res_begin .. "%s+(%d+)$")
@@ -548,6 +563,7 @@ function M.new(opts)
 
 		local request = {
 			worker = worker,
+			generation = worker.generation,
 			request_id = request_id,
 			params = params,
 			protocol = protocol,
@@ -606,8 +622,84 @@ function M.new(opts)
 			if request.completed then
 				return
 			end
-			abort_request(worker, request, true)
+			-- Async timeouts: abort just this request, don't kill the worker
+			abort_request(worker, request, false)
 		end)
+		return true
+	end
+
+	---Send a protocol-level ping to the daemon process to verify it is
+	---responsive (not just alive). The daemon echoes back immediately on
+	---receiving a health request; if no response arrives within the timeout
+	---the callback receives `false`.
+	---
+	---The health request uses a separate frame marker (`@@ZHLT_`) and its own
+	---protocol, so it will not interfere with in-flight build/resolve requests.
+	---On timeout, the request is aborted without killing the worker.
+	---
+	---@param on_done fun(healthy: boolean) Called with `true` on pong, `false` on timeout/error.
+	---@param timeout_ms integer|nil Optional timeout in ms, defaults to 2000.
+	---@return boolean True if the ping was queued, false if the backend is unavailable.
+	function client.ping_async(on_done, timeout_ms)
+		if not can_use_worker_backend() then
+			vim.schedule(function()
+				on_done(false)
+			end)
+			return false
+		end
+
+		local worker = ensure_shared_worker(opts)
+		if not worker then
+			vim.schedule(function()
+				on_done(false)
+			end)
+			return false
+		end
+
+		worker.next_request_id = worker.next_request_id + 1
+		local request_id = worker.next_request_id
+
+		local payload = string.format("%sREQ_BEGIN %d\n%sREQ_END %d\n",
+			M.MARKER_HEALTH, request_id,
+			M.MARKER_HEALTH, request_id)
+
+		local health_protocol = {
+			res_begin = M.MARKER_HEALTH .. "RES_BEGIN",
+			res_end = M.MARKER_HEALTH .. "RES_END",
+			res_err = M.MARKER_HEALTH .. "RES_ERR",
+		}
+
+		-- Create the request with the health protocol marker so that
+		-- process_protocol_line matches @@ZHLT_ frames against this request.
+		local request = {
+			worker = worker,
+			generation = worker.generation,
+			request_id = request_id,
+			params = {},
+			protocol = health_protocol,
+			payload = payload,
+			callbacks = { function(lines)
+				on_done(lines ~= nil)
+			end },
+			timer = nil,
+			lines = {},
+			error = nil,
+			started = false,
+			completed = false,
+			failed = false,
+		}
+
+		worker.queue[#worker.queue + 1] = request
+		start_next_request(worker)
+
+		request.timer = start_request_timer(timeout_ms or 2000, function()
+			if request.completed then
+				return
+			end
+			-- Don't kill the worker on ping timeout — the daemon may just be busy.
+			abort_request(worker, request, false)
+		end)
+
 		return true
 	end
 
@@ -658,12 +750,20 @@ function M.new(opts)
 			on_stdout = function(_, data)
 				append_non_empty_output_lines(output_lines, data)
 			end,
-			on_exit = function(_, exit_code)
+			on_exit = function(_, exit_code, data)
 				if exit_code ~= 0 then
 					on_done(nil)
 					return
 				end
-				on_done(output_lines)
+				-- Neovim >= 0.10 delivers buffered output in on_exit's third argument;
+				-- on_stdout may not fire. Use data when available, fall back to output_lines.
+				if type(data) == "table" and #data > 0 then
+					local lines = {}
+					append_non_empty_output_lines(lines, data)
+					on_done(lines)
+				else
+					on_done(output_lines)
+				end
 			end,
 		})
 		return type(job_id) == "number" and job_id > 0
@@ -678,6 +778,15 @@ function M.new(opts)
 	end
 
 	return client
+end
+
+---@return nil
+function M.reset_all()
+	for _, worker in pairs(shared_workers) do
+		stop_shared_worker(worker)
+	end
+	shared_workers = {}
+	worker_generations = {}
 end
 
 return M

@@ -210,6 +210,20 @@ function M.attach(ctx, simulation)
 				return 1
 			end
 
+			if text:match("^@@ZHLT_REQ_BEGIN%s+") then
+				local request_id = text:match("^@@ZHLT_REQ_BEGIN%s+(%d+)")
+				if request_id and job.opts and job.opts.on_stdout then
+					local response = {
+						"@@ZHLT_RES_BEGIN " .. request_id,
+						"@@ZHLT_RES_END " .. request_id,
+					}
+					vim.defer_fn(function()
+						job.opts.on_stdout(job_id, to_stdout_payload(response))
+					end, 10)
+				end
+				return 1
+			end
+
 			if
 				text:match("^@@ZCFG_REQ_BEGIN%s+")
 				or text:match("^@@ZBR_REQ_BEGIN%s+")
