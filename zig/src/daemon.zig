@@ -41,6 +41,10 @@ const RUN_RESOLVE_RES_END = "@@ZRUN_RES_END";
 const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
 
 const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
+const HEALTH_REQ_BEGIN = "@@ZHLT_REQ_BEGIN";
+const HEALTH_RES_BEGIN = "@@ZHLT_RES_BEGIN";
+const HEALTH_RES_END = "@@ZHLT_RES_END";
+const HEALTH_RES_ERR = "@@ZHLT_RES_ERR";
 const FRAME_HEADER_MAX_LINE = 4096;
 var shutdown_requested = std.atomic.Value(bool).init(false);
 var signal_handlers_installed = false;
@@ -66,17 +70,22 @@ pub fn runWithIO(
     installShutdownSignalHandlers();
     defer shutdown_requested.store(false, .seq_cst);
 
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
     while (true) {
+        defer _ = arena.reset(.retain_capacity);
+        const arena_alloc = arena.allocator();
+
         if (shutdown_requested.load(.acquire)) break;
-        const maybe_line = try frame.readLineAlloc(allocator, reader, FRAME_HEADER_MAX_LINE);
+        const maybe_line = try frame.readLineAlloc(arena_alloc, reader, FRAME_HEADER_MAX_LINE);
         if (maybe_line == null) break;
         const line_owned = maybe_line.?;
-        defer allocator.free(line_owned);
         const line = frame.stripTrailingCR(line_owned);
         if (line.len == 0) continue;
 
         if (std.mem.startsWith(u8, line, QUICKFIX_REQ_BEGIN)) {
-            quickfix.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
+            quickfix.handleDaemonFrame(arena_alloc, reader, stdout, line) catch |err| {
                 if (err == error.UnexpectedEof) return err;
                 if (frame.parseRequestId(line, QUICKFIX_REQ_BEGIN)) |request_id| {
                     try quickfix.writeDaemonResponse(stdout, request_id, "", err);
@@ -86,7 +95,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
-            detect.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
+            detect.handleDaemonFrame(arena_alloc, io, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -98,7 +107,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
-            project.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
+            project.handleDaemonFrame(arena_alloc, io, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -110,7 +119,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
-            config.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
+            config.handleDaemonFrame(arena_alloc, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -122,7 +131,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
-            build_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
+            build_resolve.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -134,7 +143,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, BUILD_ACTION_REQ_BEGIN)) {
-            build_action.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
+            build_action.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -146,7 +155,7 @@ pub fn runWithIO(
             continue;
         }
         if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
-            run_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
+            run_resolve.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
                 try frame.handleDispatchError(
                     err,
                     stdout,
@@ -155,6 +164,16 @@ pub fn runWithIO(
                     .{ .response_begin = RUN_RESOLVE_RES_BEGIN, .response_err = RUN_RESOLVE_RES_ERR, .response_end = RUN_RESOLVE_RES_END },
                 );
             };
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, HEALTH_REQ_BEGIN)) {
+            if (frame.parseRequestId(line, HEALTH_REQ_BEGIN)) |request_id| {
+                try stdout.print("{s} {d}\n{s} {d}\n", .{
+                    HEALTH_RES_BEGIN, request_id,
+                    HEALTH_RES_END,   request_id,
+                });
+                try stdout.flush();
+            }
             continue;
         }
     }
@@ -350,6 +369,34 @@ test "runWithIO writes run_resolve error frame for malformed header with request
     try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
 
     try std.testing.expect(std.mem.find(u8, out.written(), "@@ZRUN_RES_BEGIN 8\n@@ZRUN_RES_ERR 8") != null);
+}
+
+test "runWithIO health endpoint responds to ping" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZHLT_REQ_BEGIN 1",
+        "@@ZHLT_REQ_END 1",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZHLT_RES_BEGIN 1\n@@ZHLT_RES_END 1\n") != null);
+}
+
+test "runWithIO health endpoint returns correct request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZHLT_REQ_BEGIN 42",
+        "@@ZHLT_REQ_END 42",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZHLT_RES_BEGIN 42\n") != null);
 }
 
 test "runWithIO silently skips lines that match no dispatcher" {
