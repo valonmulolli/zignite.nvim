@@ -217,10 +217,7 @@ local function run_once(raw_lines, flags, force_truncated, on_success, on_fallba
 			return
 		end
 	end
-	local ok_close = pcall(vim.fn.chanclose, job_id, "stdin")
-	if not ok_close then
-		-- Process may have already exited; on_exit handles the result.
-	end
+	pcall(vim.fn.chanclose, job_id, "stdin")
 end
 
 ---@param raw_lines string[]
