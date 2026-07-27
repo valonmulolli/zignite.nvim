@@ -64,6 +64,27 @@ pub fn readProjectFileWithIO(io: std.Io, allocator: std.mem.Allocator, kind: Kin
     return common.readFileAllocWithIO(io, allocator, path);
 }
 
+// -- Walk-up-tree predicates --
+
+fn existsFile(io: std.Io, allocator: std.mem.Allocator, name: []const u8, dir: []const u8) !bool {
+    const candidate = try std.fs.path.join(allocator, &.{ dir, name });
+    defer allocator.free(candidate);
+    return pathExistsWithIO(io, candidate);
+}
+
+fn existsAnyFile(io: std.Io, allocator: std.mem.Allocator, names: []const []const u8, dir: []const u8) !bool {
+    for (names) |name| {
+        const candidate = try std.fs.path.join(allocator, &.{ dir, name });
+        defer allocator.free(candidate);
+        if (pathExistsWithIO(io, candidate)) return true;
+    }
+    return false;
+}
+
+// -- Public API --
+
+/// Walks up parent directories looking for a specific file.
+/// Returns the full path to the first found file, or null.
 pub fn findParentFileAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -71,32 +92,13 @@ pub fn findParentFileAllocWithIO(
     name: []const u8,
     max_up: usize,
 ) !?[]u8 {
-    var current = try std.fmt.allocPrint(
-        allocator,
-        "{s}",
-        .{pathing.dirOrDot(start_path)},
-    );
-    defer allocator.free(current);
-
-    var steps: usize = 0;
-    while (steps < max_up) : (steps += 1) {
-        const candidate = try std.fs.path.join(allocator, &.{ current, name });
-        defer allocator.free(candidate);
-        if (pathExistsWithIO(io, candidate)) {
-            return try allocator.dupe(u8, candidate);
-        }
-
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-
-        const next = try std.fmt.allocPrint(allocator, "{s}", .{parent});
-        allocator.free(current);
-        current = next;
-    }
-
-    return null;
+    const dir = try pathing.walkUpwardsAllocWithIO(io, allocator, start_path, max_up, null, name, existsFile) orelse return null;
+    defer allocator.free(dir);
+    return try std.fs.path.join(allocator, &.{ dir, name });
 }
 
+/// Walks up parent directories looking for any of a list of files.
+/// Returns the full path to the first found file, or null.
 pub fn findParentFileAnyAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -104,31 +106,13 @@ pub fn findParentFileAnyAllocWithIO(
     names: []const []const u8,
     max_up: usize,
 ) !?[]u8 {
-    var current = try std.fmt.allocPrint(
-        allocator,
-        "{s}",
-        .{pathing.dirOrDot(start_path)},
-    );
-    defer allocator.free(current);
-
-    var steps: usize = 0;
-    while (steps < max_up) : (steps += 1) {
-        for (names) |name| {
-            const candidate = try std.fs.path.join(allocator, &.{ current, name });
-            defer allocator.free(candidate);
-            if (pathExistsWithIO(io, candidate)) {
-                return try allocator.dupe(u8, candidate);
-            }
-        }
-
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-
-        const next = try std.fmt.allocPrint(allocator, "{s}", .{parent});
-        allocator.free(current);
-        current = next;
+    const dir = try pathing.walkUpwardsAllocWithIO(io, allocator, start_path, max_up, null, names, existsAnyFile) orelse return null;
+    defer allocator.free(dir);
+    for (names) |name| {
+        const candidate = try std.fs.path.join(allocator, &.{ dir, name });
+        if (pathExistsWithIO(io, candidate)) return candidate;
+        allocator.free(candidate);
     }
-
     return null;
 }
 
