@@ -67,9 +67,15 @@ end
 ---@param revision integer
 ---@return boolean
 local function has_current_sync(revision)
-	return tonumber(last_synced_state.revision) == tonumber(revision)
-		and config_client.has_live_worker()
-		and config_client.get_worker_generation() == tonumber(last_synced_state.worker_generation)
+	if tonumber(last_synced_state.revision) ~= tonumber(revision) then
+		return false
+	end
+	if config_client.has_live_worker() then
+		return config_client.get_worker_generation() == tonumber(last_synced_state.worker_generation)
+	end
+	-- No live worker: config was validated but not yet delivered to a daemon.
+	-- require_synced must still force a daemon sync to persist the config.
+	return false
 end
 
 ---@param val any

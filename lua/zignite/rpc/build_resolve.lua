@@ -74,7 +74,7 @@ local function compose_worker_payload(req_begin, req_end, backend_flag, request_
 		p.path,
 		p.filetype,
 		p.extras,
-		input_guard.contains_control_characters
+		input_guard.is_invalid_payload_value
 	)
 end
 
@@ -89,7 +89,7 @@ local function compose_once_argv(backend_flag, params)
 		p.path,
 		p.filetype,
 		p.extras,
-		input_guard.contains_control_characters
+		input_guard.is_invalid_payload_value
 	)
 end
 
@@ -143,20 +143,21 @@ end
 ---@param filetype string
 ---@return table
 function M.resolve_sync(filepath, filetype)
-	if not config_sync.ensure_current() then
-		return normalize_resolved_output(failed_build_resolution(
-			filetype,
-			string.format("Failed to resolve build commands for %s.", tostring(filetype or "")),
-			"config_sync_failed"
-		))
+	local lines
+	-- Try daemon path with config sync
+	if config_sync.ensure_current() then
+		lines = resolve_client.sync_request({
+			path = filepath,
+			filetype = filetype,
+		})
 	end
-	local lines = resolve_client.sync_request({
-		path = filepath,
-		filetype = filetype,
-	}) or resolve_client.once_request({
-		path = filepath,
-		filetype = filetype,
-	})
+	-- Always fall back to one-shot if daemon path fails
+	if type(lines) ~= "table" then
+		lines = resolve_client.once_request({
+			path = filepath,
+			filetype = filetype,
+		})
+	end
 	if type(lines) ~= "table" then
 		return normalize_resolved_output(failed_build_resolution(
 			filetype,
@@ -182,26 +183,27 @@ end
 ---@param command_args string|nil
 ---@return table|nil
 function M.resolve_action_sync(filepath, filetype, action, command_name, command_args)
-	if not config_sync.ensure_current() then
-		return failed_build_resolution(
-			filetype,
-			string.format("Failed to resolve build action for %s.", tostring(filetype or "")),
-			"config_sync_failed"
-		)
+	local lines
+	-- Try daemon path with config sync
+	if config_sync.ensure_current() then
+		lines = action_client.sync_request({
+			path = filepath,
+			filetype = filetype,
+			action = action,
+			command_name = command_name,
+			command_args = command_args,
+		})
 	end
-	local lines = action_client.sync_request({
-		path = filepath,
-		filetype = filetype,
-		action = action,
-		command_name = command_name,
-		command_args = command_args,
-	}) or action_client.once_request({
-		path = filepath,
-		filetype = filetype,
-		action = action,
-		command_name = command_name,
-		command_args = command_args,
-	})
+	-- Always fall back to one-shot if daemon path fails
+	if type(lines) ~= "table" then
+		lines = action_client.once_request({
+			path = filepath,
+			filetype = filetype,
+			action = action,
+			command_name = command_name,
+			command_args = command_args,
+		})
+	end
 	if type(lines) ~= "table" then
 		return failed_build_resolution(
 			filetype,
@@ -301,19 +303,18 @@ end
 ---@param on_done fun(result: table|nil):nil
 ---@return boolean
 function M.resolve_async(filepath, filetype, on_done)
-	if not config_sync.ensure_current() then
-		on_done(build_resolve_failure(filetype, "config_sync_failed"))
-		return false
-	end
+	-- Try daemon path first
 	if resolve_client.async_request({
 		path = filepath,
 		filetype = filetype,
 	}, function(lines)
+		-- Note: daemon responses already use synced config
 		handle_resolve_lines(lines, filetype, on_done)
 	end) then
 		return true
 	end
 
+	-- Fall back to one-shot async (no daemon needed, works without config sync)
 	if resolve_client.once_request_async({
 		path = filepath,
 		filetype = filetype,
@@ -339,6 +340,13 @@ function M.resolve_for_picker(filepath, filetype, on_refresh)
 		end)
 	end
 	return resolved
+end
+
+---@param on_done fun(healthy: boolean):nil
+---@param timeout_ms integer|nil
+---@return boolean
+function M.ping_async(on_done, timeout_ms)
+	return resolve_client.ping_async(on_done, timeout_ms)
 end
 
 return M

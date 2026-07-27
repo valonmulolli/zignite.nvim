@@ -81,6 +81,36 @@ function M.check()
 	end
 
 	do
+		-- Ping the daemon to verify it is responsive (not just alive).
+		-- Uses the build_resolve client to send a @@ZHLT_ frame.
+		local ping_ok, ping_result = pcall(function()
+			local build_resolve = require("zignite.rpc.build_resolve")
+			if type(build_resolve.ping_async) ~= "function" then
+				return nil
+			end
+			local healthy = false
+			local completed = false
+			build_resolve.ping_async(function(success)
+				healthy = success
+				completed = true
+			end, 3000)
+			if type(vim.wait) == "function" then
+				vim.wait(3500, function()
+					return completed
+				end, 50)
+			end
+			return healthy
+		end)
+		if ping_ok and ping_result == true then
+			vim.health.ok("Daemon process is responsive (ping/pong)")
+		elseif ping_ok and ping_result == nil then
+			-- ping_async not available (old client), skip
+		else
+			vim.health.warn("Daemon process did not respond to health ping (may be starting or busy)")
+		end
+	end
+
+	do
 		local ok, config = pcall(require, "zignite.config")
 		if ok and type(config) == "table" then
 			vim.health.ok("Config module loaded")

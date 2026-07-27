@@ -214,6 +214,20 @@ end
 function M.setup(opts)
 	ui_windows.reset()
 	config.setup(opts)
+
+	-- Clean up the daemon process when Neovim exits.
+	-- Guarded against nil API functions for test environments.
+	if type(vim.api.nvim_create_augroup) == "function" and type(vim.api.nvim_create_autocmd) == "function" then
+		vim.api.nvim_create_autocmd("VimLeavePre", {
+			group = vim.api.nvim_create_augroup("ZigniteDaemonCleanup", { clear = true }),
+			callback = function()
+				local ok, transport = pcall(require, "zignite.rpc.transport")
+				if ok and type(transport) == "table" and type(transport.reset_all) == "function" then
+					transport.reset_all()
+				end
+			end,
+		})
+	end
 end
 
 return M

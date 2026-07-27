@@ -392,7 +392,7 @@ local function test_run_code_saved_zig_buffer_with_wrong_extension_accepts_backe
 	print("✓ Run code saved zig wrong-extension backend path test passed")
 end
 
-local function test_build_resolve_requires_completed_config_sync()
+local function test_build_resolve_handles_config_sync_failure()
 	config.setup({
 		build_commands = {
 			zig = {
@@ -406,14 +406,18 @@ local function test_build_resolve_requires_completed_config_sync()
 		return false
 	end
 
+	-- resolve_sync falls through to one-shot when config sync fails.
+	-- The mock systemlist returns {} with shell_error 0, so once_request returns
+	-- an empty table; json_result.decode returns nil, yielding invalid_backend_response.
 	local resolved = build_resolve.resolve_sync("/tmp/zignite-build/build.zig", "zig")
-	assert(type(resolved) == "table", "build_resolve.resolve_sync should return a structured failure table")
-	assert(resolved.ok == false, "build_resolve.resolve_sync should report config sync failure as ok=false")
-	assert(resolved.reason == "config_sync_failed",
-		"build_resolve.resolve_sync should expose bridge failure reason when config sync is unavailable")
+	assert(type(resolved) == "table", "resolve_sync should return a structured failure table")
+	assert(resolved.ok == false, "resolve_sync should report failure as ok=false")
+	assert(resolved.reason == "invalid_backend_response",
+		"resolve_sync should return invalid_backend_response when one-shot output is empty")
 	assert(type(resolved.message) == "string" and resolved.message:match("Failed to resolve build commands"),
-		"build_resolve.resolve_sync should expose a bridge failure message")
+		"resolve_sync should expose a failure message")
 
+	-- resolve_action_sync follows the same fallback path (same mock systemlist behavior).
 	local command_resolved = build_resolve.resolve_action_sync(
 		"/tmp/zignite-build/build.zig",
 		"zig",
@@ -422,24 +426,24 @@ local function test_build_resolve_requires_completed_config_sync()
 		"owner/repo"
 	)
 	assert(type(command_resolved) == "table", "resolve_action_sync should return a structured failure table")
-	assert(command_resolved.ok == false, "resolve_action_sync should report config sync failure as ok=false")
-	assert(command_resolved.reason == "config_sync_failed",
-		"resolve_action_sync should expose bridge failure reason when config sync is unavailable")
+	assert(command_resolved.ok == false, "resolve_action_sync should report failure as ok=false")
+	assert(command_resolved.reason == "invalid_backend_response",
+		"resolve_action_sync should return invalid_backend_response when one-shot output is empty")
 	assert(type(command_resolved.message) == "string" and command_resolved.message:match("Failed to resolve build action"),
-		"resolve_action_sync should expose a bridge failure message")
+		"resolve_action_sync should expose a failure message")
 
+	-- resolve_async is NOT gated on config sync: it tries the daemon directly.
+	-- The mock daemon handles the request successfully, so it returns true.
 	local callback_result = "unset"
 	local started = build_resolve.resolve_async("/tmp/zignite-build/build.zig", "zig", function(result)
 		callback_result = result
 	end)
-	assert(started == false, "resolve_async should not start when config sync is unavailable")
-	assert(type(callback_result) == "table", "resolve_async should report a structured failure to the callback")
-	assert(callback_result.ok == false and callback_result.reason == "config_sync_failed",
-		"resolve_async should expose config sync failure details to the callback")
+	assert(started == true, "resolve_async should start without config sync (no gate)")
+	assert(type(callback_result) == "table", "resolve_async should report a result to the callback")
 
 	config_sync.ensure_synced = original_ensure_synced
 	reset_job_results()
-	print("✓ Build resolve config sync gate test passed")
+	print("✓ Build resolve handles config sync failure test passed")
 end
 
 local function test_config_sync_request_includes_timeout()
@@ -1019,6 +1023,17 @@ local function test_build_resolve_cpp_in_bazel_workspace_uses_bazel_commands()
 	print("✓ Build resolve Bazel C++ detection test passed")
 end
 
+local function test_health_ping_responsive_daemon()
+	local healthy = "unset"
+	local started = build_resolve.ping_async(function(success)
+		healthy = success
+	end, 3000)
+	assert(started == true, "ping_async should return true when backend is available")
+	assert(healthy == true, "health ping should report responsive daemon")
+	reset_job_results()
+	print("✓ Health ping responsive daemon test passed")
+end
+
 test_build_resolve_returns_command_metadata()
 test_build_resolve_reports_backend_no_build_commands()
 test_build_resolve_selected_command_materializes_execution()
@@ -1031,7 +1046,7 @@ test_run_resolve_buffer_supports_unsaved_full_buffers()
 test_run_code_supports_unsaved_buffers_via_backend_buffer()
 test_run_resolve_saved_zig_file_with_wrong_extension_uses_backend_materialized_path()
 test_run_code_saved_zig_buffer_with_wrong_extension_accepts_backend_path()
-test_build_resolve_requires_completed_config_sync()
+test_build_resolve_handles_config_sync_failure()
 test_config_sync_request_includes_timeout()
 test_config_sync_falls_back_to_one_shot_mode()
 test_config_sync_surfaces_backend_validation_warnings()
@@ -1047,3 +1062,4 @@ test_run_resolve_zig_keeps_single_file_runner_inside_project()
 test_run_resolve_zig_prefers_project_runner_for_build_modules()
 test_run_resolve_zig_ignores_quoted_build_module_imports()
 test_build_resolve_cpp_in_bazel_workspace_uses_bazel_commands()
+test_health_ping_responsive_daemon()
