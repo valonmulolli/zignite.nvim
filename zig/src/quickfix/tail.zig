@@ -10,6 +10,37 @@ pub const TailLineViews = struct {
     }
 };
 
+/// Strips a trailing carriage return from a line, if present.
+fn stripCR(line: []const u8) []const u8 {
+    if (line.len > 0 and line[line.len - 1] == '\r') {
+        return line[0 .. line.len - 1];
+    }
+    return line;
+}
+
+/// Drops lines from the front of `items` until `total_bytes` <= `max_bytes`,
+/// with the invariant that at least one line always remains.
+///
+/// Returns `true` if any content was truncated (either dropped or a lone
+/// oversized line was pinned).
+fn trimToBudget(
+    items: [][]const u8,
+    start_idx: *usize,
+    total_bytes: *usize,
+    max_bytes: usize,
+) bool {
+    var truncated = false;
+    while (total_bytes.* > max_bytes and start_idx.* + 1 < items.len) {
+        total_bytes.* -= items[start_idx.*].len + 1;
+        start_idx.* += 1;
+        truncated = true;
+    }
+    if (total_bytes.* > max_bytes) {
+        truncated = true;
+    }
+    return truncated;
+}
+
 pub fn collectTailLineViews(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -21,48 +52,44 @@ pub fn collectTailLineViews(
     var total_bytes: usize = 0;
     var start_idx: usize = 0;
     var truncated = false;
+    var line_start: usize = 0;
 
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i < input.len) : (i += 1) {
-        if (input[i] != '\n') continue;
+    for (input, 0..) |ch, i| {
+        if (ch != '\n') continue;
 
-        var line = input[start..i];
-        if (line.len > 0 and line[line.len - 1] == '\r') {
-            line = line[0 .. line.len - 1];
-        }
-        if (line.len > 0) {
-            try lines.append(allocator, line);
-        }
-        total_bytes += line.len + 1;
-        if (lines.items.len > 0) {
-            while (total_bytes > max_bytes and start_idx + 1 < lines.items.len) {
-                total_bytes -= lines.items[start_idx].len + 1;
-                start_idx += 1;
-                truncated = true;
-            }
-            if (total_bytes > max_bytes) truncated = true;
-        } else {
+        const line = stripCR(input[line_start..i]);
+        line_start = i + 1;
+
+        // Only non-empty lines are added to the output.
+        // Empty lines (after CR stripping) contribute no visible content and
+        // consume no budget — they are silently dropped.
+        if (line.len == 0) continue;
+
+        try lines.append(allocator, line);
+        total_bytes += line.len + 1; // +1 for the '\n' delimiter
+
+        if (trimToBudget(lines.items, &start_idx, &total_bytes, max_bytes)) {
             truncated = true;
         }
-        start = i + 1;
     }
 
-    if (start < input.len) {
-        var tail = input[start..];
-        if (tail.len > 0 and tail[tail.len - 1] == '\r') {
-            tail = tail[0 .. tail.len - 1];
-        }
+    // Handle trailing content that has no closing newline.
+    if (line_start < input.len) {
+        const tail = stripCR(input[line_start..]);
         if (tail.len > 0) {
             try lines.append(allocator, tail);
             total_bytes += tail.len + 1;
-            while (total_bytes > max_bytes and start_idx + 1 < lines.items.len) {
-                total_bytes -= lines.items[start_idx].len + 1;
-                start_idx += 1;
+
+            if (trimToBudget(lines.items, &start_idx, &total_bytes, max_bytes)) {
                 truncated = true;
             }
-            if (total_bytes > max_bytes) truncated = true;
         }
+    }
+
+    // If the input contained content but every line was empty after CR
+    // stripping, we still flag truncated — there was nothing to show.
+    if (lines.items.len == 0 and input.len > 0) {
+        truncated = true;
     }
 
     return .{
