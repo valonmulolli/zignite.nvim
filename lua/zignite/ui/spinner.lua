@@ -3,8 +3,8 @@ local ui_common = require("zignite.ui.common")
 ---@type table
 local M = {}
 
----@type table|nil
-local spinner_timer = nil
+---@type table<integer, table>
+local spinner_timers = {}
 
 ---@type table<string, string[]>
 local spinner_frames = {
@@ -28,7 +28,8 @@ function M.start_title_spinner(win_id, base_title)
 		return
 	end
 
-	M.stop_spinner()
+	-- Stop only the timer for this specific window, not all timers
+	M.stop_spinner(win_id)
 
 	local frames = spinner_frames[config.spinner] or spinner_frames.dots
 	local frame_index = 1
@@ -38,14 +39,15 @@ function M.start_title_spinner(win_id, base_title)
 		return
 	end
 
-	spinner_timer = uv.new_timer()
-	if spinner_timer then
-		spinner_timer:start(
+	local timer = uv.new_timer()
+	if timer then
+		spinner_timers[win_id] = timer
+		timer:start(
 			0,
 			config.spinner_speed or 80,
 			vim.schedule_wrap(function()
 				if not vim.api.nvim_win_is_valid(win_id) then
-					M.stop_spinner()
+					M.stop_spinner(win_id)
 					return
 				end
 
@@ -62,12 +64,23 @@ function M.start_title_spinner(win_id, base_title)
 	end
 end
 
+--- Stop spinner timer(s).
+---@param win_id integer|nil If provided, stop only the timer for this window. If nil, stop all.
 ---@return nil
-function M.stop_spinner()
-	if spinner_timer then
-		spinner_timer:stop()
-		spinner_timer:close()
-		spinner_timer = nil
+function M.stop_spinner(win_id)
+	if win_id then
+		local timer = spinner_timers[win_id]
+		if timer then
+			timer:stop()
+			timer:close()
+			spinner_timers[win_id] = nil
+		end
+	else
+		for _, timer in pairs(spinner_timers) do
+			timer:stop()
+			timer:close()
+		end
+		spinner_timers = {}
 	end
 end
 
@@ -75,7 +88,7 @@ end
 ---@param exit_code integer
 ---@return nil
 function M.set_exit_status(win_id, exit_code)
-	M.stop_spinner()
+	M.stop_spinner(win_id)
 	if not vim.api.nvim_win_is_valid(win_id) then
 		return
 	end
