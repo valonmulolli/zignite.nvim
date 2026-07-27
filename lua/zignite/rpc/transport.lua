@@ -280,19 +280,8 @@ local function remove_queued_request(queue, request)
 	return false
 end
 
----@param queue table[]
----@param request table
----@return boolean
-local function has_queued_request(queue, request)
-	for _, queued in ipairs(queue) do
-		if queued == request then
-			return true
-		end
-	end
-	return false
-end
-
 local stop_shared_worker
+local start_next_request
 
 ---@param worker table
 ---@param request table
@@ -316,7 +305,7 @@ end
 
 ---@param worker table
 ---@return nil
-local function start_next_request(worker)
+start_next_request = function(worker)
 	if worker.stopped or worker.active_request or #worker.queue == 0 then
 		return
 	end
