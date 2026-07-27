@@ -234,6 +234,11 @@ pub fn replaceDeeperOwnedRoot(
     return true;
 }
 
+fn hasMarker(io: std.Io, allocator: std.mem.Allocator, markers: []const []const u8, dir: []const u8) !bool {
+    _ = allocator;
+    return pathHasAnyMarkerWithIO(io, dir, markers);
+}
+
 pub fn findRootForFilesWithinAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -242,25 +247,7 @@ pub fn findRootForFilesWithinAllocWithIO(
     boundary: ?[]const u8,
     max_up: usize,
 ) !?[]u8 {
-    var current = try allocator.dupe(u8, pathing.dirOrDot(start_path));
-    defer allocator.free(current);
-
-    var steps: usize = 0;
-    while (steps < max_up) : (steps += 1) {
-        if (pathHasAnyMarkerWithIO(io, current, markers)) {
-            return try allocator.dupe(u8, current);
-        }
-        if (boundary) |root_limit| {
-            if (std.mem.eql(u8, current, root_limit)) break;
-        }
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-
-        const next = try allocator.dupe(u8, parent);
-        allocator.free(current);
-        current = next;
-    }
-    return null;
+    return pathing.walkUpwardsAllocWithIO(io, allocator, start_path, max_up, boundary, markers, hasMarker);
 }
 
 test "detectWithMarkers uses project root before upward scan" {

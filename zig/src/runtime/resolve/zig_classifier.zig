@@ -18,6 +18,10 @@ pub fn shouldPreferProjectRunnerWithIO(
     return sourceRequiresProjectModules(contents);
 }
 
+fn hasBuildZig(io: std.Io, allocator: std.mem.Allocator, _: void, dir: []const u8) !bool {
+    return pathHasFileWithIO(io, allocator, dir, "build.zig");
+}
+
 pub fn findBuildRootAllocWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -30,24 +34,7 @@ pub fn findBuildRootAllocWithIO(
             return @as(?[]u8, try allocator.dupe(u8, root));
         }
     }
-
-    var current = try allocator.dupe(u8, pathing.dirOrDot(path));
-    defer allocator.free(current);
-
-    var steps: usize = 0;
-    while (steps < max_up) : (steps += 1) {
-        if (try pathHasFileWithIO(io, allocator, current, "build.zig")) {
-            return @as(?[]u8, try allocator.dupe(u8, current));
-        }
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-
-        const next = try allocator.dupe(u8, parent);
-        allocator.free(current);
-        current = next;
-    }
-
-    return null;
+    return pathing.walkUpwardsAllocWithIO(io, allocator, path, max_up, null, {}, hasBuildZig);
 }
 
 fn pathHasFileWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, name: []const u8) !bool {
