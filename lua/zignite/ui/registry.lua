@@ -9,10 +9,22 @@ local M = {}
 ---@type ZigniteUiRunner[]
 local runners = {}
 
+---@type integer
+local MAX_RUNNERS = 50
+
 ---@param win_id integer
 ---@param buf_id integer
 ---@return ZigniteUiRunner
 function M.track(win_id, buf_id)
+	if #runners >= MAX_RUNNERS then
+		local oldest = table.remove(runners, 1)
+		if vim.api.nvim_win_is_valid(oldest.win_id) then
+			pcall(vim.api.nvim_win_close, oldest.win_id, true)
+		end
+		if vim.api.nvim_buf_is_valid(oldest.buf_id) then
+			pcall(vim.api.nvim_buf_delete, oldest.buf_id, { force = true })
+		end
+	end
 	---@type ZigniteUiRunner
 	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil }
 	table.insert(runners, runner)
