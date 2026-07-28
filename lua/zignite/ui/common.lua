@@ -1,8 +1,6 @@
 ---@type table
 local M = {}
 
-local VALID_MODES = { "float", "tab", "split", "vsplit" }
-
 ---@return table
 function M.get_config()
 	local cfg = require("zignite.config")
@@ -25,7 +23,8 @@ end
 ---@return string
 function M.normalize_mode(mode)
 	local resolved = mode or M.get_config().mode or "float"
-	if not vim.tbl_contains(VALID_MODES, resolved) then
+	-- Valid modes: "float", "tab", "split", "vsplit" (single source: zignite.config)
+	if resolved ~= "float" and resolved ~= "tab" and resolved ~= "split" and resolved ~= "vsplit" then
 		return "float"
 	end
 	return resolved

@@ -138,9 +138,12 @@ pub fn makeResult(
     const owned_root = try allocator.dupe(u8, root);
     errdefer allocator.free(owned_root);
 
+    const owned_system = try allocator.dupe(u8, system);
+    errdefer allocator.free(owned_system);
+
     return .{
         .root = owned_root,
-        .system = system,
+        .system = owned_system,
         .build_ready = build_ready,
         .commands = commands,
     };

@@ -130,13 +130,17 @@ fn storeFreshResult(cache_key: []u8, result_signature: []const u8, result: Resul
 
 fn cloneResult(allocator: std.mem.Allocator, result: Result) !Result {
     var cloned: Result = .{
-        .system = result.system,
+        .system = null,
         .build_ready = result.build_ready,
     };
     errdefer types.freeOwnedResult(allocator, cloned);
 
     if (result.root) |root| {
         cloned.root = try allocator.dupe(u8, root);
+    }
+
+    if (result.system) |system| {
+        cloned.system = try allocator.dupe(u8, system);
     }
 
     if (result.commands.len > 0) {

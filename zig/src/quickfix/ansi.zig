@@ -9,6 +9,7 @@ pub fn stripAnsiAlloc(allocator: std.mem.Allocator, line: []const u8) ![]u8 {
         if (line[i] == 0x1b and i + 1 < line.len) {
             const next = line[i + 1];
             if (next == '[') {
+                // CSI: \x1b[...final_byte
                 i += 2;
                 while (i < line.len) : (i += 1) {
                     const ch = line[i];
@@ -19,7 +20,9 @@ pub fn stripAnsiAlloc(allocator: std.mem.Allocator, line: []const u8) ![]u8 {
                 }
                 continue;
             }
-            if (next == ']') {
+            // DCS (\x1bP), OSC (\x1b]), SOS (\x1bX), PM (\x1b^), APC (\x1b_):
+            // All are string sequences terminated by ST (\x1b\) or BEL (\x07 for OSC).
+            if (next == ']' or next == 'P' or next == 'X' or next == '^' or next == '_') {
                 i += 2;
                 while (i < line.len) : (i += 1) {
                     const ch = line[i];

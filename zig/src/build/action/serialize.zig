@@ -45,12 +45,12 @@ fn writePlanLegacy(stdout: anytype, plan: types.Plan) !void {
         try stdout.print("REASON\t{s}\n", .{@tagName(reason)});
     }
     if (plan.message) |message| {
-        if (!common.hasControlChars(message)) {
+        if (!common.hasInvalidPayloadChars(message)) {
             try stdout.print("MESSAGE\t{s}\n", .{message});
         }
     }
     if (plan.resolved_command_name) |name| {
-        if (!common.hasControlChars(name)) {
+        if (!common.hasInvalidPayloadChars(name)) {
             try stdout.print("COMMAND_NAME\t{s}\n", .{name});
         }
     }
@@ -58,37 +58,37 @@ fn writePlanLegacy(stdout: anytype, plan: types.Plan) !void {
         try stdout.print("REQUIRES_ARGUMENTS\t1\n", .{});
     }
     if (plan.argument_prompt) |prompt| {
-        if (!common.hasControlChars(prompt)) {
+        if (!common.hasInvalidPayloadChars(prompt)) {
             try stdout.print("ARGUMENT_PROMPT\t{s}\n", .{prompt});
         }
     }
     if (plan.argument_help) |help| {
-        if (!common.hasControlChars(help)) {
+        if (!common.hasInvalidPayloadChars(help)) {
             try stdout.print("ARGUMENT_HELP\t{s}\n", .{help});
         }
     }
     if (plan.filetype) |filetype| {
-        if (!common.hasControlChars(filetype)) {
+        if (!common.hasInvalidPayloadChars(filetype)) {
             try stdout.print("FILETYPE\t{s}\n", .{filetype});
         }
     }
     if (plan.cwd) |cwd| {
-        if (!common.hasControlChars(cwd)) {
+        if (!common.hasInvalidPayloadChars(cwd)) {
             try stdout.print("CWD\t{s}\n", .{cwd});
         }
     }
     if (plan.name) |name| {
-        if (!common.hasControlChars(name)) {
+        if (!common.hasInvalidPayloadChars(name)) {
             try stdout.print("NAME\t{s}\n", .{name});
         }
     }
     if (plan.exec_command) |command_text| {
-        if (!common.hasControlChars(command_text)) {
+        if (!common.hasInvalidPayloadChars(command_text)) {
             try stdout.print("EXEC_COMMAND\t{s}\n", .{command_text});
         }
     }
     for (plan.exec_argv.items) |arg| {
-        if (!common.hasControlChars(arg)) {
+        if (!common.hasInvalidPayloadChars(arg)) {
             try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
         }
     }
