@@ -14,7 +14,11 @@ function M.run_tests()
     package.path = package.path .. ';' .. project_root .. '/zig/test/?.lua'
 
     local test_files = {
+        "test_common_path_request",
         "test_config",
+        "test_input_guard",
+        "test_json_result",
+        "test_registry",
     }
 
     local passed = 0

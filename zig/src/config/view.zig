@@ -135,7 +135,7 @@ pub fn listBuildCommands(
             allocator.free(owned_name);
             return err;
         };
-        if (common.hasControlChars(owned_name) or common.hasControlChars(owned_command)) {
+        if (common.hasInvalidPayloadChars(owned_name) or common.hasInvalidPayloadChars(owned_command)) {
             allocator.free(owned_name);
             allocator.free(owned_command);
             continue;

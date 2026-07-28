@@ -26,13 +26,42 @@ pub fn hasControlChars(value: []const u8) bool {
     return false;
 }
 
+/// Protocol delimiter prefixes used by the Zig daemon for frame markers.
+/// Values containing these should not be embedded in legacy line-delimited
+/// output, as they would be misinterpreted as protocol frame boundaries.
+const protocol_delimiter_prefixes = [_][]const u8{
+    "@@ZQF_",
+    "@@ZBR_",
+    "@@ZDET_",
+    "@@ZPRJ_",
+    "@@ZCFG_",
+    "@@ZBA_",
+    "@@ZRUN_",
+};
+
+/// Returns true if `value` contains a protocol delimiter prefix that could
+/// be misinterpreted as a frame boundary in the line-delimited protocol.
+pub fn hasProtocolMarkers(value: []const u8) bool {
+    for (protocol_delimiter_prefixes) |prefix| {
+        if (std.mem.find(u8, value, prefix) != null) return true;
+    }
+    return false;
+}
+
+/// Combined check: returns true when the value is unsafe to embed in a
+/// legacy line-delimited payload. Checks both control characters and
+/// protocol marker prefixes.
+pub fn hasInvalidPayloadChars(value: []const u8) bool {
+    return hasControlChars(value) or hasProtocolMarkers(value);
+}
+
 pub fn pushUniqueName(
     allocator: std.mem.Allocator,
     names: *std.ArrayList([]u8),
     value: []const u8,
 ) !void {
     if (value.len == 0) return;
-    if (hasControlChars(value)) return;
+    if (hasInvalidPayloadChars(value)) return;
     for (names.items) |existing| {
         if (std.mem.eql(u8, existing, value)) return;
     }
@@ -176,7 +205,35 @@ test "hasControlChars detects newline, tab, and DEL" {
     try std.testing.expect(hasControlChars("\x01bell"));
 }
 
-test "pushUniqueName deduplicates and rejects empty/control inputs" {
+test "hasProtocolMarkers detects all known zignite protocol prefixes" {
+    try std.testing.expect(!hasProtocolMarkers(""));
+    try std.testing.expect(!hasProtocolMarkers("safe path/file.txt"));
+    try std.testing.expect(hasProtocolMarkers("/tmp/@@ZQF_BEGIN/file"));
+    try std.testing.expect(hasProtocolMarkers("@@ZBR_END"));
+    try std.testing.expect(hasProtocolMarkers("@@ZDET_RES_BEGIN 5"));
+    try std.testing.expect(hasProtocolMarkers("/root/@@ZPRJ_REQ_BEGIN"));
+    try std.testing.expect(hasProtocolMarkers("@@ZCFG_SYNC"));
+    try std.testing.expect(hasProtocolMarkers("path/@@ZBA_RESULT/data"));
+    try std.testing.expect(hasProtocolMarkers("@@ZRUN_REQ_END 42"));
+}
+
+test "hasProtocolMarkers false for similar but non-matching strings" {
+    try std.testing.expect(!hasProtocolMarkers("@@ZOTHER_BEGIN"));
+    try std.testing.expect(!hasProtocolMarkers("@@ZQG_"));
+    try std.testing.expect(!hasProtocolMarkers("@ZQF_"));
+    try std.testing.expect(!hasProtocolMarkers("just @@ random"));
+}
+
+test "hasInvalidPayloadChars combines control char and protocol marker checks" {
+    try std.testing.expect(!hasInvalidPayloadChars(""));
+    try std.testing.expect(!hasInvalidPayloadChars("safe path/main.zig"));
+    try std.testing.expect(hasInvalidPayloadChars("bad\nfile"));
+    try std.testing.expect(hasInvalidPayloadChars("@@ZQF_BEGIN"));
+    try std.testing.expect(hasInvalidPayloadChars("/tmp/@@ZQF_END/file"));
+    try std.testing.expect(hasInvalidPayloadChars("tab\t here"));
+}
+
+test "pushUniqueName deduplicates and rejects empty/control/protocol inputs" {
     const allocator = std.testing.allocator;
     var names: std.ArrayList([]u8) = .empty;
     defer deinitOwnedNameList(allocator, &names);
@@ -186,6 +243,8 @@ test "pushUniqueName deduplicates and rejects empty/control inputs" {
     try pushUniqueName(allocator, &names, "TEST");
     try pushUniqueName(allocator, &names, "");
     try pushUniqueName(allocator, &names, "BAD\nNAME");
+    try pushUniqueName(allocator, &names, "@@ZQF_BEGIN");
+    try pushUniqueName(allocator, &names, "/tmp/@@ZBR_END/cmd");
 
     try std.testing.expectEqual(@as(usize, 2), names.items.len);
     try std.testing.expectEqualStrings("BUILD", names.items[0]);

@@ -1,50 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const build_action = @import("build/action.zig");
-const build_resolve = @import("build/resolve.zig");
-const config = @import("config.zig");
-const detect = @import("detect.zig");
+const dispatch = @import("dispatch.zig");
 const frame = @import("protocol/frame.zig");
 const protocol_stdio = @import("protocol/stdio.zig");
-const project = @import("project.zig");
-const quickfix = @import("quickfix.zig");
-const run_resolve = @import("runtime/resolve.zig");
 
-const DETECT_REQ_BEGIN = "@@ZDET_REQ_BEGIN";
-const DETECT_RES_BEGIN = "@@ZDET_RES_BEGIN";
-const DETECT_RES_END = "@@ZDET_RES_END";
-const DETECT_RES_ERR = "@@ZDET_RES_ERR";
-
-const PROJECT_REQ_BEGIN = "@@ZPRJ_REQ_BEGIN";
-const PROJECT_RES_BEGIN = "@@ZPRJ_RES_BEGIN";
-const PROJECT_RES_END = "@@ZPRJ_RES_END";
-const PROJECT_RES_ERR = "@@ZPRJ_RES_ERR";
-
-const CONFIG_REQ_BEGIN = "@@ZCFG_REQ_BEGIN";
-const CONFIG_RES_BEGIN = "@@ZCFG_RES_BEGIN";
-const CONFIG_RES_END = "@@ZCFG_RES_END";
-const CONFIG_RES_ERR = "@@ZCFG_RES_ERR";
-
-const BUILD_RESOLVE_REQ_BEGIN = "@@ZBR_REQ_BEGIN";
-const BUILD_RESOLVE_RES_BEGIN = "@@ZBR_RES_BEGIN";
-const BUILD_RESOLVE_RES_END = "@@ZBR_RES_END";
-const BUILD_RESOLVE_RES_ERR = "@@ZBR_RES_ERR";
-
-const BUILD_ACTION_REQ_BEGIN = "@@ZBA_REQ_BEGIN";
-const BUILD_ACTION_RES_BEGIN = "@@ZBA_RES_BEGIN";
-const BUILD_ACTION_RES_END = "@@ZBA_RES_END";
-const BUILD_ACTION_RES_ERR = "@@ZBA_RES_ERR";
-
-const RUN_RESOLVE_REQ_BEGIN = "@@ZRUN_REQ_BEGIN";
-const RUN_RESOLVE_RES_BEGIN = "@@ZRUN_RES_BEGIN";
-const RUN_RESOLVE_RES_END = "@@ZRUN_RES_END";
-const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
-
-const QUICKFIX_REQ_BEGIN = "@@ZQF_BEGIN";
-const HEALTH_REQ_BEGIN = "@@ZHLT_REQ_BEGIN";
-const HEALTH_RES_BEGIN = "@@ZHLT_RES_BEGIN";
-const HEALTH_RES_END = "@@ZHLT_RES_END";
-const HEALTH_RES_ERR = "@@ZHLT_RES_ERR";
 const FRAME_HEADER_MAX_LINE = 4096;
 var shutdown_requested = std.atomic.Value(bool).init(false);
 var signal_handlers_installed = false;
@@ -84,96 +43,7 @@ pub fn runWithIO(
         const line = frame.stripTrailingCR(line_owned);
         if (line.len == 0) continue;
 
-        if (std.mem.startsWith(u8, line, QUICKFIX_REQ_BEGIN)) {
-            quickfix.handleDaemonFrame(arena_alloc, reader, stdout, line) catch |err| {
-                if (err == error.UnexpectedEof) return err;
-                if (frame.parseRequestId(line, QUICKFIX_REQ_BEGIN)) |request_id| {
-                    try quickfix.writeDaemonResponse(stdout, request_id, "", err);
-                    try stdout.flush();
-                }
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
-            detect.handleDaemonFrame(arena_alloc, io, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    DETECT_REQ_BEGIN,
-                    .{ .response_begin = DETECT_RES_BEGIN, .response_err = DETECT_RES_ERR, .response_end = DETECT_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
-            project.handleDaemonFrame(arena_alloc, io, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    PROJECT_REQ_BEGIN,
-                    .{ .response_begin = PROJECT_RES_BEGIN, .response_err = PROJECT_RES_ERR, .response_end = PROJECT_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
-            config.handleDaemonFrame(arena_alloc, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    CONFIG_REQ_BEGIN,
-                    .{ .response_begin = CONFIG_RES_BEGIN, .response_err = CONFIG_RES_ERR, .response_end = CONFIG_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
-            build_resolve.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    BUILD_RESOLVE_REQ_BEGIN,
-                    .{ .response_begin = BUILD_RESOLVE_RES_BEGIN, .response_err = BUILD_RESOLVE_RES_ERR, .response_end = BUILD_RESOLVE_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, BUILD_ACTION_REQ_BEGIN)) {
-            build_action.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    BUILD_ACTION_REQ_BEGIN,
-                    .{ .response_begin = BUILD_ACTION_RES_BEGIN, .response_err = BUILD_ACTION_RES_ERR, .response_end = BUILD_ACTION_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
-            run_resolve.handleDaemonFrame(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
-                try frame.handleDispatchError(
-                    err,
-                    stdout,
-                    line,
-                    RUN_RESOLVE_REQ_BEGIN,
-                    .{ .response_begin = RUN_RESOLVE_RES_BEGIN, .response_err = RUN_RESOLVE_RES_ERR, .response_end = RUN_RESOLVE_RES_END },
-                );
-            };
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, HEALTH_REQ_BEGIN)) {
-            if (frame.parseRequestId(line, HEALTH_REQ_BEGIN)) |request_id| {
-                try stdout.print("{s} {d}\n{s} {d}\n", .{
-                    HEALTH_RES_BEGIN, request_id,
-                    HEALTH_RES_END,   request_id,
-                });
-                try stdout.flush();
-            }
+        if (try dispatch.handleDaemonLine(arena_alloc, io, environ_map, reader, stdout, line)) {
             continue;
         }
     }

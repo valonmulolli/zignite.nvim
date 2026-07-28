@@ -65,13 +65,13 @@ pub fn writeResolvedOutputLegacyHeader(
         try stdout.print("MESSAGE\tNo build commands available for filetype: {s}\n", .{filetype});
     }
     if (parsed_output.root) |root| {
-        if (!common.hasControlChars(root)) {
+        if (!common.hasInvalidPayloadChars(root)) {
             try stdout.print("ROOT\t{s}\n", .{root});
         }
     }
     try stdout.print("FILETYPE\t{s}\n", .{filetype});
     if (parsed_output.system) |system| {
-        if (!common.hasControlChars(system)) {
+        if (!common.hasInvalidPayloadChars(system)) {
             try stdout.print("SYSTEM\t{s}\n", .{system});
         }
     }
@@ -79,7 +79,7 @@ pub fn writeResolvedOutputLegacyHeader(
         try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
     }
     if (last_command_name) |name| {
-        if (!common.hasControlChars(name)) {
+        if (!common.hasInvalidPayloadChars(name)) {
             try stdout.print("LAST_COMMAND_NAME\t{s}\n", .{name});
         }
     }
@@ -93,7 +93,7 @@ pub fn writeResolvedOutputLegacyCommands(
     entries: []const build_types.CommandEntry,
 ) !void {
     for (entries) |entry| {
-        if (common.hasControlChars(entry.name) or common.hasControlChars(entry.command)) continue;
+        if (common.hasInvalidPayloadChars(entry.name) or common.hasInvalidPayloadChars(entry.command)) continue;
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
         try command.writeCommandUiMetadata(stdout, allocator, filetype, entry);
     }
@@ -105,11 +105,11 @@ pub fn writeResolvedOutputLegacyPreferred(
     live_name: ?[]const u8,
 ) !void {
     for (entries) |entry| {
-        if (common.hasControlChars(entry.name) or common.hasControlChars(entry.command)) continue;
+        if (common.hasInvalidPayloadChars(entry.name) or common.hasInvalidPayloadChars(entry.command)) continue;
         try stdout.print("PREFERRED\t{s}\t{s}\n", .{ entry.name, entry.command });
     }
     if (live_name) |name| {
-        if (!common.hasControlChars(name)) {
+        if (!common.hasInvalidPayloadChars(name)) {
             try stdout.print("PREFERRED_NAME\tlive\t{s}\n", .{name});
         }
     }
@@ -150,20 +150,20 @@ pub fn writeResolvedCommandOutputLegacy(
     resolved_command: []const u8,
     argv: []const []u8,
 ) !void {
-    if (!common.hasControlChars(resolved_filetype)) {
+    if (!common.hasInvalidPayloadChars(resolved_filetype)) {
         try stdout.print("FILETYPE\t{s}\n", .{resolved_filetype});
     }
-    if (!common.hasControlChars(cwd)) {
+    if (!common.hasInvalidPayloadChars(cwd)) {
         try stdout.print("CWD\t{s}\n", .{cwd});
     }
-    if (!common.hasControlChars(resolved_filetype) and !common.hasControlChars(command_name)) {
+    if (!common.hasInvalidPayloadChars(resolved_filetype) and !common.hasInvalidPayloadChars(command_name)) {
         try stdout.print("NAME\t{s}: {s}\n", .{ resolved_filetype, command_name });
     }
-    if (!common.hasControlChars(resolved_command)) {
+    if (!common.hasInvalidPayloadChars(resolved_command)) {
         try stdout.print("EXEC_COMMAND\t{s}\n", .{resolved_command});
     }
     for (argv) |arg| {
-        if (!common.hasControlChars(arg)) {
+        if (!common.hasInvalidPayloadChars(arg)) {
             try stdout.print("EXEC_ARGV\t{s}\n", .{arg});
         }
     }
