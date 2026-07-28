@@ -48,14 +48,22 @@ pub fn resolveCommandExecutionWithIO(
         command_template,
         options.command_args,
     );
-    errdefer allocator.free(resolved_command);
+    defer allocator.free(resolved_command);
 
-    if (command.isReservedArgvCommand(resolved_command)) {
+    const path_resolved = try runtime_materialize.substituteVariablesShell(
+        allocator,
+        resolved_command,
+        options.path,
+        null,
+    );
+    errdefer allocator.free(path_resolved);
+
+    if (command.isReservedArgvCommand(path_resolved)) {
         return error.ReservedBuildResolveArgvCommand;
     }
 
     const cwd = parsed_output.root orelse pathing.dirOrDot(options.path);
-    var argv = try runtime_materialize.tokenizeCommand(allocator, resolved_command);
+    var argv = try runtime_materialize.tokenizeCommand(allocator, path_resolved);
     errdefer {
         for (argv.items) |arg| allocator.free(arg);
         argv.deinit(allocator);
@@ -74,7 +82,7 @@ pub fn resolveCommandExecutionWithIO(
         .filetype = owned_filetype,
         .cwd = owned_cwd,
         .command_name = owned_command_name,
-        .exec_command = resolved_command,
+        .exec_command = path_resolved,
         .exec_argv = argv,
     };
 }
@@ -128,4 +136,43 @@ test "resolveCommandExecution uses dot cwd for bare relative paths without detec
 
     try std.testing.expectEqualStrings(".", resolved.cwd);
     try std.testing.expectEqualStrings("echo build", resolved.exec_command);
+}
+
+test "resolveCommandExecution substitutes file path variables" {
+    const allocator = std.testing.allocator;
+    defer @import("../../config/store.zig").reset();
+    try @import("../../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{"go":{"preview":"glow $file"}},"detect":{},"revision":50}
+    , 50);
+
+    var resolved = try resolveCommandExecution(allocator, .{
+        .path = "/home/user/readme.md",
+        .filetype = "go",
+        .command_name = "preview",
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("glow '/home/user/readme.md'", resolved.exec_command);
+    try std.testing.expectEqualStrings("glow", resolved.exec_argv.items[0]);
+    try std.testing.expectEqualStrings("/home/user/readme.md", resolved.exec_argv.items[1]);
+}
+
+test "resolveCommandExecution substitutes file path in compile command" {
+    const allocator = std.testing.allocator;
+    defer @import("../../config/store.zig").reset();
+    try @import("../../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{"go":{"compile":"go run $file"}},"detect":{},"revision":51}
+    , 51);
+
+    var resolved = try resolveCommandExecution(allocator, .{
+        .path = "/project/main.go",
+        .filetype = "go",
+        .command_name = "compile",
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("go run '/project/main.go'", resolved.exec_command);
+    try std.testing.expectEqualStrings("go", resolved.exec_argv.items[0]);
+    try std.testing.expectEqualStrings("run", resolved.exec_argv.items[1]);
+    try std.testing.expectEqualStrings("/project/main.go", resolved.exec_argv.items[2]);
 }

@@ -1,6 +1,5 @@
 const std = @import("std");
 const build_types = @import("../../system/types.zig");
-
 pub fn listBuildCommands(
     allocator: std.mem.Allocator,
     filetype: []const u8,
@@ -89,6 +88,10 @@ const fortran_builtin_commands = [_]BuiltinCommand{
     .{ .name = "clean", .command = "rm -f main" },
 };
 
+const lua_builtin_commands = [_]BuiltinCommand{
+    .{ .name = "love", .command = "love ." },
+};
+
 const go_builtin_commands = [_]BuiltinCommand{
     .{ .name = "build", .command = "go build" },
     .{ .name = "run", .command = "go run ." },
@@ -135,6 +138,7 @@ const builtin_definition_sets = [_]BuiltinDefinitionSet{
     .{ .filetype = "zig", .commands = &zig_builtin_commands },
     .{ .filetype = "odin", .commands = &odin_builtin_commands },
     .{ .filetype = "fortran", .commands = &fortran_builtin_commands },
+    .{ .filetype = "lua", .commands = &lua_builtin_commands },
     .{ .filetype = "go", .commands = &go_builtin_commands },
     .{ .filetype = "python", .commands = &python_builtin_commands },
     .{ .filetype = "c", .commands = &c_family_builtin_commands },
@@ -198,4 +202,34 @@ test "commandSystem returns null for unknown filetype or name" {
     try std.testing.expect(commandSystem("unknown", "build") == null);
     try std.testing.expect(commandSystem("go", "nonexistent") == null);
     try std.testing.expect(commandSystem("rust", "cmake-test") == null);
+}
+
+test "listBuildCommands returns builtin lua love command" {
+    const allocator = std.testing.allocator;
+    const commands = try listBuildCommands(allocator, "lua");
+    defer {
+        for (commands) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.command);
+        }
+        allocator.free(commands);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), commands.len);
+    try std.testing.expectEqualStrings("love", commands[0].name);
+    try std.testing.expectEqualStrings("love .", commands[0].command);
+}
+
+test "listBuildCommands returns empty list for unknown filetypes that are close but not registered" {
+    const allocator = std.testing.allocator;
+    {
+        const commands = try listBuildCommands(allocator, "mdown");
+        defer allocator.free(commands);
+        try std.testing.expectEqual(@as(usize, 0), commands.len);
+    }
+    {
+        const commands = try listBuildCommands(allocator, "typ");
+        defer allocator.free(commands);
+        try std.testing.expectEqual(@as(usize, 0), commands.len);
+    }
 }
