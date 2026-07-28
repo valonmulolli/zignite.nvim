@@ -73,9 +73,21 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         };
         timeout_future = io.async(timeoutWatcher, .{ io, &context });
     }
-    defer stopTimeoutWatcher(io, &finished, &timeout_future);
 
-    const term = try child.wait(io);
+    // On any error path, stop the timeout watcher (if running)
+    // and prevent orphaned children.
+    errdefer stopTimeoutWatcher(io, &finished, &timeout_future);
+
+    const term = child.wait(io) catch |err| {
+        // wait() failed (e.g. platform error). The child may still be alive;
+        // kill it best-effort before propagating the error.
+        stopTimeoutWatcher(io, &finished, &timeout_future);
+        child.kill(io);
+        return err;
+    };
+
+    // Child finished normally — stop the timeout watcher,
+    // run cleanup, then exit with the child's exit code.
     stopTimeoutWatcher(io, &finished, &timeout_future);
     runCleanup(io, cleanup_command);
     std.process.exit(termToExitCode(term));
@@ -184,5 +196,6 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
 
     _ = child.wait(io) catch |err| {
         std.log.warn("Failed to wait for cleanup command: {}", .{err});
+        child.kill(io);
     };
 }
