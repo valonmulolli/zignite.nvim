@@ -1,5 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config_view = @import("../../config/view.zig");
+
+const open_file_command: []const u8 = switch (builtin.os.tag) {
+    .macos => "open $file",
+    .windows => "explorer $file",
+    else => "xdg-open $file",
+};
 
 const RunnerSpec = struct {
     filetype: []const u8,
@@ -48,7 +55,7 @@ const builtin_specs = [_]RunnerSpec{
     .{ .filetype = "julia", .command = "julia $file" },
     .{ .filetype = "sh", .command = "bash $file" },
     .{ .filetype = "zsh", .command = "zsh $file" },
-    .{ .filetype = "html", .command = "xdg-open $file" },
+    .{ .filetype = "html", .command = open_file_command },
     .{ .filetype = "dart", .command = "dart run $file" },
     .{ .filetype = "swift", .command = "swift $file" },
     .{ .filetype = "elixir", .command = "elixir $file" },
@@ -136,4 +143,11 @@ test "loadRunnerConfig returns haskell with /tmp binary cleanup" {
     defer runner.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt", runner.command.?);
     try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+}
+
+test "loadRunnerConfig returns html browser open runner" {
+    var runner = (try loadRunnerConfig(std.testing.allocator, "html")).?;
+    defer runner.deinit(std.testing.allocator);
+    try std.testing.expect(runner.command.?.len > 0);
+    try std.testing.expect(runner.cleanup_command == null);
 }
