@@ -14,7 +14,6 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 
 ## Table of Contents
 
-- [Demo](#demo)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Architecture](#architecture)
@@ -29,10 +28,6 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [License](#license)
-
-## Demo
-
-<!-- TODO: Add screen recording / GIF showing picker interaction, visual selection, terminal output -->
 
 ## Features
 
@@ -147,65 +142,7 @@ programs.neovim = {
 
 ## Configuration
 
-Zignite works out of the box for 20+ languages. The block below shows the default configuration shape:
-
-```lua
-require('zignite').setup({
-    -- Timeout in milliseconds. nil = no timeout.
-    timeout = nil,
-
-    keymaps = {
-        { "n", "<leader>r", ":RunFile<CR>", { desc = "Run file" } },
-        { "n", "<leader>rb", ":RunBuildSelect<CR>", { desc = "Select build command" } },
-        { "n", "<leader>rl", ":RunLive<CR>", { desc = "Run live/watch command" } },
-        { "n", "<leader>rq", ":RunClose<CR>", { desc = "Close runner" } },
-    },
-
-    -- UI configuration for the floating window
-    float = {
-        border = "rounded",       -- "none", "single", "double", "rounded"
-        height = 0.8,
-        width = 0.8,
-        x = 0.5,
-        y = 0.5,
-        border_hl = "FloatBorder",
-        close_key = "<Esc>",
-        startinsert = false,      -- Float opens in normal mode by default
-    },
-
-    spinner = "dots",             -- "dots", "line", "bar", "arrows", etc.
-    enable_animations = true,     -- Show spinner in window title
-    close_behavior = "stop",      -- "stop" (default) or "hide" for :RunClose / float close key
-
-    term = {
-        position = "bot",         -- split: top|bot, vsplit: left|right
-        size = 15,
-        focus = true,
-        startinsert = true,
-    },
-
-    picker = {
-        focus = true,             -- Focus build picker on open
-        filter_input = "inline",  -- "inline" | "ui" (vim.ui.input) | "cmdline" (vim.fn.input)
-        layout = "auto",          -- "auto" | "detailed" | "compact"
-        compact_breakpoint = 96,  -- Auto-switch to compact picker on narrow screens
-    },
-
-    detect_runtime = {
-        async_picker = true,      -- Open picker immediately from cache/defaults
-        cache_ttl_ms = 15000,     -- Detection cache freshness window
-        live_merge = true,        -- Refresh detected commands in-place while picker is open
-    },
-
-    quickfix = {
-        enabled = true,
-        max_lines = 1000,
-        max_bytes = 262144,
-    },
-})
-```
-
-See `example_config.lua` for all available options.
+Zignite works out of the box for 20+ languages. See `example_config.lua` for all available options.
 
 ## Usage
 
@@ -354,7 +291,6 @@ quickfix = {
 }
 ```
 
-See [Quickfix feels slow on huge error logs](#quickfix-feels-slow-on-huge-error-logs) in troubleshooting for tuning guidance.
 
 ### Variable Substitution
 
@@ -392,78 +328,16 @@ filetypes. If nothing appears:
   }
   ```
 
-### Platform note
-
-Only Linux and macOS are supported. Windows is not supported and will not be.
-
-### Odin "Redeclaration of 'main'" on `:RunFile`
-
-The Zig backend defaults to `odin run .` for project builds. If you are working
-on a single file outside of an Odin project, set a custom runner:
-
-```lua
-runners = {
-    odin = "odin run $file -file",
-}
-```
-
 ### Go `:RunFile` feels slow or hangs
 
 The Zig backend picks `go run .` by default (whole-module execution). For
 single-file feedback, use `:RunFile` which uses the configured runner
 (`go run $file`). Switch to `:RunBuild run` when you want full module execution.
 
-### `zsh: no such option: argv`
-
-Do not put `--argv` in `runners` or `build_commands`. That flag is reserved for Zignite's internal backend wrapper and is injected automatically when appropriate.
-
 ### `<leader>` mapping does not trigger
 
 If you define mappings via Lazy.nvim `keys`, use `{ "<lhs>", "<rhs>", mode = "n", ... }` format.  
 The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ keymaps = { ... } })`.
-
-### Quickfix feels slow on huge error logs
-
-The quickfix processor handles output in two stages: tail collection (keeps
-only the last `max_lines` lines and caps total bytes at `max_bytes`), then
-optional ANSI stripping + diagnostic parsing. If throughput is the bottleneck,
-lower these caps:
-
-```lua
-quickfix = {
-    max_lines = 800,
-    max_bytes = 196608,
-}
-```
-
-If the Zig daemon worker is the bottleneck, disable it to fall back to
-one-shot Zig invocations:
-
-```lua
-quickfix = {
-    zig_worker = false,
-    processor = "zig",
-}
-```
-
-To skip quickfix entirely for a session, disable it:
-
-```lua
-quickfix = {
-    enabled = false,
-}
-```
-
-### Build picker refresh behavior
-
-If you prefer legacy blocking detection behavior for the picker:
-
-```lua
-detect_runtime = {
-    async_picker = false,
-    live_merge = false,
-}
-```
 
 ## Development
 
@@ -482,24 +356,7 @@ zig build bench-fast     # defaults to 1000 iterations
 zig build bench -- 10000
 ```
 
-What the benchmark covers:
-
-- direct Zig build resolution
-- direct Zig run resolution
-- selected-command materialization
-- daemon-backed build resolution
-- daemon-backed run resolution
-- quickfix processing (tail collect, ansi strip, full pipeline)
-
-`bench-fast` is the quick local pass. `bench` gives a steadier baseline.
-
-The benchmark prints:
-
-- direct resolver timings (`avg/run`)
-- daemon-backed resolver timings (`avg/run`)
-- per-case throughput (`ops/s`)
-- per-case percentile stats (min, p50, p95, max, stddev)
-- guardrail warnings when a benchmark crosses its configured threshold
+See `CONTRIBUTING.md` for benchmark details.
 
 ## License
 
