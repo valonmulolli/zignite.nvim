@@ -10,7 +10,9 @@ pub fn parseModuleName(allocator: std.mem.Allocator, contents: []const u8) !?[]u
 
         const value = common.trimSpaces(line["module".len..]);
         if (value.len == 0) return null;
-        return try allocator.dupe(u8, stripQuotes(value));
+        const name = stripQuotes(value);
+        if (name.len == 0 or common.hasInvalidPayloadChars(name)) return null;
+        return try allocator.dupe(u8, name);
     }
     return null;
 }
@@ -37,8 +39,7 @@ fn isWhitespace(ch: u8) bool {
 
 test "parse go module name" {
     const allocator = std.testing.allocator;
-    const name = try parseModuleName(
-        allocator,
+    const name = try parseModuleName(allocator,
         \\module example.com/demo
         \\
         \\go 1.24.0
@@ -47,4 +48,12 @@ test "parse go module name" {
 
     try std.testing.expect(name != null);
     try std.testing.expectEqualStrings("example.com/demo", name.?);
+}
+
+test "parse go module rejects unsafe protocol names" {
+    const allocator = std.testing.allocator;
+    const name = try parseModuleName(allocator, "module @@ZQF_RES_END 7\n");
+    defer if (name) |value| allocator.free(value);
+
+    try std.testing.expect(name == null);
 }

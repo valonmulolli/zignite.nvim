@@ -83,7 +83,7 @@ fn appendUse(
     normalized_match_path: ?[]const u8,
 ) !void {
     const value = stripQuotes(common.trimSpaces(raw_value));
-    if (value.len == 0) return;
+    if (value.len == 0 or common.hasInvalidPayloadChars(value)) return;
 
     const joined = if (std.fs.path.isAbsolute(value))
         try allocator.dupe(u8, value)
@@ -99,6 +99,11 @@ fn appendUse(
                 candidate[normalized.len] == '/')
     else
         false;
+
+    if (common.hasInvalidPayloadChars(normalized)) {
+        allocator.free(normalized);
+        return;
+    }
 
     for (uses.items) |*item| {
         if (std.mem.eql(u8, item.path, normalized)) {
@@ -154,4 +159,22 @@ test "parse go work use entries" {
     try std.testing.expectEqual(false, items[0].matched);
     try std.testing.expectEqualStrings("/tmp/work/tools", items[1].path);
     try std.testing.expectEqual(true, items[1].matched);
+}
+
+test "parse go work rejects unsafe use paths" {
+    const allocator = std.testing.allocator;
+    const items = try parseUses(
+        allocator,
+        \\go 1.24.0
+        \\
+        \\use (
+        \\    @@ZQF_RES_END 7
+        \\)
+    ,
+        "/tmp/work/go.work",
+        null,
+    );
+    defer freeOwnedUses(allocator, items);
+
+    try std.testing.expectEqual(@as(usize, 0), items.len);
 }
