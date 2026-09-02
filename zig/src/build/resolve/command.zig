@@ -125,13 +125,36 @@ pub fn isReservedArgvCommand(command: []const u8) bool {
     return trimmed.len == "--argv".len or std.ascii.isWhitespace(trimmed["--argv".len]);
 }
 
+fn buildGithubSaveReference(
+    allocator: std.mem.Allocator,
+    repo: []const u8,
+    fragment: ?[]const u8,
+) ![]u8 {
+    const reference = if (fragment) |ref|
+        try std.fmt.allocPrint(allocator, "git+https://github.com/{s}#{s}", .{ repo, ref })
+    else
+        try std.fmt.allocPrint(allocator, "git+https://github.com/{s}", .{repo});
+    defer allocator.free(reference);
+
+    return buildSaveReference(allocator, reference);
+}
+
+fn buildSaveReference(allocator: std.mem.Allocator, reference: []const u8) ![]u8 {
+    const quoted_reference = try project_common.quoteShellArgIfNeededAlloc(allocator, reference);
+    defer allocator.free(quoted_reference);
+
+    return std.fmt.allocPrint(allocator, "--save {s}", .{quoted_reference});
+}
+
 pub fn normalizeGithubRepoReferenceAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return allocator.dupe(u8, trimmed);
-    if (std.mem.startsWith(u8, trimmed, "--")) return allocator.dupe(u8, trimmed);
+    if (std.mem.startsWith(u8, trimmed, "--")) {
+        return project_common.quoteShellArgIfNeededAlloc(allocator, trimmed);
+    }
 
     if (std.mem.startsWith(u8, trimmed, "git+https://github.com/")) {
-        return std.fmt.allocPrint(allocator, "--save {s}", .{trimmed});
+        return buildSaveReference(allocator, trimmed);
     }
 
     if (parseGithubHttpReference(trimmed)) |parsed| {
@@ -142,22 +165,7 @@ pub fn normalizeGithubRepoReferenceAlloc(allocator: std.mem.Allocator, value: []
         return try buildGithubSaveReference(allocator, parsed.repo, parsed.fragment);
     }
 
-    return allocator.dupe(u8, trimmed);
-}
-
-fn buildGithubSaveReference(
-    allocator: std.mem.Allocator,
-    repo: []const u8,
-    fragment: ?[]const u8,
-) ![]u8 {
-    if (fragment) |ref| {
-        return std.fmt.allocPrint(
-            allocator,
-            "--save git+https://github.com/{s}#{s}",
-            .{ repo, ref },
-        );
-    }
-    return std.fmt.allocPrint(allocator, "--save git+https://github.com/{s}", .{repo});
+    return project_common.quoteShellArgIfNeededAlloc(allocator, trimmed);
 }
 
 fn parseGithubHttpReference(value: []const u8) ?struct { repo: []const u8, fragment: ?[]const u8 } {
@@ -166,14 +174,11 @@ fn parseGithubHttpReference(value: []const u8) ?struct { repo: []const u8, fragm
         if (!std.mem.startsWith(u8, value, prefix)) continue;
         var path = value[prefix.len..];
         var fragment: ?[]const u8 = null;
-        const explicit_fragment = if (std.mem.findScalar(u8, path, '#')) |hash_index|
-            blk: {
-                const value_fragment = path[hash_index + 1 ..];
-                path = path[0..hash_index];
-                break :blk if (value_fragment.len > 0) value_fragment else null;
-            }
-        else
-            null;
+        const explicit_fragment = if (std.mem.findScalar(u8, path, '#')) |hash_index| blk: {
+            const value_fragment = path[hash_index + 1 ..];
+            path = path[0..hash_index];
+            break :blk if (value_fragment.len > 0) value_fragment else null;
+        } else null;
 
         if (std.mem.findScalar(u8, path, '?')) |query_index| {
             path = path[0..query_index];
@@ -239,5 +244,38 @@ test "normalizeGithubRepoReferenceAlloc keeps explicit fragment when url also ha
     );
     defer allocator.free(normalized);
 
-    try std.testing.expectEqualStrings("--save git+https://github.com/owner/repo#v2", normalized);
+    try std.testing.expectEqualStrings("--save 'git+https://github.com/owner/repo#v2'", normalized);
+}
+
+test "normalizeGithubRepoReferenceAlloc quotes shell syntax in every fetch input" {
+    const allocator = std.testing.allocator;
+
+    const cases = .{
+        .{
+            .input = "git+https://github.com/owner/repo;touch /tmp/pwned",
+            .expected = "--save 'git+https://github.com/owner/repo;touch /tmp/pwned'",
+        },
+        .{
+            .input = "https://github.com/owner/repo#main;touch /tmp/pwned",
+            .expected = "--save 'git+https://github.com/owner/repo#main;touch /tmp/pwned'",
+        },
+        .{
+            .input = "owner/repo;touch",
+            .expected = "--save 'git+https://github.com/owner/repo;touch'",
+        },
+        .{
+            .input = "--save git+https://github.com/owner/repo;touch /tmp/pwned",
+            .expected = "'--save git+https://github.com/owner/repo;touch /tmp/pwned'",
+        },
+        .{
+            .input = "/tmp/repo;touch /tmp/pwned",
+            .expected = "'/tmp/repo;touch /tmp/pwned'",
+        },
+    };
+
+    inline for (cases) |case| {
+        const normalized = try normalizeGithubRepoReferenceAlloc(allocator, case.input);
+        defer allocator.free(normalized);
+        try std.testing.expectEqualStrings(case.expected, normalized);
+    }
 }
