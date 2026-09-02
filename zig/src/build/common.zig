@@ -254,8 +254,7 @@ pub fn discoverBuildRunPathAllocWithIO(
 fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
     const full_path = std.fs.path.join(allocator, &.{ root, relative_path }) catch return false;
     defer allocator.free(full_path);
-    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
-    return stat.kind == .file;
+    return project_common.isRegularFileWithIO(io, full_path);
 }
 
 fn pathContainsIgnoredBuildDir(path: []const u8) bool {

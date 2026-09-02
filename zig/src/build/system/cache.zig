@@ -6,6 +6,7 @@ const jvm = @import("jvm.zig");
 const make = @import("../../project/make/api.zig");
 const node = @import("node.zig");
 const python = @import("python.zig");
+const project_common = @import("../../project/core/common.zig");
 const build_signature = @import("../signature.zig");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
@@ -249,7 +250,7 @@ fn findMakefilePathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: [
     for (c_family_make_markers) |marker| {
         const candidate = try std.fs.path.join(allocator, &.{ root, marker });
         defer allocator.free(candidate);
-        if (shared.pathExistsWithIO(io, candidate)) {
+        if (project_common.isRegularFileWithIO(io, candidate)) {
             return try allocator.dupe(u8, candidate);
         }
     }

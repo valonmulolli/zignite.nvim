@@ -66,7 +66,7 @@ fn parseTargetsFromFileInner(
     defer common.deinitOwnedNameList(allocator, &includes);
 
     for (includes.items) |include_path| {
-        if (!project_io.pathExistsWithIO(io, include_path)) continue;
+        if (!common.isRegularFileWithIO(io, include_path)) continue;
         try parseTargetsFromFileInner(io, allocator, include_path, names, visited);
     }
 }
@@ -93,7 +93,7 @@ fn collectReferencedFilesInner(
     defer common.deinitOwnedNameList(allocator, &includes);
 
     for (includes.items) |include_path| {
-        if (!project_io.pathExistsWithIO(io, include_path)) continue;
+        if (!common.isRegularFileWithIO(io, include_path)) continue;
         try collectReferencedFilesInner(io, allocator, include_path, visited);
     }
 }

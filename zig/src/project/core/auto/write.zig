@@ -156,9 +156,9 @@ fn writeJVMAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allo
         const gradle_groovy = try std.fs.path.join(allocator, &.{ root, "build.gradle" });
         defer allocator.free(gradle_groovy);
 
-        const build_file = if (project_io.pathExistsWithIO(io, gradle_kts))
+        const build_file = if (common.isRegularFileWithIO(io, gradle_kts))
             gradle_kts
-        else if (project_io.pathExistsWithIO(io, gradle_groovy))
+        else if (common.isRegularFileWithIO(io, gradle_groovy))
             gradle_groovy
         else
             return;

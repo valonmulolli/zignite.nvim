@@ -125,7 +125,7 @@ fn detectProfileWithIO(
     const has_requirements = shared.pathHasFileWithIO(io, root, "requirements.txt");
     const conda_env_path = try findCondaEnvironmentPathAllocWithIO(io, allocator, root);
     defer if (conda_env_path) |path| allocator.free(path);
-    const has_pyproject = shared.pathExistsWithIO(io, pyproject_path);
+    const has_pyproject = shared.pathIsFileWithIO(io, pyproject_path);
 
     if (!has_pyproject) {
         if (has_uv_lock) return .uv;
@@ -146,13 +146,13 @@ fn detectProfileWithIO(
 fn findCondaEnvironmentPathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
     const yml = try std.fs.path.join(allocator, &.{ root, "environment.yml" });
     defer allocator.free(yml);
-    if (shared.pathExistsWithIO(io, yml)) {
+    if (shared.pathIsFileWithIO(io, yml)) {
         return try allocator.dupe(u8, yml);
     }
 
     const yaml = try std.fs.path.join(allocator, &.{ root, "environment.yaml" });
     defer allocator.free(yaml);
-    if (shared.pathExistsWithIO(io, yaml)) {
+    if (shared.pathIsFileWithIO(io, yaml)) {
         return try allocator.dupe(u8, yaml);
     }
 

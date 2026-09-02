@@ -2,7 +2,6 @@ const std = @import("std");
 const build_common = @import("../../../build/common.zig");
 const build_signature = @import("../../../build/signature.zig");
 const common = @import("../common.zig");
-const project_io = @import("../io.zig");
 const make = @import("../../make/api.zig");
 const pathing = @import("../../../pathing.zig");
 const types = @import("../types.zig");
@@ -128,9 +127,9 @@ pub fn buildBazelAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocat
         const build_path = try std.fs.path.join(allocator, &.{ current_dir, "BUILD" });
         defer allocator.free(build_path);
 
-        if (project_io.pathExistsWithIO(io, build_bazel_path)) {
+        if (common.isRegularFileWithIO(io, build_bazel_path)) {
             try build_signature.appendSignatureFileWithIO(io, allocator, &signature, build_bazel_path);
-        } else if (project_io.pathExistsWithIO(io, build_path)) {
+        } else if (common.isRegularFileWithIO(io, build_path)) {
             try build_signature.appendSignatureFileWithIO(io, allocator, &signature, build_path);
         }
 

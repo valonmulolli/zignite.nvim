@@ -150,7 +150,7 @@ fn buildGradleCommandsAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root
 
     const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
     defer allocator.free(wrapper_path);
-    const prefix: []const u8 = if (shared.pathExistsWithIO(io, wrapper_path)) "./gradlew" else "gradle";
+    const prefix: []const u8 = if (shared.pathIsFileWithIO(io, wrapper_path)) "./gradlew" else "gradle";
 
     try shared.appendOwnedCommandWithAliases(&commands, allocator, "gradle-build", try std.fmt.allocPrint(allocator, "{s} build", .{prefix}), &.{"build"});
     try shared.appendOwnedCommandWithAliases(&commands, allocator, "gradle-test", try std.fmt.allocPrint(allocator, "{s} test", .{prefix}), &.{"test"});

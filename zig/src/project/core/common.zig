@@ -117,6 +117,11 @@ pub fn normalizePathAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     return try normalized.toOwnedSlice(allocator);
 }
 
+pub fn isRegularFileWithIO(io: std.Io, path: []const u8) bool {
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return stat.kind == .file;
+}
+
 pub fn isPathWithinRoot(root: []const u8, filepath: []const u8) bool {
     if (root.len == 0 or !std.mem.startsWith(u8, filepath, root)) return false;
     return root[root.len - 1] == '/' or filepath.len == root.len or filepath[root.len] == '/';

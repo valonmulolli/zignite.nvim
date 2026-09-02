@@ -96,8 +96,7 @@ fn pathExists(allocator: std.mem.Allocator, root: []const u8, filename: []const 
 fn pathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, filename: []const u8) bool {
     const path = std.fs.path.join(allocator, &.{ root, filename }) catch return false;
     defer allocator.free(path);
-    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
-    return true;
+    return common.isRegularFileWithIO(io, path);
 }
 
 pub fn parseScripts(
@@ -227,4 +226,18 @@ test "detect package manager falls back to lockfiles" {
     defer std.testing.allocator.free(root);
 
     try std.testing.expectEqualStrings("pnpm", try detectPackageManager(std.testing.allocator, root, "{}"));
+}
+
+test "detect package manager ignores lockfile directories" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "project/yarn.lock");
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, "project", allocator);
+    defer allocator.free(root);
+
+    const manager = try detectPackageManagerWithIO(std.testing.io, allocator, root, "{}");
+    try std.testing.expectEqualStrings("npm", manager);
 }

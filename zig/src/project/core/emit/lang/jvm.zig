@@ -3,7 +3,6 @@ const gradle = @import("../../../gradle/api.zig");
 const maven = @import("../../../maven/api.zig");
 const common = @import("../../common.zig");
 const pathing = @import("../../../../pathing.zig");
-const project_io = @import("../../io.zig");
 const task_alias = @import("../task_alias.zig");
 
 fn emitCanonicalTaskAliases(
@@ -74,7 +73,7 @@ pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
     const root = pathing.dirOrDot(build_file_path);
     const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
     defer allocator.free(wrapper_path);
-    const prefix: []const u8 = if (project_io.pathExistsWithIO(io, wrapper_path)) "./gradlew" else "gradle";
+    const prefix: []const u8 = if (common.isRegularFileWithIO(io, wrapper_path)) "./gradlew" else "gradle";
 
     const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
     defer allocator.free(build_command);

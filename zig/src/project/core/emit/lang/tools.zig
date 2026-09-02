@@ -10,7 +10,7 @@ const task_alias = @import("../task_alias.zig");
 pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, path: []const u8, contents: []const u8) !void {
     var names: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &names);
-    if (project_io.pathExistsWithIO(io, path)) {
+    if (common.isRegularFileWithIO(io, path)) {
         try make.parseTargetsFromFileAllocWithIO(io, allocator, path, &names);
     } else {
         try make.parseTargets(allocator, contents, &names);

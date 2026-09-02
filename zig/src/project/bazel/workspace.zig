@@ -1,7 +1,6 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
 const pathing = @import("../../pathing.zig");
-const project_io = @import("../core/io.zig");
 const infer = @import("infer.zig");
 const model = @import("model.zig");
 const parse = @import("parse.zig");
@@ -134,11 +133,11 @@ fn findBuildFileAlloc(allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
 fn findBuildFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
     const build_bazel = try std.fs.path.join(allocator, &.{ dir, "BUILD.bazel" });
     errdefer allocator.free(build_bazel);
-    if (project_io.pathExistsWithIO(io, build_bazel)) return build_bazel;
+    if (common.isRegularFileWithIO(io, build_bazel)) return build_bazel;
     allocator.free(build_bazel);
 
     const build = try std.fs.path.join(allocator, &.{ dir, "BUILD" });
-    if (project_io.pathExistsWithIO(io, build)) return build;
+    if (common.isRegularFileWithIO(io, build)) return build;
     allocator.free(build);
     return null;
 }

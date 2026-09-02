@@ -76,6 +76,10 @@ pub fn pathExistsWithIO(io: std.Io, path: []const u8) bool {
     return true;
 }
 
+pub fn pathIsFileWithIO(io: std.Io, path: []const u8) bool {
+    return project_common.isRegularFileWithIO(io, path);
+}
+
 pub fn pathHasFile(root: []const u8, name: []const u8) bool {
     var threaded: std.Io.Threaded = .init_single_threaded;
     return pathHasFileWithIO(threaded.io(), root, name);
@@ -85,8 +89,7 @@ pub fn pathHasFileWithIO(io: std.Io, root: []const u8, name: []const u8) bool {
     const full_path = std.fs.path.join(std.heap.page_allocator, &.{ root, name }) catch return false;
     defer std.heap.page_allocator.free(full_path);
 
-    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
-    return stat.kind == .file;
+    return pathIsFileWithIO(io, full_path);
 }
 
 pub fn pathHasAnyMarkerWithIO(io: std.Io, root: []const u8, markers: []const []const u8) bool {
