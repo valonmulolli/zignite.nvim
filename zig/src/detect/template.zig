@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 const types = @import("types.zig");
 
 const Tool = types.Tool;
@@ -12,6 +13,7 @@ pub fn buildDetectCommandRecords(allocator: std.mem.Allocator, tool: Tool, names
     }
 
     for (names) |name| {
+        if (name.len == 0 or common.hasInvalidPayloadChars(name)) continue;
         const template = try detectCommandTemplate(allocator, tool, name);
         defer allocator.free(template);
         const record = try std.fmt.allocPrint(allocator, "{s}\t{s}", .{ name, template });
@@ -161,4 +163,17 @@ test "detect command records map odin subcommands" {
 
     try std.testing.expectEqualStrings("build\todin build .", commands[0]);
     try std.testing.expectEqualStrings("test\todin test .", commands[1]);
+}
+
+test "detect command records skip unsafe names" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .zig, &.{
+        "safe",
+        "bad\x01name",
+        "marker@@ZDET_RES_END",
+    });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 1), commands.len);
+    try std.testing.expectEqualStrings("safe\tzig safe", commands[0]);
 }

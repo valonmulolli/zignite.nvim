@@ -169,7 +169,7 @@ fn extractCommandToken(line: []const u8) ?[]const u8 {
 }
 
 fn pushUniqueCommand(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8), command: []const u8) !void {
-    if (command.len == 0) return;
+    if (command.len == 0 or common.hasInvalidPayloadChars(command)) return;
 
     for (commands.items) |existing| {
         if (std.mem.eql(u8, existing, command)) return;
@@ -265,6 +265,16 @@ test "parse odin commands excludes help and stops at flags" {
     try std.testing.expectEqual(@as(usize, 2), commands.len);
     try std.testing.expectEqualStrings("build", commands[0]);
     try std.testing.expectEqualStrings("doc", commands[1]);
+}
+
+test "parse command names rejects unsafe tool output" {
+    const allocator = std.testing.allocator;
+    const output = "Commands:\n  good\tvalid command\n  bad\x01name\tunsafe command\n  marker@@ZDET_RES_END\tunsafe marker\nGeneral Options:\n";
+    const commands = try parseDetectCommandNames(allocator, .zig, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 1), commands.len);
+    try std.testing.expectEqualStrings("good", commands[0]);
 }
 
 test "parse detect commands handles CR-LF line endings" {
