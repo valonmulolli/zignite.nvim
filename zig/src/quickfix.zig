@@ -166,6 +166,7 @@ pub fn processQuickfixPayload(
     while (i < tail_lines.items.len) : (i += 1) {
         const original_line = tail_lines.items[i];
         var tmp_line: ?[]u8 = null;
+        defer if (tmp_line) |owned| allocator.free(owned);
         var line_view: []const u8 = original_line;
 
         if (strip_enabled and i >= strip_from_idx) {
@@ -174,18 +175,26 @@ pub fn processQuickfixPayload(
         }
 
         const maybe_diag = if (options.parse_diagnostics) try diagnostic.canonicalizeDiagnostic(allocator, line_view) else null;
+        defer if (maybe_diag) |diag| allocator.free(diag);
         if (maybe_diag) |diag| {
             try writer.writeAll(diag);
             try writer.writeByte('\n');
-            allocator.free(diag);
         } else {
             try writer.writeAll(line_view);
             try writer.writeByte('\n');
         }
-
-        if (tmp_line) |owned| allocator.free(owned);
     }
 }
+
+const FailingWriter = struct {
+    fn writeAll(_: *@This(), _: []const u8) !void {
+        return error.WriteFailed;
+    }
+
+    fn writeByte(_: *@This(), _: u8) !void {
+        return error.WriteFailed;
+    }
+};
 
 pub fn writeDaemonResponse(
     writer: anytype,
@@ -307,6 +316,21 @@ test "quickfix canonicalizes paren diagnostics" {
     try std.testing.expectEqualStrings(
         "src/main.c:7:2: missing semicolon\n",
         out.written(),
+    );
+}
+
+test "quickfix releases transformed lines when writer fails" {
+    var writer: FailingWriter = .{};
+
+    try std.testing.expectError(
+        error.WriteFailed,
+        processQuickfixPayload(
+            std.testing.allocator,
+            "\x1b[31msrc/main.zig:1:1: error\x1b[0m\n",
+            .{},
+            false,
+            &writer,
+        ),
     );
 }
 
