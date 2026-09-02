@@ -69,14 +69,15 @@ pub fn writeCmakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
         primary_target,
         "cmake-build",
         "cmake-run",
-        build_common.cmakeBuildCommandAlloc,
-        build_common.cmakeRunCommandAlloc,
+        build_common.cmakeBuildCommandAllocWithIO,
+        build_common.cmakeRunCommandAllocWithIO,
         build_common.discoverBuildRunPathAllocWithIO,
     );
     defer if (primary_run_path) |value| allocator.free(value);
 
     if (primary_target) |name| {
-        try shared.emitPrimaryBuildRunCommands(
+        try shared.emitPrimaryBuildRunCommandsWithIO(
+            io,
             stdout,
             allocator,
             root,
@@ -84,8 +85,8 @@ pub fn writeCmakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
             primary_run_path,
             "cmake-build",
             "cmake-run",
-            build_common.cmakeBuildCommandAlloc,
-            build_common.cmakeRunCommandAlloc,
+            build_common.cmakeBuildCommandAllocWithIO,
+            build_common.cmakeRunCommandAllocWithIO,
         );
     }
 }
