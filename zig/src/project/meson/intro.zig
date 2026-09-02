@@ -165,7 +165,7 @@ fn extractArtifactPathAlloc(
         if (filename_value != .string) continue;
         const normalized = try common.normalizePathAlloc(allocator, filename_value.string);
         defer allocator.free(normalized);
-        if (std.mem.startsWith(u8, normalized, normalized_root)) {
+        if (common.isPathWithinRoot(normalized_root, normalized)) {
             const relative = try common.makeRelativeToRootAlloc(allocator, normalized_root, normalized);
             defer allocator.free(relative);
             return try std.fmt.allocPrint(allocator, "./{s}", .{relative});
