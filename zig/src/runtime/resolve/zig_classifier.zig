@@ -49,8 +49,7 @@ fn pathHasFileWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8,
     const full_path = try std.fs.path.join(allocator, &.{ root, name });
     defer allocator.free(full_path);
 
-    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
-    return stat.kind == .file;
+    return project_common.isRegularFileWithIO(io, full_path);
 }
 
 pub fn sourceRequiresProjectModules(contents: []const u8) bool {

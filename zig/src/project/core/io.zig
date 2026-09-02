@@ -69,14 +69,14 @@ pub fn readProjectFileWithIO(io: std.Io, allocator: std.mem.Allocator, kind: Kin
 fn existsFile(io: std.Io, allocator: std.mem.Allocator, name: []const u8, dir: []const u8) !bool {
     const candidate = try std.fs.path.join(allocator, &.{ dir, name });
     defer allocator.free(candidate);
-    return pathExistsWithIO(io, candidate);
+    return common.isRegularFileWithIO(io, candidate);
 }
 
 fn existsAnyFile(io: std.Io, allocator: std.mem.Allocator, names: []const []const u8, dir: []const u8) !bool {
     for (names) |name| {
         const candidate = try std.fs.path.join(allocator, &.{ dir, name });
         defer allocator.free(candidate);
-        if (pathExistsWithIO(io, candidate)) return true;
+        if (common.isRegularFileWithIO(io, candidate)) return true;
     }
     return false;
 }
@@ -110,7 +110,7 @@ pub fn findParentFileAnyAllocWithIO(
     defer allocator.free(dir);
     for (names) |name| {
         const candidate = try std.fs.path.join(allocator, &.{ dir, name });
-        if (pathExistsWithIO(io, candidate)) return candidate;
+        if (common.isRegularFileWithIO(io, candidate)) return candidate;
         allocator.free(candidate);
     }
     return null;
@@ -165,4 +165,24 @@ test "findParentFileAnyAlloc walks parents from relative path" {
 
     try std.testing.expect(found != null);
     try std.testing.expectEqualStrings(makefile_relative, found.?);
+}
+
+test "findParentFileAlloc ignores directory markers" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "repo/src");
+    try tmp.dir.createDirPath(std.testing.io, "repo/package.json");
+
+    const repo_relative = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/repo", .{tmp.sub_path[0..]});
+    defer allocator.free(repo_relative);
+    const filepath_relative = try std.fmt.allocPrint(allocator, "{s}/src/main.ts", .{repo_relative});
+    defer allocator.free(filepath_relative);
+
+    const found = try findParentFileAllocWithIO(std.testing.io, allocator, filepath_relative, "package.json", 12);
+    defer if (found) |value| allocator.free(value);
+
+    try std.testing.expect(found == null);
 }

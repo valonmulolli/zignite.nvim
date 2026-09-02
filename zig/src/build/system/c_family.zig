@@ -4,7 +4,6 @@ const common = @import("../common.zig");
 const project_common = @import("../../project/core/common.zig");
 const task_alias = @import("../../project/core/emit/task_alias.zig");
 const make = @import("../../project/make/api.zig");
-const project_io = @import("../../project/core/io.zig");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
 
@@ -255,7 +254,7 @@ fn findMakefilePathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: [
     for (make.marker_names) |marker| {
         const candidate = try std.fs.path.join(allocator, &.{ root, marker });
         defer allocator.free(candidate);
-        if (project_io.pathExistsWithIO(io, candidate)) {
+        if (project_common.isRegularFileWithIO(io, candidate)) {
             return try allocator.dupe(u8, candidate);
         }
     }

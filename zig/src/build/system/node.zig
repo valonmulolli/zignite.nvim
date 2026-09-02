@@ -47,7 +47,7 @@ fn buildCommandsAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []co
 
     const package_json_path = try std.fs.path.join(allocator, &.{ root, "package.json" });
     defer allocator.free(package_json_path);
-    const contents = if (shared.pathExistsWithIO(io, package_json_path))
+    const contents = if (shared.pathIsFileWithIO(io, package_json_path))
         try common.readFileAllocWithIO(io, allocator, package_json_path)
     else
         try allocator.dupe(u8, "{}");

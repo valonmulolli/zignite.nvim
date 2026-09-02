@@ -26,7 +26,7 @@ pub fn parseTargetsWithIO(
 
     const intro_path = try std.fs.path.join(allocator, &.{ root, build_dir, "meson-info", "intro-targets.json" });
     defer allocator.free(intro_path);
-    if (!project_io.pathExistsWithIO(io, intro_path)) return null;
+    if (!common.isRegularFileWithIO(io, intro_path)) return null;
 
     const normalized_root = try common.normalizePathAlloc(allocator, root);
     defer allocator.free(normalized_root);
