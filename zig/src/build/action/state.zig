@@ -152,10 +152,17 @@ fn persistLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*const 
         try out.append(allocator, '\n');
     }
 
-    try std.Io.Dir.cwd().writeFile(io, .{
-        .sub_path = state_path,
-        .data = out.items,
+    var atomic_file = try std.Io.Dir.cwd().createFileAtomic(io, state_path, .{
+        .make_path = true,
+        .replace = true,
     });
+    defer atomic_file.deinit(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = atomic_file.file.writer(io, &buffer);
+    try file_writer.interface.writeAll(out.items);
+    try file_writer.interface.flush();
+    try atomic_file.replace(io);
 }
 
 fn stateRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.process.Environ.Map) ![]u8 {
