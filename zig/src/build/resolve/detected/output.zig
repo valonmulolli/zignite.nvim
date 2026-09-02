@@ -93,11 +93,15 @@ pub fn parseProjectOutput(allocator: std.mem.Allocator, output: []const u8) !typ
         if (line.len == 0) continue;
 
         if (std.mem.startsWith(u8, line, "ROOT\t")) {
-            parsed.root = try allocator.dupe(u8, line["ROOT\t".len..]);
+            const owned_root = try allocator.dupe(u8, line["ROOT\t".len..]);
+            if (parsed.root) |previous| allocator.free(previous);
+            parsed.root = owned_root;
             continue;
         }
         if (std.mem.startsWith(u8, line, "SYSTEM\t")) {
-            parsed.system = try allocator.dupe(u8, line["SYSTEM\t".len..]);
+            const owned_system = try allocator.dupe(u8, line["SYSTEM\t".len..]);
+            if (parsed.system) |previous| allocator.free(previous);
+            parsed.system = owned_system;
             continue;
         }
         if (std.mem.startsWith(u8, line, "BUILD_READY\t")) {
@@ -320,4 +324,15 @@ test "parseProjectOutput ignores unknown and malformed lines" {
     try std.testing.expectEqual(@as(usize, 0), parsed.commands.items.len);
     try std.testing.expect(parsed.root == null);
     try std.testing.expect(parsed.system == null);
+}
+
+test "parseProjectOutput replaces duplicate root and system fields without leaking" {
+    const allocator = std.testing.allocator;
+    var parsed = try parseProjectOutput(allocator,
+        "ROOT\t/old\nSYSTEM\tmake\nROOT\t/new\nSYSTEM\tcmake\n",
+    );
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectEqualStrings("/new", parsed.root.?);
+    try std.testing.expectEqualStrings("cmake", parsed.system.?);
 }
