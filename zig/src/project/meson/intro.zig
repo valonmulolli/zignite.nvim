@@ -93,7 +93,11 @@ fn appendOrMergeTarget(
         return;
     }
 
-    try targets.append(allocator, incoming);
+    targets.append(allocator, incoming) catch |err| {
+        allocator.free(incoming.name);
+        if (incoming.artifact_path) |artifact_path| allocator.free(artifact_path);
+        return err;
+    };
 }
 
 fn parseExecutableTargetAlloc(
