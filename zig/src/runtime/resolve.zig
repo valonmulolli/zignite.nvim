@@ -168,6 +168,19 @@ fn collectRunResolveRequest(
     reader: anytype,
     request_id: u64,
 ) !CollectedRunResolveRequest {
+    return collectRunResolveRequestWithLimit(allocator, reader, request_id, protocol.RUN_RESOLVE_MAX_BYTES);
+}
+
+fn drainRunResolveRequest(allocator: std.mem.Allocator, reader: anytype, request_id: u64) void {
+    _ = frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, RUN_RESOLVE_REQ_END, request_id) catch {};
+}
+
+fn collectRunResolveRequestWithLimit(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    request_id: u64,
+    max_bytes: usize,
+) !CollectedRunResolveRequest {
     var args: std.ArrayList([]u8) = .empty;
     errdefer {
         for (args.items) |arg| allocator.free(arg);
@@ -182,9 +195,13 @@ fn collectRunResolveRequest(
 
     var payload_started = false;
     var payload_completed = false;
+    var total_bytes: usize = 0;
 
     while (true) {
-        const maybe_line = try frame.readLineAlloc(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE);
+        const maybe_line = frame.readLineAlloc(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE) catch |err| {
+            drainRunResolveRequest(allocator, reader, request_id);
+            return err;
+        };
         if (maybe_line == null) return error.UnexpectedEof;
 
         const line_owned = maybe_line.?;
@@ -197,7 +214,7 @@ fn collectRunResolveRequest(
         }
         if (frame.isFrameEndLine(line, RUN_RESOLVE_REQ_PAYLOAD_BEGIN, request_id)) {
             if (payload_started or payload_completed) {
-                _ = frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, RUN_RESOLVE_REQ_END, request_id) catch {};
+                drainRunResolveRequest(allocator, reader, request_id);
                 return error.InvalidRunResolvePayload;
             }
             payload_started = true;
@@ -205,7 +222,7 @@ fn collectRunResolveRequest(
         }
         if (frame.isFrameEndLine(line, RUN_RESOLVE_REQ_PAYLOAD_END, request_id)) {
             if (!payload_started or payload_completed) {
-                _ = frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, RUN_RESOLVE_REQ_END, request_id) catch {};
+                drainRunResolveRequest(allocator, reader, request_id);
                 return error.InvalidRunResolvePayload;
             }
             payload_completed = true;
@@ -213,18 +230,37 @@ fn collectRunResolveRequest(
         }
 
         const value = if (line.len > 0 and line[0] == '\t') line[1..] else line;
+        if ((!payload_started or payload_completed) and value.len == 0) continue;
+
+        const line_bytes = std.math.add(usize, value.len, 1) catch {
+            drainRunResolveRequest(allocator, reader, request_id);
+            return error.StreamTooLong;
+        };
+        if (total_bytes > max_bytes or line_bytes > max_bytes - total_bytes) {
+            drainRunResolveRequest(allocator, reader, request_id);
+            return error.StreamTooLong;
+        }
+        total_bytes += line_bytes;
+
         if (payload_started and !payload_completed) {
-            const owned_line = try allocator.dupe(u8, value);
+            const owned_line = allocator.dupe(u8, value) catch |err| {
+                drainRunResolveRequest(allocator, reader, request_id);
+                return err;
+            };
             payload_lines.append(allocator, owned_line) catch |err| {
                 allocator.free(owned_line);
+                drainRunResolveRequest(allocator, reader, request_id);
                 return err;
             };
             continue;
         }
-        if (value.len == 0) continue;
-        const owned_arg = try allocator.dupe(u8, value);
+        const owned_arg = allocator.dupe(u8, value) catch |err| {
+            drainRunResolveRequest(allocator, reader, request_id);
+            return err;
+        };
         args.append(allocator, owned_arg) catch |err| {
             allocator.free(owned_arg);
+            drainRunResolveRequest(allocator, reader, request_id);
             return err;
         };
     }
@@ -396,6 +432,22 @@ test "collectRunResolveRequest preserves selection payload lines" {
 
     try std.testing.expectEqual(@as(usize, 4), request.args.len);
     try std.testing.expectEqualStrings("pub fn main() void {\n\n}", request.selection_text.?);
+}
+
+test "collectRunResolveRequest enforces aggregate body bytes and drains" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "aaa",
+        "bbb",
+        "@@ZRUN_REQ_END 41",
+        "next-request",
+    } };
+
+    try std.testing.expectError(
+        error.StreamTooLong,
+        collectRunResolveRequestWithLimit(allocator, &reader, 41, 4),
+    );
+    try std.testing.expectEqual(@as(usize, 3), reader.index);
 }
 
 test "resolveRunner returns configured filetype runner" {
