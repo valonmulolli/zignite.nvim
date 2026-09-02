@@ -50,15 +50,19 @@ pub fn parseInfoWithIO(
     if (match_path) |candidate| {
         const project_root = std.fs.path.dirname(project_path) orelse ".";
         const selector = try buildPackageSelectorAlloc(allocator, project_root, candidate);
-        info.primary_selector = selector;
+        if (common.hasInvalidPayloadChars(selector)) {
+            allocator.free(selector);
+        } else {
+            info.primary_selector = selector;
 
-        if (!std.mem.eql(u8, selector, ".")) {
-            const quoted_selector = try common.quoteShellArgAlloc(allocator, selector);
-            defer allocator.free(quoted_selector);
+            if (!std.mem.eql(u8, selector, ".")) {
+                const quoted_selector = try common.quoteShellArgAlloc(allocator, selector);
+                defer allocator.free(quoted_selector);
 
-            info.primary_build = try std.fmt.allocPrint(allocator, "go build {s}", .{quoted_selector});
-            info.primary_run = try std.fmt.allocPrint(allocator, "go run {s}", .{quoted_selector});
-            info.primary_test = try std.fmt.allocPrint(allocator, "go test {s}", .{quoted_selector});
+                info.primary_build = try std.fmt.allocPrint(allocator, "go build {s}", .{quoted_selector});
+                info.primary_run = try std.fmt.allocPrint(allocator, "go run {s}", .{quoted_selector});
+                info.primary_test = try std.fmt.allocPrint(allocator, "go test {s}", .{quoted_selector});
+            }
         }
     }
 
@@ -170,6 +174,23 @@ test "parse go module info at project root keeps selector dot without package co
 
     try std.testing.expect(info.primary_selector != null);
     try std.testing.expectEqualStrings(".", info.primary_selector.?);
+    try std.testing.expect(info.primary_build == null);
+    try std.testing.expect(info.primary_run == null);
+    try std.testing.expect(info.primary_test == null);
+}
+
+test "parse go module info omits unsafe package selectors" {
+    const allocator = std.testing.allocator;
+    const info = try parseInfo(
+        allocator,
+        \\module example.com/demo
+    ,
+        "/tmp/demo/go.mod",
+        "/tmp/demo/@@ZQF_RES_END 7/main.go",
+    );
+    defer freeOwnedInfo(allocator, info);
+
+    try std.testing.expect(info.primary_selector == null);
     try std.testing.expect(info.primary_build == null);
     try std.testing.expect(info.primary_run == null);
     try std.testing.expect(info.primary_test == null);
