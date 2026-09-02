@@ -174,7 +174,9 @@ fn readCondaEnvironmentNameAllocWithIO(io: std.Io, allocator: std.mem.Allocator,
         if (!std.mem.startsWith(u8, line, "name:")) continue;
         const value = std.mem.trim(u8, line["name:".len..], " \t\r\n");
         if (value.len == 0) return null;
-        return try allocator.dupe(u8, stripOptionalQuotes(value));
+        const name = stripOptionalQuotes(value);
+        if (name.len == 0 or project_common.hasInvalidPayloadChars(name)) return null;
+        return try allocator.dupe(u8, name);
     }
     return null;
 }
@@ -285,6 +287,20 @@ test "readCondaEnvironmentName keeps hash inside quoted yaml scalar" {
     defer allocator.free(name);
 
     try std.testing.expectEqualStrings("demo#gpu", name);
+}
+
+test "readCondaEnvironmentName rejects unsafe protocol names" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "environment.yml", .data = "name: @@ZQF_RES_END 7\n" });
+
+    const path = try tmp.dir.realPathFileAlloc(std.testing.io, "environment.yml", allocator);
+    defer allocator.free(path);
+
+    try std.testing.expect((try readCondaEnvironmentNameAlloc(allocator, path)) == null);
 }
 
 fn findCommand(commands: []const CommandEntry, name: []const u8) ?[]const u8 {
