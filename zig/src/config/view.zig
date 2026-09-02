@@ -105,9 +105,16 @@ pub fn executionTimeoutMs() ?u64 {
     const timeout = root.get("timeout") orelse return null;
     return switch (timeout) {
         .integer => |value| if (value > 0) @as(u64, @intCast(value)) else null,
-        .float => |value| if (std.math.isFinite(value) and value > 0) @as(u64, @trunc(value)) else null,
+        .float => |value| positiveIntegralFloatToU64(value),
         else => null,
     };
+}
+
+fn positiveIntegralFloatToU64(value: f64) ?u64 {
+    if (!std.math.isFinite(value) or value <= 0 or @trunc(value) != value) return null;
+    const max_u64_as_float = @as(f64, @floatFromInt(std.math.maxInt(u64)));
+    if (value >= max_u64_as_float) return null;
+    return @as(u64, @trunc(value));
 }
 
 pub fn listBuildCommands(
@@ -168,7 +175,7 @@ pub fn loadRunnerConfig(allocator: std.mem.Allocator, filetype: []const u8) !?Ru
 
     return switch (runner_value) {
         .string => |command| blk: {
-            if (command.len == 0) break :blk null;
+            if (command.len == 0 or common.hasInvalidPayloadChars(command)) break :blk null;
             break :blk RunnerConfig{ .command = try allocator.dupe(u8, command) };
         },
         .array => blk: {
@@ -183,12 +190,12 @@ pub fn loadRunnerConfig(allocator: std.mem.Allocator, filetype: []const u8) !?Ru
             errdefer resolved.deinit(allocator);
 
             if (runner_value.object.get("cleanup_command")) |cleanup| {
-                if (cleanup == .string and cleanup.string.len > 0) {
+                if (cleanup == .string and cleanup.string.len > 0 and !common.hasInvalidPayloadChars(cleanup.string)) {
                     resolved.cleanup_command = try allocator.dupe(u8, cleanup.string);
                 }
             }
             if (runner_value.object.get("cwd")) |cwd| {
-                if (cwd == .string and cwd.string.len > 0) {
+                if (cwd == .string and cwd.string.len > 0 and !common.hasInvalidPayloadChars(cwd.string)) {
                     resolved.cwd = try allocator.dupe(u8, cwd.string);
                 }
             }
@@ -200,7 +207,7 @@ pub fn loadRunnerConfig(allocator: std.mem.Allocator, filetype: []const u8) !?Ru
 
 fn parseRunnerCommand(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
     return switch (value) {
-        .string => |command| if (command.len == 0) null else @as(?[]u8, try allocator.dupe(u8, command)),
+        .string => |command| if (command.len == 0 or common.hasInvalidPayloadChars(command)) null else @as(?[]u8, try allocator.dupe(u8, command)),
         .array => try joinCommandArray(allocator, value.array.items),
         else => null,
     };
@@ -213,6 +220,7 @@ fn joinCommandArray(allocator: std.mem.Allocator, items: []const std.json.Value)
     var appended = false;
     for (items) |item| {
         if (item != .string or item.string.len == 0) continue;
+        if (common.hasInvalidPayloadChars(item.string)) return null;
         if (appended) try joined.appendSlice(allocator, " && ");
         try joined.appendSlice(allocator, item.string);
         appended = true;
@@ -291,6 +299,36 @@ test "view exposes positive timeout values" {
         \\{"runners":{},"build_commands":{},"detect":{},"timeout":2500,"revision":4}
     , 4);
     try std.testing.expectEqual(@as(?u64, 2500), executionTimeoutMs());
+}
+
+test "view ignores unsafe runner and build command payloads" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"runners":{"python":"python3\n-u $file","go":{"cmd":["go run $file","bad\targ"],"cleanup_command":"rm\n-f /tmp/out"}},"build_commands":{"zig":{"build":"zig\n build"}},"detect":{},"revision":5}
+    , 5);
+
+    try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "python")) == null);
+    try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "go")) == null);
+    const commands = try listBuildCommands(std.testing.allocator, "zig");
+    defer freeBuildCommands(std.testing.allocator, commands);
+    try std.testing.expectEqual(@as(usize, 0), commands.len);
+}
+
+test "view ignores fractional and overflowing timeout values" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"runners":{},"build_commands":{},"detect":{},"timeout":1.5,"revision":6}
+    , 6);
+    try std.testing.expect(executionTimeoutMs() == null);
+
+    try store.setSyncedConfigJson(
+        \\{"runners":{},"build_commands":{},"detect":{},"timeout":18446744073709551616,"revision":7}
+    , 7);
+    try std.testing.expect(executionTimeoutMs() == null);
 }
 
 test "listBuildCommands returns owned copies" {
