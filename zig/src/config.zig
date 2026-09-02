@@ -1,5 +1,6 @@
 const std = @import("std");
 const frame = @import("protocol/frame.zig");
+const common = @import("project/core/common.zig");
 const protocol_stdio = @import("protocol/stdio.zig");
 const store = @import("config/store.zig");
 const validate = @import("config/validate.zig");
@@ -126,6 +127,7 @@ pub fn getSyncedRevision() u64 {
 
 fn writeWarnings(stdout: anytype, warnings: [][]u8) !void {
     for (warnings) |warning| {
+        if (common.hasInvalidPayloadChars(warning)) continue;
         try stdout.print("WARN\t{s}\n", .{warning});
     }
 }
@@ -194,6 +196,28 @@ test "handleDaemonFrame includes backend config warnings before revision" {
     try std.testing.expect(std.mem.find(u8, out.written(), "WARN\tInvalid config detect.zig: expected boolean, got string\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "WARN\tInvalid config timeout: expected positive number or null, got string\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "REVISION\t23\n") != null);
+}
+
+test "handleDaemonFrame omits unsafe warning payloads" {
+    const allocator = std.testing.allocator;
+    defer store.reset();
+
+    var reader = TestReader{ .lines = &.{
+        "\t{\"runners\":{\"bad\\nkey\":42}}",
+        "@@ZCFG_REQ_END 6",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try handleDaemonFrame(
+        allocator,
+        &reader,
+        &out.writer,
+        "@@ZCFG_REQ_BEGIN 6 24",
+    );
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "WARN\t") == null);
+    try std.testing.expectEqualStrings("@@ZCFG_RES_BEGIN 6\nREVISION\t24\n@@ZCFG_RES_END 6\n", out.written());
 }
 
 test "handleDaemonFrame writes config error frame for malformed header with request id" {
