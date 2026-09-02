@@ -68,7 +68,11 @@ fn detectStepsWithTimeoutWithIO(
     build_root: []const u8,
     timeout_ms: ?u64,
 ) ![]Step {
-    const result = std.process.run(allocator, io, .{
+    var process_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer process_arena.deinit();
+    const process_allocator = process_arena.allocator();
+
+    const result = std.process.run(process_allocator, io, .{
         .argv = &.{ "zig", "build", "-l" },
         .cwd = .{ .path = build_root },
         .stdout_limit = .limited(256 * 1024),
@@ -84,8 +88,6 @@ fn detectStepsWithTimeoutWithIO(
         error.Timeout => return error.ZigBuildListStepsFailed,
         else => return err,
     };
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
 
     switch (result.term) {
         .exited => |code| if (code != 0) return error.ZigBuildListStepsFailed,

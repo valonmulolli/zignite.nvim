@@ -26,7 +26,11 @@ pub fn resolveCommandExecution(
     allocator: std.mem.Allocator,
     options: types.Options,
 ) !ResolvedCommandExecution {
-    var threaded: std.Io.Threaded = .init_single_threaded;
+    if (comptime @import("builtin").is_test) {
+        return resolveCommandExecutionWithIO(std.testing.io, allocator, options);
+    }
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
     return resolveCommandExecutionWithIO(threaded.io(), allocator, options);
 }
 
