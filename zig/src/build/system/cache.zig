@@ -223,7 +223,7 @@ fn buildSignatureAlloc(
 }
 
 fn buildMakeSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
-    const makefile_path = try findMakefilePathAlloc(allocator, root) orelse return null;
+    const makefile_path = try findMakefilePathAllocWithIO(io, allocator, root) orelse return null;
     defer allocator.free(makefile_path);
 
     const referenced_files = try make.collectReferencedFilesFromFileAllocWithIO(io, allocator, makefile_path);
@@ -245,11 +245,11 @@ fn buildMakeSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: []con
     return try signature.toOwnedSlice(allocator);
 }
 
-fn findMakefilePathAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
+fn findMakefilePathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
     for (c_family_make_markers) |marker| {
         const candidate = try std.fs.path.join(allocator, &.{ root, marker });
         defer allocator.free(candidate);
-        if (shared.pathExists(candidate)) {
+        if (shared.pathExistsWithIO(io, candidate)) {
             return try allocator.dupe(u8, candidate);
         }
     }
