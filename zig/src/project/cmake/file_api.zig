@@ -68,6 +68,7 @@ pub fn parseTargetsWithIO(
         const target_summaries = getArrayField(configuration_value, "targets") orelse continue;
         for (target_summaries) |summary_value| {
             const json_file = getStringField(summary_value, "jsonFile") orelse continue;
+            if (!isReplyFileName(json_file)) continue;
             const target_path = try std.fs.path.join(allocator, &.{ reply_dir, json_file });
             defer allocator.free(target_path);
 
@@ -303,6 +304,7 @@ fn findCodeModelPathAlloc(
     while (it.next()) |entry| {
         if (!std.mem.startsWith(u8, entry.key_ptr.*, "codemodel-v")) continue;
         const json_file = getStringField(entry.value_ptr.*, "jsonFile") orelse continue;
+        if (!isReplyFileName(json_file)) continue;
         return try std.fs.path.join(allocator, &.{ reply_dir, json_file });
     }
 
@@ -345,6 +347,12 @@ fn findReplyIndexAllocWithIO(io: std.Io, allocator: std.mem.Allocator, reply_dir
         return try std.fs.path.join(allocator, &.{ reply_dir, name });
     }
     return null;
+}
+
+fn isReplyFileName(value: []const u8) bool {
+    if (value.len == 0 or std.mem.eql(u8, value, ".") or std.mem.eql(u8, value, "..")) return false;
+    if (std.fs.path.isAbsolute(value)) return false;
+    return std.mem.findAny(u8, value, &.{ '/', '\\' }) == null;
 }
 
 fn pathExists(path: []const u8) bool {
@@ -398,4 +406,15 @@ test "findReplyIndexAllocWithIO owns the selected iterator entry name" {
 
     try std.testing.expect(selected != null);
     try std.testing.expectEqualStrings(index_path, selected.?);
+}
+
+test "isReplyFileName rejects paths outside the CMake reply directory" {
+    try std.testing.expect(isReplyFileName("codemodel-v2.json"));
+    try std.testing.expect(!isReplyFileName(""));
+    try std.testing.expect(!isReplyFileName("."));
+    try std.testing.expect(!isReplyFileName(".."));
+    try std.testing.expect(!isReplyFileName("../codemodel-v2.json"));
+    try std.testing.expect(!isReplyFileName("/tmp/codemodel-v2.json"));
+    try std.testing.expect(!isReplyFileName("nested/codemodel-v2.json"));
+    try std.testing.expect(!isReplyFileName("nested\\codemodel-v2.json"));
 }
