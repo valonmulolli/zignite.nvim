@@ -40,21 +40,36 @@ pub fn setLastCommand(
     for (last_commands.items) |*entry| {
         if (!std.mem.eql(u8, entry.filetype, filetype)) continue;
         const owned_command_name = try state_allocator.dupe(u8, command_name);
-        state_allocator.free(entry.command_name);
+        const previous_command_name = entry.command_name;
         entry.command_name = owned_command_name;
-        try persistLocked(io, allocator, environ_map);
+        persistLocked(io, allocator, environ_map) catch |err| {
+            entry.command_name = previous_command_name;
+            state_allocator.free(owned_command_name);
+            return err;
+        };
+        state_allocator.free(previous_command_name);
         return;
     }
 
     const owned_filetype = try state_allocator.dupe(u8, filetype);
-    errdefer state_allocator.free(owned_filetype);
-    const owned_command_name = try state_allocator.dupe(u8, command_name);
-    errdefer state_allocator.free(owned_command_name);
-    try last_commands.append(state_allocator, .{
+    const owned_command_name = state_allocator.dupe(u8, command_name) catch |err| {
+        state_allocator.free(owned_filetype);
+        return err;
+    };
+    last_commands.append(state_allocator, .{
         .filetype = owned_filetype,
         .command_name = owned_command_name,
-    });
-    try persistLocked(io, allocator, environ_map);
+    }) catch |err| {
+        state_allocator.free(owned_filetype);
+        state_allocator.free(owned_command_name);
+        return err;
+    };
+    persistLocked(io, allocator, environ_map) catch |err| {
+        const inserted = last_commands.pop().?;
+        state_allocator.free(inserted.filetype);
+        state_allocator.free(inserted.command_name);
+        return err;
+    };
 }
 
 pub fn clearLastCommand(
@@ -72,10 +87,22 @@ pub fn clearLastCommand(
         const entry = last_commands.items[index];
         if (!std.mem.eql(u8, entry.filetype, filetype)) continue;
 
+        const last_index = last_commands.items.len - 1;
+        const moved = last_commands.items[last_index];
+        if (index != last_index) last_commands.items[index] = moved;
+        last_commands.items.len = last_index;
+        persistLocked(io, allocator, environ_map) catch |err| {
+            last_commands.items.len = last_index + 1;
+            if (index != last_index) {
+                last_commands.items[last_index] = moved;
+                last_commands.items[index] = entry;
+            } else {
+                last_commands.items[index] = entry;
+            }
+            return err;
+        };
         state_allocator.free(entry.filetype);
         state_allocator.free(entry.command_name);
-        _ = last_commands.swapRemove(index);
-        try persistLocked(io, allocator, environ_map);
         return;
     }
 }
@@ -243,4 +270,46 @@ test "build action state persists across reload" {
     const command = (try getLastCommand(std.testing.io, allocator, null, "python")).?;
     defer allocator.free(command);
     try std.testing.expectEqualStrings("test", command);
+}
+
+test "build action state rolls back when persistence fails" {
+    const allocator = std.testing.allocator;
+    defer resetForTests();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const blocked_root = try std.fs.path.join(allocator, &.{ root, "blocked" });
+    defer allocator.free(blocked_root);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "blocked", .data = "not a directory\n" });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put("ZIGNITE_STATE_DIR", root);
+
+    try setLastCommand(std.testing.io, allocator, &environ_map, "zig", "build");
+    try setLastCommand(std.testing.io, allocator, &environ_map, "python", "test");
+
+    try environ_map.put("ZIGNITE_STATE_DIR", blocked_root);
+    if (setLastCommand(std.testing.io, allocator, &environ_map, "zig", "run")) |_| {
+        return error.TestExpectedError;
+    } else |_| {}
+    if (setLastCommand(std.testing.io, allocator, &environ_map, "go", "test")) |_| {
+        return error.TestExpectedError;
+    } else |_| {}
+    if (clearLastCommand(std.testing.io, allocator, &environ_map, "python")) |_| {
+        return error.TestExpectedError;
+    } else |_| {}
+
+    try environ_map.put("ZIGNITE_STATE_DIR", root);
+    const zig_command = (try getLastCommand(std.testing.io, allocator, &environ_map, "zig")).?;
+    defer allocator.free(zig_command);
+    try std.testing.expectEqualStrings("build", zig_command);
+
+    const python_command = (try getLastCommand(std.testing.io, allocator, &environ_map, "python")).?;
+    defer allocator.free(python_command);
+    try std.testing.expectEqualStrings("test", python_command);
+    try std.testing.expect((try getLastCommand(std.testing.io, allocator, &environ_map, "go")) == null);
 }
