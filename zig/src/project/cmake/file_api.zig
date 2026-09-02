@@ -275,7 +275,7 @@ fn renderRunPathAlloc(
     normalized_root: []const u8,
     normalized_artifact: []const u8,
 ) ![]u8 {
-    if (std.mem.startsWith(u8, normalized_artifact, normalized_root)) {
+    if (common.isPathWithinRoot(normalized_root, normalized_artifact)) {
         const relative = try common.makeRelativeToRootAlloc(allocator, normalized_root, normalized_artifact);
         defer allocator.free(relative);
         return try std.fmt.allocPrint(allocator, "./{s}", .{relative});
@@ -365,4 +365,12 @@ fn getArrayField(value: std.json.Value, name: []const u8) ?[]const std.json.Valu
     const field_value = getField(value, name) orelse return null;
     if (field_value != .array) return null;
     return field_value.array.items;
+}
+
+test "renderRunPathAlloc preserves artifacts outside a shared-prefix root" {
+    const allocator = std.testing.allocator;
+    const rendered = try renderRunPathAlloc(allocator, "/project", "/project-old/bin/app");
+    defer allocator.free(rendered);
+
+    try std.testing.expectEqualStrings("/project-old/bin/app", rendered);
 }

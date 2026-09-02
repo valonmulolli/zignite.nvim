@@ -117,13 +117,16 @@ pub fn normalizePathAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     return try normalized.toOwnedSlice(allocator);
 }
 
+pub fn isPathWithinRoot(root: []const u8, filepath: []const u8) bool {
+    if (root.len == 0 or !std.mem.startsWith(u8, filepath, root)) return false;
+    return root[root.len - 1] == '/' or filepath.len == root.len or filepath[root.len] == '/';
+}
+
 pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) ![]u8 {
-    if (root.len > 0 and std.mem.startsWith(u8, filepath, root)) {
+    if (isPathWithinRoot(root, filepath)) {
         var start = root.len;
         if (filepath.len > start and filepath[start] == '/') {
             start += 1;
-        } else if (filepath.len > start) {
-            return try allocator.dupe(u8, std.fs.path.basename(filepath));
         }
         return try allocator.dupe(u8, filepath[start..]);
     }
@@ -291,9 +294,20 @@ test "makeRelativeToRootAlloc strips the root prefix and leading slash" {
     defer allocator.free(no_root);
     try std.testing.expectEqualStrings("main.zig", no_root);
 
+    const shared_prefix = try makeRelativeToRootAlloc(allocator, "/project", "/project-old/main.zig");
+    defer allocator.free(shared_prefix);
+    try std.testing.expectEqualStrings("main.zig", shared_prefix);
+
     const empty_root = try makeRelativeToRootAlloc(allocator, "", "/project/main.zig");
     defer allocator.free(empty_root);
     try std.testing.expectEqualStrings("main.zig", empty_root);
+}
+
+test "isPathWithinRoot requires a path component boundary" {
+    try std.testing.expect(isPathWithinRoot("/project", "/project"));
+    try std.testing.expect(isPathWithinRoot("/project", "/project/src/main.zig"));
+    try std.testing.expect(!isPathWithinRoot("/project", "/project-old/src/main.zig"));
+    try std.testing.expect(isPathWithinRoot("/", "/project/src/main.zig"));
 }
 
 test "quoteShellArgIfNeededAlloc quotes empty string" {
