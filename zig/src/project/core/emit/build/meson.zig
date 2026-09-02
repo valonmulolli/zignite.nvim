@@ -51,14 +51,15 @@ pub fn writeMesonOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
         primary_target,
         "meson-build",
         "meson-run",
-        build_common.mesonBuildCommandAlloc,
-        build_common.mesonRunCommandAlloc,
+        build_common.mesonBuildCommandAllocWithIO,
+        build_common.mesonRunCommandAllocWithIO,
         build_common.discoverBuildRunPathAllocWithIO,
     );
     defer if (primary_run_path) |value| allocator.free(value);
 
     if (primary_target) |name| {
-        try shared.emitPrimaryBuildRunCommands(
+        try shared.emitPrimaryBuildRunCommandsWithIO(
+            io,
             stdout,
             allocator,
             root,
@@ -66,8 +67,8 @@ pub fn writeMesonOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
             primary_run_path,
             "meson-build",
             "meson-run",
-            build_common.mesonBuildCommandAlloc,
-            build_common.mesonRunCommandAlloc,
+            build_common.mesonBuildCommandAllocWithIO,
+            build_common.mesonRunCommandAllocWithIO,
         );
     }
 }

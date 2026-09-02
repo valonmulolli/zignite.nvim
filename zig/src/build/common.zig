@@ -275,7 +275,7 @@ fn buildDiscoveredRunSuffixAlloc(
     run_path: ?[]const u8,
 ) ![]u8 {
     if (run_path) |value| {
-        return allocator.dupe(u8, value);
+        return project_common.quoteShellArgIfNeededAlloc(allocator, value);
     }
 
     const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
@@ -555,6 +555,15 @@ test "buildDiscoveredRunSuffix fallback searches discovered build directory" {
 
     try std.testing.expect(std.mem.find(u8, command, "find 'build debug' -type f") != null);
     try std.testing.expect(std.mem.find(u8, command, "-name 'demo app'") != null);
+}
+
+test "buildDiscoveredRunSuffix quotes a metadata artifact path" {
+    const allocator = std.testing.allocator;
+
+    const command = try buildDiscoveredRunSuffixAlloc(allocator, "build", "demo", "./build debug/bin/demo;echo injected");
+    defer allocator.free(command);
+
+    try std.testing.expectEqualStrings("'./build debug/bin/demo;echo injected'", command);
 }
 
 test "discoverBuildRunPathAlloc uses discovered custom build directory" {
