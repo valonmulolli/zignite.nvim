@@ -222,10 +222,11 @@ pub fn collectOwnedLinesUntilEnd(
                 line;
             if (self.options.skip_empty and value.len == 0) return;
             if (self.options.max_bytes) |cap| {
-                if (self.lines.items.len > 0 and self.total_bytes.* + value.len + 1 > cap) {
+                const line_bytes = std.math.add(usize, value.len, 1) catch return error.StreamTooLong;
+                if (self.total_bytes.* > cap or line_bytes > cap - self.total_bytes.*) {
                     return error.StreamTooLong;
                 }
-                self.total_bytes.* += value.len + 1;
+                self.total_bytes.* += line_bytes;
             }
             const owned_value = try self.allocator.dupe(u8, value);
             self.lines.append(self.allocator, owned_value) catch |err| {
@@ -511,6 +512,21 @@ test "collectOwnedLinesUntilEnd enforces max_bytes" {
             .skip_empty = false,
             .max_bytes = 4,
         },
+    );
+    try std.testing.expectError(error.StreamTooLong, result);
+}
+
+test "collectOwnedLinesUntilEnd enforces max_bytes for the first line" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{ "12345", "@@ZPRJ_REQ_END 1" } };
+
+    const result = collectOwnedLinesUntilEnd(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+        1,
+        .{ .max_bytes = 4 },
     );
     try std.testing.expectError(error.StreamTooLong, result);
 }
