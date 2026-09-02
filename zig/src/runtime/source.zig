@@ -326,6 +326,7 @@ fn pruneScratchRootBestEffort(
     while (items.items.len > max_entries) {
         const victim = items.orderedRemove(items.items.len - 1);
         if (victim.mtime == std.math.maxInt(i96)) {
+            allocator.free(victim.name);
             break;
         }
         dir.deleteFile(io, victim.name) catch {};
