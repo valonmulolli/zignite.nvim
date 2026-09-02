@@ -16,7 +16,9 @@ fn emitCanonicalTaskAliases(
     for (aliases) |alias| {
         if (task_alias.containsName(names, alias)) continue;
         const source_name = task_alias.findSourceName(names, alias) orelse continue;
-        const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, source_name });
+        const quoted_source_name = try common.quoteShellArgIfNeededAlloc(allocator, source_name);
+        defer allocator.free(quoted_source_name);
+        const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, quoted_source_name });
         defer allocator.free(command);
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ alias, command });
     }
@@ -28,7 +30,9 @@ pub fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents:
     try maven.parseGoals(allocator, contents, &names);
 
     for (names.items) |name| {
-        const command = try std.fmt.allocPrint(allocator, "mvn {s}", .{name});
+        const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, name);
+        defer allocator.free(quoted_name);
+        const command = try std.fmt.allocPrint(allocator, "mvn {s}", .{quoted_name});
         defer allocator.free(command);
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
     }
@@ -80,7 +84,9 @@ pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
     defer allocator.free(clean_command);
 
     for (names.items) |name| {
-        const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, name });
+        const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, name);
+        defer allocator.free(quoted_name);
+        const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, quoted_name });
         defer allocator.free(command);
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
     }

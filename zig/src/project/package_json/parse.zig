@@ -6,22 +6,25 @@ pub fn formatScriptCommandAlloc(
     package_manager: []const u8,
     script_name: []const u8,
 ) ![]u8 {
+    const quoted_script_name = try common.quoteShellArgIfNeededAlloc(allocator, script_name);
+    defer allocator.free(quoted_script_name);
+
     if (std.mem.eql(u8, package_manager, "bun")) {
-        return std.fmt.allocPrint(allocator, "bun run {s}", .{script_name});
+        return std.fmt.allocPrint(allocator, "bun run {s}", .{quoted_script_name});
     }
     if (std.mem.eql(u8, package_manager, "yarn")) {
-        return std.fmt.allocPrint(allocator, "yarn {s}", .{script_name});
+        return std.fmt.allocPrint(allocator, "yarn {s}", .{quoted_script_name});
     }
     if (std.mem.eql(u8, package_manager, "pnpm")) {
         if (std.mem.eql(u8, script_name, "start") or std.mem.eql(u8, script_name, "test")) {
-            return std.fmt.allocPrint(allocator, "pnpm {s}", .{script_name});
+            return std.fmt.allocPrint(allocator, "pnpm {s}", .{quoted_script_name});
         }
-        return std.fmt.allocPrint(allocator, "pnpm run {s}", .{script_name});
+        return std.fmt.allocPrint(allocator, "pnpm run {s}", .{quoted_script_name});
     }
     if (std.mem.eql(u8, script_name, "start") or std.mem.eql(u8, script_name, "test")) {
-        return std.fmt.allocPrint(allocator, "npm {s}", .{script_name});
+        return std.fmt.allocPrint(allocator, "npm {s}", .{quoted_script_name});
     }
-    return std.fmt.allocPrint(allocator, "npm run {s}", .{script_name});
+    return std.fmt.allocPrint(allocator, "npm run {s}", .{quoted_script_name});
 }
 
 pub fn formatInstallCommandAlloc(allocator: std.mem.Allocator, package_manager: []const u8) ![]u8 {
@@ -169,6 +172,14 @@ test "format package script command respects package manager" {
     const yarn = try formatScriptCommandAlloc(allocator, "yarn", "dev");
     defer allocator.free(yarn);
     try std.testing.expectEqualStrings("yarn dev", yarn);
+}
+
+test "format package script command quotes unsafe script names" {
+    const allocator = std.testing.allocator;
+    const command = try formatScriptCommandAlloc(allocator, "npm", "build; touch /tmp/pwned");
+    defer allocator.free(command);
+
+    try std.testing.expectEqualStrings("npm run 'build; touch /tmp/pwned'", command);
 }
 
 test "format install command respects package manager" {
