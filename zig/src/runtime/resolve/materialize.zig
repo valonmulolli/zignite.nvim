@@ -79,19 +79,29 @@ fn substituteVariablesImpl(
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
 
+    var quote: ?u8 = null;
     var index: usize = 0;
     while (index < template.len) {
+        if (shell_escape and template[index] == '\\' and index + 1 < template.len and quote != '\'') {
+            try out.appendSlice(allocator, template[index .. index + 2]);
+            index += 2;
+            continue;
+        }
         if (template[index] == '%' and index + 1 < template.len and template[index + 1] == '%') {
             try out.append(allocator, '%');
             index += 2;
             continue;
         }
         if (template[index] != '$') {
-            const start = index;
-            while (index < template.len and template[index] != '$' and
-                !(template[index] == '%' and index + 1 < template.len and template[index + 1] == '%')) : (index += 1)
-            {}
-            try out.appendSlice(allocator, template[start..index]);
+            try out.append(allocator, template[index]);
+            if (shell_escape) {
+                if (quote) |active_quote| {
+                    if (template[index] == active_quote) quote = null;
+                } else if (template[index] == '\'' or template[index] == '"') {
+                    quote = template[index];
+                }
+            }
+            index += 1;
             continue;
         }
 
@@ -120,7 +130,11 @@ fn substituteVariablesImpl(
             null;
 
         if (replacement) |value| {
-            try appendResolvedVariable(allocator, &out, value, shell_escape);
+            if (shell_escape) {
+                try appendResolvedVariable(allocator, &out, value, quote);
+            } else {
+                try out.appendSlice(allocator, value);
+            }
         } else {
             try out.appendSlice(allocator, template[index..end]);
         }
@@ -134,22 +148,38 @@ fn appendResolvedVariable(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     value: []const u8,
-    shell_escape: bool,
+    quote: ?u8,
 ) !void {
-    if (!shell_escape) {
-        try out.appendSlice(allocator, value);
+    if (quote == null) {
+        try out.append(allocator, '\'');
+        for (value) |ch| {
+            if (ch == '\'') {
+                try out.appendSlice(allocator, "'\"'\"'");
+            } else {
+                try out.append(allocator, ch);
+            }
+        }
+        try out.append(allocator, '\'');
         return;
     }
 
-    try out.append(allocator, '\'');
-    for (value) |ch| {
-        if (ch == '\'') {
-            try out.appendSlice(allocator, "'\"'\"'");
-        } else {
-            try out.append(allocator, ch);
+    if (quote.? == '\'') {
+        for (value) |ch| {
+            if (ch == '\'') {
+                try out.appendSlice(allocator, "'\"'\"'");
+            } else {
+                try out.append(allocator, ch);
+            }
         }
+        return;
     }
-    try out.append(allocator, '\'');
+
+    for (value) |ch| {
+        if (ch == '\\' or ch == '"' or ch == '$' or ch == '`') {
+            try out.append(allocator, '\\');
+        }
+        try out.append(allocator, ch);
+    }
 }
 
 fn hasUnsupportedShellSyntax(command: []const u8) bool {
@@ -328,4 +358,34 @@ test "materializeRunner keeps file paths with spaces as one argv argument" {
     try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
     try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
     try std.testing.expectEqualStrings("/tmp/example dir/main.py", runner.argv.items[2]);
+}
+
+test "substituteVariablesShell preserves double-quoted variable context" {
+    const allocator = std.testing.allocator;
+    const resolved = try substituteVariablesShell(allocator, "python3 \"$file\"", "/tmp/example dir/main.py", null);
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings("python3 \"/tmp/example dir/main.py\"", resolved);
+
+    var argv = try tokenizeCommand(allocator, resolved);
+    defer {
+        for (argv.items) |arg| allocator.free(arg);
+        argv.deinit(allocator);
+    }
+    try std.testing.expectEqual(@as(usize, 2), argv.items.len);
+    try std.testing.expectEqualStrings("/tmp/example dir/main.py", argv.items[1]);
+}
+
+test "substituteVariablesShell does not expand escaped placeholders" {
+    const allocator = std.testing.allocator;
+    const resolved = try substituteVariablesShell(allocator, "echo \\$file", "/tmp/main.py", null);
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings("echo \\$file", resolved);
+    var argv = try tokenizeCommand(allocator, resolved);
+    defer {
+        for (argv.items) |arg| allocator.free(arg);
+        argv.deinit(allocator);
+    }
+    try std.testing.expectEqualStrings("$file", argv.items[1]);
 }
