@@ -11,6 +11,10 @@ pub fn writeCommandUiMetadata(
     filetype: []const u8,
     entry: build_types.CommandEntry,
 ) !void {
+    if (project_common.hasInvalidPayloadChars(filetype) or
+        project_common.hasInvalidPayloadChars(entry.name) or
+        project_common.hasInvalidPayloadChars(entry.command)) return;
+
     const display = try commandDisplayAlloc(allocator, entry.command);
     defer allocator.free(display);
     try stdout.print("COMMAND_DISPLAY\t{s}\t{s}\n", .{ entry.name, display });
