@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const TimeoutContext = struct {
-    child_ptr: *std.process.Child,
+    child_id: std.process.Child.Id,
     duration: u64,
     finished: *std.atomic.Value(bool),
 };
@@ -67,7 +67,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
     var context: TimeoutContext = undefined;
     if (timeout_ms) |ms| {
         context = .{
-            .child_ptr = &child,
+            .child_id = child.id.?,
             .duration = ms,
             .finished = &finished,
         };
@@ -151,7 +151,7 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
         return;
     }
 
-    ctx.child_ptr.kill(io);
+    requestChildTermination(ctx.child_id);
 
     var stderr_buffer: [128]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
@@ -161,6 +161,18 @@ fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
     stderr_writer.interface.flush() catch |f_err| {
         std.log.err("Failed to flush timeout message: {}", .{f_err});
     };
+}
+
+fn requestChildTermination(child_id: std.process.Child.Id) void {
+    switch (builtin.os.tag) {
+        .windows => {
+            _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
+        },
+        .wasi => {},
+        else => {
+            _ = std.posix.kill(child_id, .TERM) catch {};
+        },
+    }
 }
 
 fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
@@ -184,7 +196,7 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
 
     var finished = std.atomic.Value(bool).init(false);
     var context = TimeoutContext{
-        .child_ptr = &child,
+        .child_id = child.id.?,
         .duration = 30000,
         .finished = &finished,
     };
