@@ -254,8 +254,8 @@ pub fn discoverBuildRunPathAllocWithIO(
 fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
     const full_path = std.fs.path.join(allocator, &.{ root, relative_path }) catch return false;
     defer allocator.free(full_path);
-    std.Io.Dir.cwd().access(io, full_path, .{}) catch return false;
-    return true;
+    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
+    return stat.kind == .file;
 }
 
 fn pathContainsIgnoredBuildDir(path: []const u8) bool {
@@ -440,6 +440,22 @@ test "discoverBuildRunPathAlloc ignores generated build internals" {
         .sub_path = "build/CMakeFiles/demo-app",
         .data = "",
     });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    const run_path = try discoverBuildRunPathAlloc(allocator, root, "build", "demo-app");
+    defer if (run_path) |value| allocator.free(value);
+
+    try std.testing.expect(run_path == null);
+}
+
+test "discoverBuildRunPathAlloc ignores target directories" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "build/bin/demo-app");
 
     const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
     defer allocator.free(root);
