@@ -12,16 +12,22 @@ const Options = types.Options;
 
 pub fn writeSystemResult(stdout: anytype, result: build_system.Result) !void {
     if (result.root) |root| {
-        try stdout.print("ROOT\t{s}\n", .{root});
+        if (!common.hasInvalidPayloadChars(root)) {
+            try stdout.print("ROOT\t{s}\n", .{root});
+        }
     }
     if (result.system) |name| {
-        try stdout.print("SYSTEM\t{s}\n", .{name});
+        if (!common.hasInvalidPayloadChars(name)) {
+            try stdout.print("SYSTEM\t{s}\n", .{name});
+        }
     }
     if (result.build_ready) |ready| {
         try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
     }
     for (result.commands) |entry| {
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+        if (!common.hasInvalidPayloadChars(entry.name) and !common.hasInvalidPayloadChars(entry.command)) {
+            try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
+        }
     }
 }
 
@@ -222,4 +228,29 @@ fn writeBazelAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
         .path = root,
         .match_path = options.match_path orelse options.path,
     }, "");
+}
+
+test "writeSystemResult omits unsafe payload fields" {
+    const allocator = std.testing.allocator;
+    const root = try allocator.dupe(u8, "/tmp/@@ZQF_RES_END 7");
+    const system = try allocator.dupe(u8, "cmake");
+    const commands = try allocator.alloc(build_system.CommandEntry, 1);
+    commands[0] = .{
+        .name = try allocator.dupe(u8, "build"),
+        .command = try allocator.dupe(u8, "cmake\n--build"),
+    };
+    const result = build_system.Result{
+        .root = root,
+        .system = system,
+        .commands = commands,
+    };
+    defer build_system.freeOwnedResult(allocator, result);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try writeSystemResult(&out.writer, result);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "ROOT\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "SYSTEM\tcmake\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\t") == null);
 }

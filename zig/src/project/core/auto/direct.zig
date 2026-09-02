@@ -28,7 +28,7 @@ pub fn writeGoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
 
     if (makefile_path) |project_path| {
         const project_root = std.fs.path.dirname(project_path) orelse project_path;
-        try stdout.print("ROOT\t{s}\n", .{project_root});
+        try writeRootIfSafe(stdout, project_root);
         try stdout.print("SYSTEM\tmake\n", .{});
 
         const make_contents = try common.readFileAllocWithIO(io, allocator, project_path);
@@ -47,7 +47,7 @@ pub fn writeGoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
         const project_root = std.fs.path.dirname(project_path) orelse project_path;
         const go_work_contents = try common.readFileAllocWithIO(io, allocator, project_path);
         defer allocator.free(go_work_contents);
-        try stdout.print("ROOT\t{s}\n", .{project_root});
+        try writeRootIfSafe(stdout, project_root);
         try stdout.print("SYSTEM\tgo\n", .{});
         try emit.writeDirectOutputWithIO(io, stdout, allocator, .{
             .kind = .go,
@@ -62,7 +62,7 @@ pub fn writeGoAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
     const project_root = std.fs.path.dirname(go_mod_path) orelse go_mod_path;
     const go_mod_contents = try common.readFileAllocWithIO(io, allocator, go_mod_path);
     defer allocator.free(go_mod_contents);
-    try stdout.print("ROOT\t{s}\n", .{project_root});
+    try writeRootIfSafe(stdout, project_root);
     try stdout.print("SYSTEM\tgo\n", .{});
     try emit.writeDirectOutputWithIO(io, stdout, allocator, .{
         .kind = .go,
@@ -76,7 +76,7 @@ pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
     const build_root = try zig_project.findBuildRootAllocWithIO(io, allocator, options.path, 12) orelse return true;
     defer allocator.free(build_root);
 
-    try stdout.print("ROOT\t{s}\n", .{build_root});
+    try writeRootIfSafe(stdout, build_root);
     try stdout.print("SYSTEM\tzig\n", .{});
     try stdout.print("COMMAND\tbuild\tzig build\n", .{});
 
@@ -138,6 +138,12 @@ fn containsName(names: []const []u8, needle: []const u8) bool {
         if (std.mem.eql(u8, name, needle)) return true;
     }
     return false;
+}
+
+fn writeRootIfSafe(stdout: anytype, root: []const u8) !void {
+    if (!common.hasInvalidPayloadChars(root)) {
+        try stdout.print("ROOT\t{s}\n", .{root});
+    }
 }
 
 pub fn writeCMakeAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
