@@ -34,7 +34,7 @@ _G.vim = {
 local registry = require('zignite.ui.registry')
 
 local function reset_state()
-	registry.close_all(false)
+	registry.close_all(true)
 	win_close_calls = {}
 	buf_delete_calls = {}
 	jobstop_calls = {}
@@ -53,11 +53,15 @@ end
 local function test_track_max_runners()
 	reset_state()
 	-- Track MAX_RUNNERS (50) runners that won't trigger eviction
-	local first
+	local oldest
 	for i = 1, 50 do
-		first = registry.track(100 + i, 200 + i)
+		local runner = registry.track(100 + i, 200 + i)
+		if i == 1 then
+			oldest = runner
+		end
 	end
-	assert(first ~= nil, "Should still return the last tracked runner")
+	oldest.job_id = 77
+	assert(oldest ~= nil, "Should still return the oldest tracked runner")
 
 	-- Tracking 51st should evict oldest (win_id=101, buf_id=201)
 	local new = registry.track(999, 888)
@@ -75,6 +79,8 @@ local function test_track_max_runners()
 	assert(#buf_delete_calls == 1, "Should have evicted the oldest runner via buf_delete")
 	assert(buf_delete_calls[1].buf_id == 201, "Oldest runner's buf_id 201 should be deleted")
 	assert(buf_delete_calls[1].force == true, "Should delete with force=true")
+	assert(#jobstop_calls == 1, "Should stop the evicted runner job")
+	assert(jobstop_calls[1].job_id == 77, "Should stop the evicted runner's job")
 
 	print("✓ track(max runners eviction) passed")
 end
@@ -123,7 +129,8 @@ end
 local function test_clean_invalid()
 	reset_state()
 	registry.track(1, 2)
-	registry.track(3, 4)
+	local invalid = registry.track(3, 4)
+	invalid.job_id = 88
 
 	-- Override nvim_win_is_valid to make first runner valid, second invalid
 	_G.vim.api.nvim_win_is_valid = function(win_id)
@@ -141,6 +148,8 @@ local function test_clean_invalid()
 	-- The second runner should have its buf deleted because its win was invalid
 	assert(#buf_delete_calls == 1, "Should have deleted buf of invalid runner")
 	assert(buf_delete_calls[1].buf_id == 4, "Should delete buf_id 4 of invalid runner's buf")
+	assert(#jobstop_calls == 1, "Should stop the invalid runner job")
+	assert(jobstop_calls[1].job_id == 88, "Should stop the invalid runner's job")
 
 	print("✓ clean_invalid passed")
 end
@@ -183,6 +192,21 @@ local function test_close_all_with_job_stop()
 	print("✓ close_all(with job stop) passed")
 end
 
+local function test_close_all_hide_keeps_active_job_discoverable()
+	reset_state()
+	local runner = registry.track(10, 20)
+	runner.job_id = 42
+
+	registry.close_all(false)
+	assert(#jobstop_calls == 0, "Hide mode should not stop the active job")
+
+	registry.close_all(true)
+	assert(#jobstop_calls == 1, "StopCode should still find a hidden active job")
+	assert(jobstop_calls[1].job_id == 42, "StopCode should stop the hidden job")
+
+	print("✓ close_all(hide active job) passed")
+end
+
 -- Run all tests
 test_track_single()
 test_track_max_runners()
@@ -192,5 +216,6 @@ test_close_by_win_id_with_job_stop()
 test_clean_invalid()
 test_close_all()
 test_close_all_with_job_stop()
+test_close_all_hide_keeps_active_job_discoverable()
 
 print("All registry tests passed!")

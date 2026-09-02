@@ -12,18 +12,38 @@ local runners = {}
 ---@type integer
 local MAX_RUNNERS = 50
 
+---@param runner ZigniteUiRunner
+---@return nil
+local function stop_runner_job(runner)
+	if type(vim.fn.jobstop) ~= "function" then
+		return
+	end
+	local job_id = runner.job_id
+	if type(job_id) == "number" and job_id > 0 then
+		pcall(vim.fn.jobstop, job_id)
+		runner.job_id = nil
+	end
+end
+
+---@param runner ZigniteUiRunner
+---@return nil
+local function close_runner_ui(runner)
+	if vim.api.nvim_win_is_valid(runner.win_id) then
+		pcall(vim.api.nvim_win_close, runner.win_id, true)
+	end
+	if vim.api.nvim_buf_is_valid(runner.buf_id) then
+		pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
+	end
+end
+
 ---@param win_id integer
 ---@param buf_id integer
 ---@return ZigniteUiRunner
 function M.track(win_id, buf_id)
 	if #runners >= MAX_RUNNERS then
 		local oldest = table.remove(runners, 1)
-		if vim.api.nvim_win_is_valid(oldest.win_id) then
-			pcall(vim.api.nvim_win_close, oldest.win_id, true)
-		end
-		if vim.api.nvim_buf_is_valid(oldest.buf_id) then
-			pcall(vim.api.nvim_buf_delete, oldest.buf_id, { force = true })
-		end
+		stop_runner_job(oldest)
+		close_runner_ui(oldest)
 	end
 	---@type ZigniteUiRunner
 	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil }
@@ -46,21 +66,16 @@ local function close_at_index(index, stop_job)
 		return
 	end
 
-	if stop_job and type(vim.fn.jobstop) == "function" then
-		local job_id = runner.job_id
-		if type(job_id) == "number" and job_id > 0 then
-			pcall(vim.fn.jobstop, job_id)
-		end
+	if stop_job then
+		stop_runner_job(runner)
 	end
 
-	if vim.api.nvim_win_is_valid(runner.win_id) then
-		pcall(vim.api.nvim_win_close, runner.win_id, true)
-	end
-	if vim.api.nvim_buf_is_valid(runner.buf_id) then
-		pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
-	end
+	close_runner_ui(runner)
 
-	remove_runner(index)
+	-- Keep active hidden jobs discoverable by :StopCode.
+	if stop_job or type(runner.job_id) ~= "number" or runner.job_id <= 0 then
+		remove_runner(index)
+	end
 end
 
 ---@param win_id integer
@@ -83,8 +98,11 @@ function M.clean_invalid()
 	for _, runner in ipairs(runners) do
 		if vim.api.nvim_win_is_valid(runner.win_id) then
 			table.insert(valid, runner)
-		elseif vim.api.nvim_buf_is_valid(runner.buf_id) then
-			pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
+		else
+			stop_runner_job(runner)
+			if vim.api.nvim_buf_is_valid(runner.buf_id) then
+				pcall(vim.api.nvim_buf_delete, runner.buf_id, { force = true })
+			end
 		end
 	end
 	runners = valid
@@ -96,7 +114,9 @@ function M.close_all(stop_jobs)
 	for idx = #runners, 1, -1 do
 		close_at_index(idx, stop_jobs)
 	end
-	runners = {}
+	if stop_jobs then
+		runners = {}
+	end
 end
 
 return M
