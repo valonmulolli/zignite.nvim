@@ -20,6 +20,7 @@ const DAEMON_RES_BEGIN = "@@ZQF_RES_BEGIN";
 const DAEMON_RES_ERR = "@@ZQF_RES_ERR";
 const DAEMON_RES_END = "@@ZQF_RES_END";
 const DAEMON_MAX_LINE = 1 * 1024 * 1024;
+const QUICKFIX_MAX_INPUT_BYTES = 16 * 1024 * 1024;
 
 pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void {
     const input = try readStdinAll(allocator, io);
@@ -76,14 +77,26 @@ pub fn handleDaemonFrame(
     defer payload = payload_writer.toArrayList();
     const WritePayloadLine = struct {
         payload_writer: *std.Io.Writer.Allocating,
+        total_bytes: *usize,
 
         fn onLine(self: @This(), line: []const u8) !void {
             const content = if (line.len > 0 and line[0] == '\t') line[1..] else line;
+            const line_bytes = std.math.add(usize, content.len, 1) catch return error.StreamTooLong;
+            if (self.total_bytes.* > QUICKFIX_MAX_INPUT_BYTES or
+                line_bytes > QUICKFIX_MAX_INPUT_BYTES - self.total_bytes.*)
+            {
+                return error.StreamTooLong;
+            }
             try self.payload_writer.writer.writeAll(content);
             try self.payload_writer.writer.writeByte('\n');
+            self.total_bytes.* += line_bytes;
         }
     };
-    const write_payload_line = WritePayloadLine{ .payload_writer = &payload_writer };
+    var total_payload_bytes: usize = 0;
+    const write_payload_line = WritePayloadLine{
+        .payload_writer = &payload_writer,
+        .total_bytes = &total_payload_bytes,
+    };
     var response_err: ?anyerror = null;
     const completed = blk: {
         const result = frame.readUntilEnd(
@@ -224,7 +237,7 @@ fn readStdinAll(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
     stdin_ctx.init(io);
     var input: std.ArrayList(u8) = .empty;
     errdefer input.deinit(allocator);
-    try stdin_ctx.io().appendRemainingUnlimited(allocator, &input);
+    try stdin_ctx.io().appendRemaining(allocator, &input, .limited(QUICKFIX_MAX_INPUT_BYTES + 1));
     return try input.toOwnedSlice(allocator);
 }
 test "quickfix max_bytes keeps newest lines" {
