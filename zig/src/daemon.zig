@@ -262,6 +262,28 @@ test "runWithIO writes run_resolve error frame for malformed header with request
     try std.testing.expect(std.mem.find(u8, out.written(), "@@ZRUN_RES_BEGIN 8\n@@ZRUN_RES_ERR 8") != null);
 }
 
+test "runWithIO drains invalid run_resolve payload before the next request" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZRUN_REQ_BEGIN 8",
+        "@@ZRUN_REQ_PAYLOAD_END 8",
+        "@@ZHLT_REQ_BEGIN 99",
+        "@@ZHLT_REQ_END 99",
+        "@@ZRUN_REQ_END 8",
+        "@@ZHLT_REQ_BEGIN 7",
+        "@@ZHLT_REQ_END 7",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expectEqualStrings(
+        "@@ZRUN_RES_BEGIN 8\n@@ZRUN_RES_ERR 8 InvalidRunResolvePayload\n@@ZRUN_RES_END 8\n@@ZHLT_RES_BEGIN 7\n@@ZHLT_RES_END 7\n",
+        out.written(),
+    );
+}
+
 test "runWithIO health endpoint responds to ping" {
     const allocator = std.testing.allocator;
     var reader = TestReader{ .lines = &.{

@@ -196,12 +196,18 @@ fn collectRunResolveRequest(
             break;
         }
         if (frame.isFrameEndLine(line, RUN_RESOLVE_REQ_PAYLOAD_BEGIN, request_id)) {
-            if (payload_started or payload_completed) return error.InvalidRunResolvePayload;
+            if (payload_started or payload_completed) {
+                _ = frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, RUN_RESOLVE_REQ_END, request_id) catch {};
+                return error.InvalidRunResolvePayload;
+            }
             payload_started = true;
             continue;
         }
         if (frame.isFrameEndLine(line, RUN_RESOLVE_REQ_PAYLOAD_END, request_id)) {
-            if (!payload_started or payload_completed) return error.InvalidRunResolvePayload;
+            if (!payload_started or payload_completed) {
+                _ = frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, RUN_RESOLVE_REQ_END, request_id) catch {};
+                return error.InvalidRunResolvePayload;
+            }
             payload_completed = true;
             continue;
         }

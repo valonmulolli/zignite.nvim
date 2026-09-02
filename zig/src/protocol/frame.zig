@@ -9,29 +9,65 @@ fn readerSupportsMethod(comptime T: type, comptime name: []const u8) bool {
     };
 }
 
+fn discardOversizedLine(reader: anytype) void {
+    if (comptime readerSupportsMethod(@TypeOf(reader), "discardDelimiterInclusive")) {
+        _ = reader.discardDelimiterInclusive('\n') catch {};
+    }
+}
+
+fn consumeLineDelimiter(reader: anytype) !void {
+    if (comptime readerSupportsMethod(@TypeOf(reader), "takeDelimiter")) {
+        _ = try reader.takeDelimiter('\n');
+        return;
+    }
+    if (comptime readerSupportsMethod(@TypeOf(reader), "discardDelimiterInclusive")) {
+        _ = reader.discardDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => return,
+            else => |e| return e,
+        };
+        return;
+    }
+    @compileError("streamDelimiterLimit reader must support takeDelimiter or discardDelimiterInclusive");
+}
+
 pub fn readLineAlloc(
     allocator: std.mem.Allocator,
     reader: anytype,
     max_line: usize,
 ) !?[]u8 {
     if (comptime readerSupportsMethod(@TypeOf(reader), "streamDelimiterLimit")) {
+        _ = reader.peekGreedy(1) catch |err| switch (err) {
+            error.EndOfStream => return null,
+            else => |e| return e,
+        };
+
         var line: std.Io.Writer.Allocating = .init(allocator);
         errdefer line.deinit();
 
         const limit = std.math.add(usize, max_line, 1) catch return error.StreamTooLong;
-        _ = try reader.streamDelimiterLimit(&line.writer, '\n', .limited(limit));
+        _ = reader.streamDelimiterLimit(&line.writer, '\n', .limited(limit)) catch |err| {
+            if (err == error.StreamTooLong) discardOversizedLine(reader);
+            return err;
+        };
+        try consumeLineDelimiter(reader);
         if (line.written().len > max_line) return error.StreamTooLong;
         return try line.toOwnedSlice();
     }
     if (comptime readerSupportsMethod(@TypeOf(reader), "takeDelimiter")) {
-        const maybe_line = try reader.takeDelimiter('\n');
+        const maybe_line = reader.takeDelimiter('\n') catch |err| {
+            if (err == error.StreamTooLong) discardOversizedLine(reader);
+            return err;
+        };
         if (maybe_line == null) return null;
         const line = maybe_line.?;
         if (line.len > max_line) return error.StreamTooLong;
         return try allocator.dupe(u8, line);
     }
     if (comptime readerSupportsMethod(@TypeOf(reader), "readUntilDelimiterOrEofAlloc")) {
-        return try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', max_line);
+        return reader.readUntilDelimiterOrEofAlloc(allocator, '\n', max_line) catch |err| {
+            if (err == error.StreamTooLong) discardOversizedLine(reader);
+            return err;
+        };
     }
     @compileError("reader must support takeDelimiter or readUntilDelimiterOrEofAlloc");
 }
@@ -186,14 +222,23 @@ pub fn readUntilEnd(
     on_line: anytype,
 ) !bool {
     while (true) {
-        const maybe_line = try readLineAlloc(allocator, reader, max_line);
+        const maybe_line = readLineAlloc(allocator, reader, max_line) catch |err| {
+            _ = skipUntilEnd(allocator, reader, max_line, end_marker, request_id) catch {};
+            return err;
+        };
         if (maybe_line == null) return false;
         const line_owned = maybe_line.?;
         defer allocator.free(line_owned);
         const line = stripTrailingCR(line_owned);
 
         if (isFrameEndLine(line, end_marker, request_id)) return true;
-        try on_line(context, line);
+        on_line(context, line) catch |err| {
+            // Keep the stream aligned when a body line is rejected after it
+            // has already been read. The caller can then emit an error frame
+            // without exposing the rejected request's tail as new headers.
+            _ = skipUntilEnd(allocator, reader, max_line, end_marker, request_id) catch {};
+            return err;
+        };
     }
 }
 
@@ -274,10 +319,18 @@ pub fn skipUntilEnd(
     end_marker: []const u8,
     request_id: u64,
 ) !bool {
-    const Skip = struct {
-        fn onLine(_: void, _: []const u8) !void {}
-    };
-    return readUntilEnd(allocator, reader, max_line, end_marker, request_id, {}, Skip.onLine);
+    while (true) {
+        const maybe_line = readLineAlloc(allocator, reader, max_line) catch |err| {
+            if (err == error.StreamTooLong and comptime readerSupportsMethod(@TypeOf(reader), "discardDelimiterInclusive")) {
+                continue;
+            }
+            return err;
+        };
+        if (maybe_line == null) return false;
+        const line_owned = maybe_line.?;
+        defer allocator.free(line_owned);
+        if (isFrameEndLine(stripTrailingCR(line_owned), end_marker, request_id)) return true;
+    }
 }
 
 /// Discards a frame body after a header error so its lines cannot be parsed as
@@ -483,6 +536,61 @@ test "readUntilEnd propagates oversized line errors" {
         error.StreamTooLong,
         readUntilEnd(allocator, &reader, 3, "@@ZPRJ_REQ_END", 1, {}, Noop.onLine),
     );
+}
+
+test "readUntilEnd drains the body after a callback error" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "accepted",
+        "rejected",
+        "@@ZPRJ_REQ_END 7",
+        "next-request",
+    } };
+    const Reject = struct {
+        fn onLine(_: void, line: []const u8) !void {
+            if (std.mem.eql(u8, line, "rejected")) return error.TestRejected;
+        }
+    };
+
+    try std.testing.expectError(
+        error.TestRejected,
+        readUntilEnd(
+            allocator,
+            &reader,
+            64,
+            "@@ZPRJ_REQ_END",
+            7,
+            {},
+            Reject.onLine,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 3), reader.index);
+}
+
+test "readUntilEnd drains an oversized line before the frame end" {
+    var input = "123456789012345678901234567890123456\n@@ZPRJ_REQ_END 7\nnext\n".*;
+    var reader = std.Io.Reader.fixed(&input);
+    const Noop = struct {
+        fn onLine(_: void, _: []const u8) !void {}
+    };
+
+    try std.testing.expectError(
+        error.StreamTooLong,
+        readUntilEnd(
+            std.testing.allocator,
+            &reader,
+            32,
+            "@@ZPRJ_REQ_END",
+            7,
+            {},
+            Noop.onLine,
+        ),
+    );
+
+    const next = try readLineAlloc(std.testing.allocator, &reader, 64);
+    defer std.testing.allocator.free(next.?);
+    try std.testing.expectEqualStrings("next", next.?);
+    try std.testing.expect((try readLineAlloc(std.testing.allocator, &reader, 64)) == null);
 }
 
 test "readLineAlloc accepts lines larger than the reader buffer" {
