@@ -316,9 +316,9 @@ fn findReplyIndexAllocWithIO(io: std.Io, allocator: std.mem.Allocator, reply_dir
     };
     defer dir.close(io);
 
-    var best_name: ?[]const u8 = null;
+    var best_name: ?[]u8 = null;
+    defer if (best_name) |name| allocator.free(name);
     var best_index: ?u64 = null;
-    var best_lex: []const u8 = "";
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
@@ -327,14 +327,16 @@ fn findReplyIndexAllocWithIO(io: std.Io, allocator: std.mem.Allocator, reply_dir
         const suffix = entry.name["index-".len .. entry.name.len - ".json".len];
         if (std.fmt.parseInt(u64, suffix, 10)) |parsed| {
             if (best_index == null or parsed > best_index.?) {
-                best_name = entry.name;
+                const owned_name = try allocator.dupe(u8, entry.name);
+                if (best_name) |previous| allocator.free(previous);
+                best_name = owned_name;
                 best_index = parsed;
-                best_lex = entry.name;
             }
         } else |_| {
-            if (best_index == null and std.mem.order(u8, entry.name, best_lex) == .gt) {
-                best_name = entry.name;
-                best_lex = entry.name;
+            if (best_index == null and (best_name == null or std.mem.order(u8, entry.name, best_name.?) == .gt)) {
+                const owned_name = try allocator.dupe(u8, entry.name);
+                if (best_name) |previous| allocator.free(previous);
+                best_name = owned_name;
             }
         }
     }
@@ -373,4 +375,27 @@ test "renderRunPathAlloc preserves artifacts outside a shared-prefix root" {
     defer allocator.free(rendered);
 
     try std.testing.expectEqualStrings("/project-old/bin/app", rendered);
+}
+
+test "findReplyIndexAllocWithIO owns the selected iterator entry name" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, ".cmake/api/v1/reply");
+    for (0..12) |index| {
+        const filename = try std.fmt.allocPrint(allocator, ".cmake/api/v1/reply/index-{d}.json", .{index});
+        defer allocator.free(filename);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = filename, .data = "{}" });
+    }
+
+    const index_path = try tmp.dir.realPathFileAlloc(std.testing.io, ".cmake/api/v1/reply/index-11.json", allocator);
+    defer allocator.free(index_path);
+    const reply_dir = std.fs.path.dirname(index_path).?;
+
+    const selected = try findReplyIndexAllocWithIO(std.testing.io, allocator, reply_dir);
+    defer if (selected) |path| allocator.free(path);
+
+    try std.testing.expect(selected != null);
+    try std.testing.expectEqualStrings(index_path, selected.?);
 }
