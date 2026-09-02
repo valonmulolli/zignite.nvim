@@ -148,12 +148,14 @@ pub fn mergeResolvedOutput(
     overlay: types.ResolvedOutput,
 ) !void {
     if (overlay.root) |root| {
+        const owned_root = try allocator.dupe(u8, root);
         if (base.root) |existing| allocator.free(existing);
-        base.root = try allocator.dupe(u8, root);
+        base.root = owned_root;
     }
     if (overlay.system) |system| {
+        const owned_system = try allocator.dupe(u8, system);
         if (base.system) |existing| allocator.free(existing);
-        base.system = try allocator.dupe(u8, system);
+        base.system = owned_system;
     }
     if (overlay.build_ready != null) {
         base.build_ready = overlay.build_ready;
