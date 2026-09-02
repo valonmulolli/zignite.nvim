@@ -16,7 +16,9 @@ pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
         try make.parseTargets(allocator, contents, &names);
     }
     for (names.items) |name| {
-        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ name, name });
+        const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, name);
+        defer allocator.free(quoted_name);
+        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ name, quoted_name });
     }
     for (task_alias.canonical_aliases) |alias| {
         if (task_alias.containsName(names.items, alias)) continue;
@@ -25,7 +27,9 @@ pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
             try stdout.print("COMMAND\tbuild\tmake\n", .{});
             continue;
         }
-        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ alias, source_name });
+        const quoted_source_name = try common.quoteShellArgIfNeededAlloc(allocator, source_name);
+        defer allocator.free(quoted_source_name);
+        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ alias, quoted_source_name });
     }
 
     if (!task_alias.containsName(names.items, "build") and task_alias.findSourceName(names.items, "build") == null) {
