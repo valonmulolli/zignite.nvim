@@ -126,6 +126,7 @@ fn writeResolvedOutput(
     const live_names = [_][]const u8{"live"};
     const live_name = detected.findPreferredCommandName(parsed_output.preferred.items, parsed_output.commands.items, &live_names);
     const last_command_name = try action_state.getLastCommand(io, allocator, environ_map, resolved_filetype);
+    defer if (last_command_name) |name| allocator.free(name);
     try serialize.writeResolvedOutputJson(
         stdout,
         allocator,

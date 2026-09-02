@@ -15,16 +15,13 @@ pub fn getLastCommand(
     allocator: std.mem.Allocator,
     environ_map: ?*const std.process.Environ.Map,
     filetype: []const u8,
-) !?[]const u8 {
+) !?[]u8 {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
-        std.log.warn("Failed to load build action state: {}", .{err});
-        return null;
-    };
+    try ensureLoadedLocked(io, allocator, environ_map);
 
     for (last_commands.items) |entry| {
-        if (std.mem.eql(u8, entry.filetype, filetype)) return entry.command_name;
+        if (std.mem.eql(u8, entry.filetype, filetype)) return try allocator.dupe(u8, entry.command_name);
     }
     return null;
 }
@@ -38,19 +35,14 @@ pub fn setLastCommand(
 ) !void {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
-        std.log.warn("Failed to load build action state for write: {}", .{err});
-        return;
-    };
+    try ensureLoadedLocked(io, allocator, environ_map);
 
     for (last_commands.items) |*entry| {
         if (!std.mem.eql(u8, entry.filetype, filetype)) continue;
         const owned_command_name = try state_allocator.dupe(u8, command_name);
         state_allocator.free(entry.command_name);
         entry.command_name = owned_command_name;
-        persistLocked(io, allocator, environ_map) catch |err| {
-            std.log.warn("Failed to persist build action state: {}", .{err});
-        };
+        try persistLocked(io, allocator, environ_map);
         return;
     }
 
@@ -62,9 +54,7 @@ pub fn setLastCommand(
         .filetype = owned_filetype,
         .command_name = owned_command_name,
     });
-    persistLocked(io, allocator, environ_map) catch |err| {
-        std.log.warn("Failed to persist build action state: {}", .{err});
-    };
+    try persistLocked(io, allocator, environ_map);
 }
 
 pub fn clearLastCommand(
@@ -72,13 +62,10 @@ pub fn clearLastCommand(
     allocator: std.mem.Allocator,
     environ_map: ?*const std.process.Environ.Map,
     filetype: []const u8,
-) void {
+) !void {
     state_mutex.lockUncancelable(io);
     defer state_mutex.unlock(io);
-    ensureLoadedLocked(io, allocator, environ_map) catch |err| {
-        std.log.warn("Failed to load build action state for clear: {}", .{err});
-        return;
-    };
+    try ensureLoadedLocked(io, allocator, environ_map);
 
     var index: usize = 0;
     while (index < last_commands.items.len) : (index += 1) {
@@ -88,9 +75,7 @@ pub fn clearLastCommand(
         state_allocator.free(entry.filetype);
         state_allocator.free(entry.command_name);
         _ = last_commands.swapRemove(index);
-        persistLocked(io, allocator, environ_map) catch |err| {
-            std.log.warn("Failed to persist cleared build action state: {}", .{err});
-        };
+        try persistLocked(io, allocator, environ_map);
         return;
     }
 }
@@ -119,7 +104,14 @@ fn ensureLoadedLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*c
     };
     defer allocator.free(contents);
 
-    loaded_from_disk = true;
+    const initial_len = last_commands.items.len;
+    errdefer {
+        while (last_commands.items.len > initial_len) {
+            const entry = last_commands.pop().?;
+            state_allocator.free(entry.filetype);
+            state_allocator.free(entry.command_name);
+        }
+    }
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |line| {
@@ -139,6 +131,7 @@ fn ensureLoadedLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*c
             .command_name = owned_command_name,
         });
     }
+    loaded_from_disk = true;
 }
 
 fn persistLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*const std.process.Environ.Map) !void {
@@ -218,12 +211,16 @@ test "build action state stores and clears last command by filetype" {
     defer resetForTests();
 
     try setLastCommand(std.testing.io, allocator, null, "zig", "build");
-    try std.testing.expectEqualStrings("build", (try getLastCommand(std.testing.io, allocator, null, "zig")).?);
+    const build_command = (try getLastCommand(std.testing.io, allocator, null, "zig")).?;
+    defer allocator.free(build_command);
+    try std.testing.expectEqualStrings("build", build_command);
 
     try setLastCommand(std.testing.io, allocator, null, "zig", "run");
-    try std.testing.expectEqualStrings("run", (try getLastCommand(std.testing.io, allocator, null, "zig")).?);
+    const run_command = (try getLastCommand(std.testing.io, allocator, null, "zig")).?;
+    defer allocator.free(run_command);
+    try std.testing.expectEqualStrings("run", run_command);
 
-    clearLastCommand(std.testing.io, allocator, null, "zig");
+    try clearLastCommand(std.testing.io, allocator, null, "zig");
     try std.testing.expect((try getLastCommand(std.testing.io, allocator, null, "zig")) == null);
 }
 
@@ -236,5 +233,7 @@ test "build action state persists across reload" {
     clearEntriesLocked();
     loaded_from_disk = false;
 
-    try std.testing.expectEqualStrings("test", (try getLastCommand(std.testing.io, allocator, null, "python")).?);
+    const command = (try getLastCommand(std.testing.io, allocator, null, "python")).?;
+    defer allocator.free(command);
+    try std.testing.expectEqualStrings("test", command);
 }
