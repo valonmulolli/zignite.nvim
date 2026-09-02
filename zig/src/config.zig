@@ -66,6 +66,7 @@ pub fn handleDaemonFrame(
 ) !void {
     const header = parseConfigDaemonBegin(begin_line) catch |err| {
         if (frame.parseRequestId(begin_line, CONFIG_DAEMON_REQ_BEGIN)) |request_id| {
+            _ = try frame.discardUntilEnd(allocator, reader, CONFIG_DAEMON_MAX_LINE, CONFIG_DAEMON_REQ_END, request_id);
             try frame.writeErrorResponse(
                 stdout,
                 CONFIG_DAEMON_RES_BEGIN,

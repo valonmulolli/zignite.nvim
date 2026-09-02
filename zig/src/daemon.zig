@@ -213,6 +213,27 @@ test "runWithIO writes build_resolve error frame for malformed header with reque
     try std.testing.expect(std.mem.find(u8, out.written(), "@@ZBR_RES_BEGIN 5\n@@ZBR_RES_ERR 5 MissingBuildResolvePath\n@@ZBR_RES_END 5\n") != null);
 }
 
+test "runWithIO drains malformed frame before dispatching the next request" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZBR_REQ_BEGIN 5 unexpected-field",
+        "@@ZHLT_REQ_BEGIN 99",
+        "@@ZHLT_REQ_END 99",
+        "@@ZBR_REQ_END 5",
+        "@@ZHLT_REQ_BEGIN 7",
+        "@@ZHLT_REQ_END 7",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expectEqualStrings(
+        "@@ZBR_RES_BEGIN 5\n@@ZBR_RES_ERR 5 InvalidBuildResolveDaemonHeader\n@@ZBR_RES_END 5\n@@ZHLT_RES_BEGIN 7\n@@ZHLT_RES_END 7\n",
+        out.written(),
+    );
+}
+
 test "runWithIO writes build_action error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{ .lines = &.{
