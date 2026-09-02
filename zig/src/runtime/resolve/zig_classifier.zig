@@ -30,8 +30,16 @@ pub fn findBuildRootAllocWithIO(
     max_up: usize,
 ) !?[]u8 {
     if (project_root) |root| {
+        if (root.len > 0 and !try project_common.isPathWithinRootAlloc(allocator, root, path)) return null;
         if (root.len > 0 and try pathHasFileWithIO(io, allocator, root, "build.zig")) {
             return @as(?[]u8, try allocator.dupe(u8, root));
+        }
+        if (root.len > 0) {
+            const normalized_root = try project_common.normalizePathAlloc(allocator, root);
+            defer allocator.free(normalized_root);
+            const normalized_path = try project_common.normalizePathAlloc(allocator, path);
+            defer allocator.free(normalized_path);
+            return pathing.walkUpwardsAllocWithIO(io, allocator, normalized_path, max_up, normalized_root, {}, hasBuildZig);
         }
     }
     return pathing.walkUpwardsAllocWithIO(io, allocator, path, max_up, null, {}, hasBuildZig);
@@ -41,8 +49,8 @@ fn pathHasFileWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8,
     const full_path = try std.fs.path.join(allocator, &.{ root, name });
     defer allocator.free(full_path);
 
-    std.Io.Dir.cwd().access(io, full_path, .{}) catch return false;
-    return true;
+    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
+    return stat.kind == .file;
 }
 
 pub fn sourceRequiresProjectModules(contents: []const u8) bool {
@@ -224,4 +232,45 @@ test "findBuildRootAlloc walks parents from relative path" {
 
     try std.testing.expect(root != null);
     try std.testing.expectEqualStrings(repo_relative, root.?);
+}
+
+test "findBuildRootAlloc ignores directory named build.zig" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "repo/src");
+    try tmp.dir.createDirPath(std.testing.io, "repo/build.zig");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "repo/src/main.zig", .data = "pub fn main() void {}\n" });
+
+    const project_root = try tmp.dir.realPathFileAlloc(std.testing.io, "repo", allocator);
+    defer allocator.free(project_root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "repo/src/main.zig", allocator);
+    defer allocator.free(filepath);
+
+    const root = try findBuildRootAllocWithIO(std.testing.io, allocator, filepath, project_root, 12);
+    defer if (root) |value| allocator.free(value);
+
+    try std.testing.expect(root == null);
+}
+
+test "findBuildRootAlloc rejects paths outside explicit project root" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "repo");
+    try tmp.dir.createDirPath(std.testing.io, "outside");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "outside/build.zig", .data = "pub fn build(b: *std.Build) void { _ = b; }\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "outside/main.zig", .data = "pub fn main() void {}\n" });
+
+    const project_root = try tmp.dir.realPathFileAlloc(std.testing.io, "repo", allocator);
+    defer allocator.free(project_root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "outside/main.zig", allocator);
+    defer allocator.free(filepath);
+
+    const root = try findBuildRootAllocWithIO(std.testing.io, allocator, filepath, project_root, 12);
+    defer if (root) |value| allocator.free(value);
+
+    try std.testing.expect(root == null);
 }
