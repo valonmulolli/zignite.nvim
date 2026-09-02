@@ -1,5 +1,6 @@
 const std = @import("std");
 const pathing = @import("../../pathing.zig");
+const project_common = @import("../../project/core/common.zig");
 const types = @import("types.zig");
 
 pub fn freeOwnedCommands(allocator: std.mem.Allocator, commands: []const types.CommandEntry) void {
@@ -84,8 +85,8 @@ pub fn pathHasFileWithIO(io: std.Io, root: []const u8, name: []const u8) bool {
     const full_path = std.fs.path.join(std.heap.page_allocator, &.{ root, name }) catch return false;
     defer std.heap.page_allocator.free(full_path);
 
-    std.Io.Dir.cwd().access(io, full_path, .{}) catch return false;
-    return true;
+    const stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch return false;
+    return stat.kind == .file;
 }
 
 pub fn pathHasAnyMarkerWithIO(io: std.Io, root: []const u8, markers: []const []const u8) bool {
@@ -169,6 +170,7 @@ pub fn detectWithMarkersWithIO(
     build_fn: anytype,
 ) !types.Result {
     if (project_root) |root| {
+        if (root.len > 0 and !try project_common.isPathWithinRootAlloc(allocator, root, path)) return .{};
         if (root.len > 0 and pathHasAnyMarkerWithIO(io, root, markers)) {
             return try build_fn(allocator, root);
         }
@@ -198,6 +200,7 @@ pub fn detectWithMarkersAndBuildWithIO(
     build_fn: anytype,
 ) !types.Result {
     if (project_root) |root| {
+        if (root.len > 0 and !try project_common.isPathWithinRootAlloc(allocator, root, path)) return .{};
         if (root.len > 0 and pathHasAnyMarkerWithIO(io, root, markers)) {
             return try build_fn(io, allocator, root);
         }
@@ -250,6 +253,15 @@ pub fn findRootForFilesWithinAllocWithIO(
     boundary: ?[]const u8,
     max_up: usize,
 ) !?[]u8 {
+    if (boundary) |root| {
+        if (!try project_common.isPathWithinRootAlloc(allocator, root, start_path)) return null;
+
+        const normalized_root = try project_common.normalizePathAlloc(allocator, root);
+        defer allocator.free(normalized_root);
+        const normalized_start_path = try project_common.normalizePathAlloc(allocator, start_path);
+        defer allocator.free(normalized_start_path);
+        return pathing.walkUpwardsAllocWithIO(io, allocator, normalized_start_path, max_up, normalized_root, markers, hasMarker);
+    }
     return pathing.walkUpwardsAllocWithIO(io, allocator, start_path, max_up, boundary, markers, hasMarker);
 }
 
@@ -326,6 +338,19 @@ test "findRootForFilesAlloc walks parents from relative path" {
 
     try std.testing.expect(root != null);
     try std.testing.expectEqualStrings(repo_relative, root.?);
+}
+
+test "pathHasFileWithIO rejects directory markers" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "build.zig");
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    try std.testing.expect(!pathHasFileWithIO(std.testing.io, root, "build.zig"));
 }
 
 fn testBuildNodeResult(allocator: std.mem.Allocator, root: []const u8) !types.Result {

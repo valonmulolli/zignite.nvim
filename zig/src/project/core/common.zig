@@ -122,6 +122,14 @@ pub fn isPathWithinRoot(root: []const u8, filepath: []const u8) bool {
     return root[root.len - 1] == '/' or filepath.len == root.len or filepath[root.len] == '/';
 }
 
+pub fn isPathWithinRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) !bool {
+    const normalized_root = try normalizePathAlloc(allocator, root);
+    defer allocator.free(normalized_root);
+    const normalized_filepath = try normalizePathAlloc(allocator, filepath);
+    defer allocator.free(normalized_filepath);
+    return isPathWithinRoot(normalized_root, normalized_filepath);
+}
+
 pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) ![]u8 {
     if (isPathWithinRoot(root, filepath)) {
         var start = root.len;
