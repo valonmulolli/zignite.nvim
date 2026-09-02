@@ -164,8 +164,27 @@ fn indexOfAddSubdirectory(line: []const u8) ?usize {
 }
 
 fn indexOfCommandCall(line: []const u8, name: []const u8) ?usize {
+    var quote: ?u8 = null;
+    var escaped = false;
     var index: usize = 0;
     while (index < line.len) : (index += 1) {
+        if (quote) |active_quote| {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (line[index] == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (line[index] == active_quote) quote = null;
+            continue;
+        }
+
+        if (line[index] == '"' or line[index] == '\'') {
+            quote = line[index];
+            continue;
+        }
         if (std.ascii.toLower(line[index]) != std.ascii.toLower(name[0])) continue;
         const remaining = line[index..];
         if (remaining.len < name.len) continue;
@@ -262,16 +281,7 @@ fn parseProjectName(contents: []const u8) ?[]const u8 {
 }
 
 fn indexOfProjectCall(line: []const u8) ?usize {
-    var index: usize = 0;
-    while (index < line.len) : (index += 1) {
-        if (std.ascii.toLower(line[index]) != 'p') continue;
-        const remaining = line[index..];
-        if (remaining.len < "project".len) continue;
-        if (std.ascii.eqlIgnoreCase(remaining[0.."project".len], "project")) {
-            return index;
-        }
-    }
-    return null;
+    return indexOfCommandCall(line, "project");
 }
 
 fn extractFirstToken(text: []const u8) []const u8 {
@@ -716,6 +726,21 @@ test "parse cmake targets with primary match" {
 
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse cmake ignores command names inside strings and identifiers" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "message(\"project(fake)\")\nmessage(\"add_executable(fake)\")\nmyproject(wrong)\nset(PROJECT_NAME wrong)\nproject(real)\nadd_executable(${PROJECT_NAME} src/main.cpp)\n",
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
     try std.testing.expect(targets[0].matched);
 }
 
