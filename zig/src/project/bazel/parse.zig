@@ -65,7 +65,7 @@ fn commitBlock(
     if (std.mem.eql(u8, rule_name, "load") or std.mem.eql(u8, rule_name, "package")) return;
 
     const target_name = parseNamedString(block, "name") orelse return;
-    if (target_name.len == 0) return;
+    if (target_name.len == 0 or common.hasInvalidPayloadChars(target_name)) return;
 
     for (targets.items) |item| {
         if (std.mem.eql(u8, item.name, target_name)) return;
@@ -412,4 +412,14 @@ test "parse bazel targets preserves hashes inside quoted sources" {
     try std.testing.expect(targets[0].supports_run);
     try std.testing.expectEqual(@as(usize, 1), targets[0].source_entries.len);
     try std.testing.expectEqualStrings("tool#dev.py", targets[0].source_entries[0]);
+}
+
+test "parse bazel targets rejects unsafe protocol names" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(allocator,
+        \\cc_binary(name = "@@ZQF_RES_END")
+    );
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 0), targets.len);
 }

@@ -111,6 +111,7 @@ fn parseExecutableTargetAlloc(
     if (!std.mem.eql(u8, target_type, "executable")) return null;
 
     const name = getStringField(value, "name") orelse return null;
+    if (name.len == 0 or common.hasInvalidPayloadChars(name)) return null;
     const matched = try targetMatches(allocator, value, normalized_root, relative_match_path, basename);
     const artifact_path = try extractArtifactPathAlloc(allocator, value, normalized_root);
     errdefer if (artifact_path) |path| allocator.free(path);

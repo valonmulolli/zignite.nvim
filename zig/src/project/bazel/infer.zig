@@ -46,11 +46,13 @@ pub fn buildCommandInfo(
     for (items) |item| {
         const label = try bazelLabelAlloc(allocator, package_path, item.name);
         defer allocator.free(label);
+        const shell_label = try common.quoteShellArgIfNeededAlloc(allocator, label);
+        defer allocator.free(shell_label);
         const command_suffix = try commandSuffixAlloc(allocator, package_path, item.name);
         defer allocator.free(command_suffix);
 
         const build_name = try std.fmt.allocPrint(allocator, "bazel-build-{s}", .{command_suffix});
-        const build_command = std.fmt.allocPrint(allocator, "bazel build {s}", .{label}) catch |err| {
+        const build_command = std.fmt.allocPrint(allocator, "bazel build {s}", .{shell_label}) catch |err| {
             allocator.free(build_name);
             return err;
         };
@@ -58,7 +60,7 @@ pub fn buildCommandInfo(
 
         if (item.supports_run) {
             const run_name = try std.fmt.allocPrint(allocator, "bazel-run-{s}", .{command_suffix});
-            const run_command = std.fmt.allocPrint(allocator, "bazel run {s}", .{label}) catch |err| {
+            const run_command = std.fmt.allocPrint(allocator, "bazel run {s}", .{shell_label}) catch |err| {
                 allocator.free(run_name);
                 return err;
             };
@@ -67,7 +69,7 @@ pub fn buildCommandInfo(
 
         if (item.supports_test) {
             const test_name = try std.fmt.allocPrint(allocator, "bazel-test-{s}", .{command_suffix});
-            const test_command = std.fmt.allocPrint(allocator, "bazel test {s}", .{label}) catch |err| {
+            const test_command = std.fmt.allocPrint(allocator, "bazel test {s}", .{shell_label}) catch |err| {
                 allocator.free(test_name);
                 return err;
             };
@@ -80,18 +82,18 @@ pub fn buildCommandInfo(
             false;
 
         if (matched and primary_build == null) {
-            primary_build = try std.fmt.allocPrint(allocator, "bazel build {s}", .{label});
+            primary_build = try std.fmt.allocPrint(allocator, "bazel build {s}", .{shell_label});
         }
         if (matched and item.supports_run and primary_run == null) {
-            primary_run = try std.fmt.allocPrint(allocator, "bazel run {s}", .{label});
+            primary_run = try std.fmt.allocPrint(allocator, "bazel run {s}", .{shell_label});
         }
         if (matched and item.supports_test and primary_test == null) {
-            primary_test = try std.fmt.allocPrint(allocator, "bazel test {s}", .{label});
+            primary_test = try std.fmt.allocPrint(allocator, "bazel test {s}", .{shell_label});
         }
 
         if (primary_test == null and item.supports_test and match_path != null) {
             if (sourceEntriesAreRelatedToFile(allocator, item.source_entries, match_path.?)) {
-                primary_test = try std.fmt.allocPrint(allocator, "bazel test {s}", .{label});
+                primary_test = try std.fmt.allocPrint(allocator, "bazel test {s}", .{shell_label});
             }
         }
     }
@@ -156,6 +158,24 @@ fn appendSanitizedPart(
     while (list.items.len > 0 and list.items[list.items.len - 1] == '-') {
         _ = list.pop();
     }
+}
+
+test "buildCommandInfo quotes shell-special Bazel labels" {
+    const allocator = std.testing.allocator;
+    var items = [_]Target{.{
+        .rule_name = @constCast("cc_binary"),
+        .name = @constCast("app;touch"),
+        .supports_run = true,
+        .supports_test = false,
+        .source_entries = &.{},
+    }};
+
+    const info = try buildCommandInfo(allocator, items[0..], "/tmp/BUILD", "", null);
+    defer model.freeOwnedCommandInfo(allocator, info);
+
+    try std.testing.expectEqual(@as(usize, 2), info.commands.len);
+    try std.testing.expectEqualStrings("bazel build '//:app;touch'", info.commands[0].command);
+    try std.testing.expectEqualStrings("bazel run '//:app;touch'", info.commands[1].command);
 }
 
 fn targetMatchesFile(item: Target, relative_filepath: []const u8, basename: []const u8) bool {
