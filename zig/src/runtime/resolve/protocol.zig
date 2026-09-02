@@ -13,6 +13,7 @@ pub const RUN_RESOLVE_RES_BEGIN = "@@ZRUN_RES_BEGIN";
 pub const RUN_RESOLVE_RES_END = "@@ZRUN_RES_END";
 pub const RUN_RESOLVE_RES_ERR = "@@ZRUN_RES_ERR";
 pub const RUN_RESOLVE_MAX_LINE = 16384;
+pub const RUN_RESOLVE_MAX_BYTES = 4 * 1024 * 1024;
 
 pub fn parseResolveDaemonBegin(line: []const u8) !ResolveDaemonRequestHeader {
     var begin = try frame.parseBeginFrame(line, RUN_RESOLVE_REQ_BEGIN, error.InvalidRunResolveDaemonHeader);
