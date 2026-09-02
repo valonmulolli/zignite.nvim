@@ -38,7 +38,8 @@ pub fn writeJVMAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Alloca
     defer build_system.freeOwnedResult(allocator, result);
     if (try signature.buildJVMAutoSignatureAllocWithIO(io, allocator, result)) |key| {
         defer allocator.free(key);
-        if (try cache.getAutoOutput(options, key)) |cached_output| {
+        if (try cache.getAutoOutput(allocator, options, key)) |cached_output| {
+            defer allocator.free(cached_output);
             try stdout.writeAll(cached_output);
             return true;
         }
@@ -63,7 +64,8 @@ pub fn writeCFamilyAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
     defer build_system.freeOwnedResult(allocator, result);
     if (try signature.buildCFamilyAutoSignatureAllocWithIO(io, allocator, options, result)) |key| {
         defer allocator.free(key);
-        if (try cache.getAutoOutput(options, key)) |cached_output| {
+        if (try cache.getAutoOutput(allocator, options, key)) |cached_output| {
+            defer allocator.free(cached_output);
             try stdout.writeAll(cached_output);
             return true;
         }
@@ -88,7 +90,8 @@ pub fn writePythonAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
     defer build_system.freeOwnedResult(allocator, result);
     if (try signature.buildPythonAutoSignatureAllocWithIO(io, allocator, result)) |key| {
         defer allocator.free(key);
-        if (try cache.getAutoOutput(options, key)) |cached_output| {
+        if (try cache.getAutoOutput(allocator, options, key)) |cached_output| {
+            defer allocator.free(cached_output);
             try stdout.writeAll(cached_output);
             return true;
         }
@@ -113,7 +116,8 @@ pub fn writeBazelAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allo
     defer build_system.freeOwnedResult(allocator, result);
     if (try signature.buildBazelAutoSignatureAllocWithIO(io, allocator, options, result)) |key| {
         defer allocator.free(key);
-        if (try cache.getAutoOutput(options, key)) |cached_output| {
+        if (try cache.getAutoOutput(allocator, options, key)) |cached_output| {
+            defer allocator.free(cached_output);
             try stdout.writeAll(cached_output);
             return true;
         }
