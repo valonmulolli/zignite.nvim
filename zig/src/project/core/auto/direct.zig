@@ -80,7 +80,13 @@ pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
     try stdout.print("SYSTEM\tzig\n", .{});
     try stdout.print("COMMAND\tbuild\tzig build\n", .{});
 
-    const steps = zig_project.detectStepsWithIO(io, allocator, build_root) catch return true;
+    const steps = zig_project.detectStepsWithIO(io, allocator, build_root) catch |err| switch (err) {
+        // A broken or incomplete build.zig still has a useful base `build`
+        // command. Other failures must reach the caller instead of being
+        // reported as a successful auto-detection.
+        error.ZigBuildListStepsFailed => return true,
+        else => return err,
+    };
     defer zig_project.freeOwnedSteps(allocator, steps);
     const names = try stepNamesAlloc(allocator, steps);
     defer allocator.free(names);
