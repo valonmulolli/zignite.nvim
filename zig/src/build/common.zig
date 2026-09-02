@@ -378,7 +378,10 @@ fn discoverBuildDirForMarkerAllocWithIO(
 
         if (best) |current| {
             if (!isBetterBuildDir(build_dir, current)) continue;
+            const replacement = try allocator.dupe(u8, build_dir);
             allocator.free(current);
+            best = replacement;
+            continue;
         }
         best = try allocator.dupe(u8, build_dir);
     }
