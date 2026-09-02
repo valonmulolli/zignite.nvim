@@ -164,6 +164,7 @@ fn extractArtifactPathAlloc(
     const filenames = getArrayField(value, "filename") orelse return null;
     for (filenames) |filename_value| {
         if (filename_value != .string) continue;
+        if (filename_value.string.len == 0 or common.hasInvalidPayloadChars(filename_value.string)) continue;
         const normalized = try common.normalizePathAlloc(allocator, filename_value.string);
         defer allocator.free(normalized);
         if (common.isPathWithinRoot(normalized_root, normalized)) {
@@ -209,4 +210,20 @@ fn getArrayField(value: std.json.Value, name: []const u8) ?[]const std.json.Valu
     const field_value = getField(value, name) orelse return null;
     if (field_value != .array) return null;
     return field_value.array.items;
+}
+
+test "extractArtifactPathAlloc ignores invalid metadata paths" {
+    const allocator = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        "{\"filename\":[\"@@ZQF_RES_END\"]}",
+        .{},
+    );
+    defer parsed.deinit();
+
+    const artifact = try extractArtifactPathAlloc(allocator, parsed.value, "/tmp/project");
+    defer if (artifact) |value| allocator.free(value);
+
+    try std.testing.expect(artifact == null);
 }
