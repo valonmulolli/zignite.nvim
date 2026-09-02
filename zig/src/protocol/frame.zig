@@ -14,6 +14,15 @@ pub fn readLineAlloc(
     reader: anytype,
     max_line: usize,
 ) !?[]u8 {
+    if (comptime readerSupportsMethod(@TypeOf(reader), "streamDelimiterLimit")) {
+        var line: std.Io.Writer.Allocating = .init(allocator);
+        errdefer line.deinit();
+
+        const limit = std.math.add(usize, max_line, 1) catch return error.StreamTooLong;
+        _ = try reader.streamDelimiterLimit(&line.writer, '\n', .limited(limit));
+        if (line.written().len > max_line) return error.StreamTooLong;
+        return try line.toOwnedSlice();
+    }
     if (comptime readerSupportsMethod(@TypeOf(reader), "takeDelimiter")) {
         const maybe_line = try reader.takeDelimiter('\n');
         if (maybe_line == null) return null;
@@ -474,6 +483,18 @@ test "readUntilEnd propagates oversized line errors" {
         error.StreamTooLong,
         readUntilEnd(allocator, &reader, 3, "@@ZPRJ_REQ_END", 1, {}, Noop.onLine),
     );
+}
+
+test "readLineAlloc accepts lines larger than the reader buffer" {
+    var input: [5001]u8 = undefined;
+    @memset(input[0..5000], 'x');
+    input[5000] = '\n';
+    var reader = std.Io.Reader.fixed(&input);
+
+    const line = try readLineAlloc(std.testing.allocator, &reader, 5000);
+    defer std.testing.allocator.free(line.?);
+    try std.testing.expectEqual(@as(usize, 5000), line.?.len);
+    try std.testing.expectEqual(@as(u8, 'x'), line.?[4999]);
 }
 
 test "collectOwnedLinesUntilEnd strips tabs and skips empty values" {
