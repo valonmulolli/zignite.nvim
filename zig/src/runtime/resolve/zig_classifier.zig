@@ -80,6 +80,11 @@ pub fn sourceRequiresProjectModules(contents: []const u8) bool {
             continue;
         }
 
+        if (ch == '/' and i + 1 < contents.len and contents[i + 1] == '*') {
+            i = skipBlockComment(contents, i + 2);
+            continue;
+        }
+
         if (ch == '"') {
             i = skipQuoted(contents, i + 1, '"');
             continue;
@@ -128,6 +133,24 @@ fn skipToLineEnd(contents: []const u8, start: usize) usize {
     return i;
 }
 
+fn skipBlockComment(contents: []const u8, start: usize) usize {
+    var depth: usize = 1;
+    var i = start;
+    while (i + 1 < contents.len) {
+        if (contents[i] == '/' and contents[i + 1] == '*') {
+            depth += 1;
+            i += 2;
+        } else if (contents[i] == '*' and contents[i + 1] == '/') {
+            depth -= 1;
+            i += 2;
+            if (depth == 0) return i;
+        } else {
+            i += 1;
+        }
+    }
+    return contents.len;
+}
+
 fn skipQuoted(contents: []const u8, start: usize, quote: u8) usize {
     var i = start;
     while (i < contents.len) : (i += 1) {
@@ -146,6 +169,15 @@ test "sourceRequiresProjectModules ignores comments and string literals" {
         \\// @import("zig")
         \\const text = "@import(\"demo\")";
         \\const c = '@';
+        \\pub fn main() void {}
+    ;
+
+    try std.testing.expect(!sourceRequiresProjectModules(contents));
+}
+
+test "sourceRequiresProjectModules ignores nested block comments" {
+    const contents =
+        \\/* outer @import("demo") /* nested @import("other") */ */
         \\pub fn main() void {}
     ;
 
