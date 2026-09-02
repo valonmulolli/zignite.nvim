@@ -103,6 +103,7 @@ pub fn handleDaemonFrame(
 ) !void {
     const header = protocol.parseResolveDaemonBegin(begin_line) catch |err| {
         if (frame.parseRequestId(begin_line, RUN_RESOLVE_REQ_BEGIN)) |request_id| {
+            _ = try frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, protocol.RUN_RESOLVE_REQ_END, request_id);
             try frame.writeErrorResponse(
                 stdout,
                 RUN_RESOLVE_RES_BEGIN,

@@ -65,6 +65,7 @@ pub fn handleDaemonFrame(
 ) !void {
     const header = parseDaemonBegin(begin_line) catch |err| {
         if (frame.parseRequestId(begin_line, DAEMON_REQ_BEGIN)) |request_id| {
+            _ = try frame.discardUntilEnd(allocator, reader, DAEMON_MAX_LINE, DAEMON_REQ_END, request_id);
             try writeDaemonResponse(stdout, request_id, "", err);
             try stdout.flush();
             return;

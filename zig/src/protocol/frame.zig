@@ -111,6 +111,7 @@ pub fn BuildDaemonFrameHandler(comptime ctx: anytype) type {
             const request_id: u64 = ctx.parseHeader(begin_line, ctx.req_begin) catch |err| {
                 if (headers_match) {
                     if (parseRequestId(begin_line, ctx.req_begin)) |id| {
+                        _ = try discardUntilEnd(allocator, reader, ctx.max_line, ctx.req_end, id);
                         try writeErrorResponse(stdout, ctx.res_begin, ctx.res_err, ctx.res_end, id, @errorName(err));
                         try stdout.flush();
                     }
@@ -268,6 +269,19 @@ pub fn skipUntilEnd(
         fn onLine(_: void, _: []const u8) !void {}
     };
     return readUntilEnd(allocator, reader, max_line, end_marker, request_id, {}, Skip.onLine);
+}
+
+/// Discards a frame body after a header error so its lines cannot be parsed as
+/// the next request. The boolean is false when the stream reaches EOF before
+/// the end marker; other reader errors still propagate.
+pub fn discardUntilEnd(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    max_line: usize,
+    end_marker: []const u8,
+    request_id: u64,
+) !bool {
+    return skipUntilEnd(allocator, reader, max_line, end_marker, request_id);
 }
 
 pub const TestReader = struct {

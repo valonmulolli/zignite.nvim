@@ -123,6 +123,7 @@ pub fn handleDaemonFrame(
 ) !void {
     const header = parseProjectDaemonBegin(begin_line) catch |err| {
         if (frame.parseRequestId(begin_line, PROJECT_DAEMON_REQ_BEGIN)) |request_id| {
+            _ = try frame.discardUntilEnd(allocator, reader, PROJECT_DAEMON_MAX_LINE, PROJECT_DAEMON_REQ_END, request_id);
             try frame.writeErrorResponse(
                 stdout,
                 PROJECT_DAEMON_RES_BEGIN,
