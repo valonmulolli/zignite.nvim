@@ -289,8 +289,17 @@ fn buildDiscoveredRunSuffixAlloc(
     {
         const subdirs = [_][]const u8{ "", "bin/", "Debug/", "Release/", "RelWithDebInfo/", "MinSizeRel/", "bin/Debug/", "bin/Release/", "bin/RelWithDebInfo/", "bin/MinSizeRel/" };
         for (subdirs) |subdir| {
-            try candidate_paths.append(allocator, try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target }));
-            try candidate_paths.append(allocator, try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target_exe }));
+            const target_candidate = try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target });
+            candidate_paths.append(allocator, target_candidate) catch |err| {
+                allocator.free(target_candidate);
+                return err;
+            };
+
+            const executable_candidate = try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, subdir, target_exe });
+            candidate_paths.append(allocator, executable_candidate) catch |err| {
+                allocator.free(executable_candidate);
+                return err;
+            };
         }
     }
 
