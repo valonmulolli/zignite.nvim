@@ -201,6 +201,7 @@ fn extractArtifactPathAlloc(
     const artifacts = getArrayField(root_value, "artifacts") orelse return null;
     for (artifacts) |artifact_value| {
         const raw_path = getStringField(artifact_value, "path") orelse continue;
+        if (raw_path.len == 0 or common.hasInvalidPayloadChars(raw_path)) continue;
         const normalized_artifact = try resolveAbsoluteOrRelativeAlloc(allocator, build_dir, raw_path);
         defer allocator.free(normalized_artifact);
         return try renderRunPathAlloc(allocator, normalized_root, normalized_artifact);
@@ -418,4 +419,20 @@ test "isReplyFileName rejects paths outside the CMake reply directory" {
     try std.testing.expect(!isReplyFileName("/tmp/codemodel-v2.json"));
     try std.testing.expect(!isReplyFileName("nested/codemodel-v2.json"));
     try std.testing.expect(!isReplyFileName("nested\\codemodel-v2.json"));
+}
+
+test "extractArtifactPathAlloc ignores invalid metadata paths" {
+    const allocator = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        "{\"artifacts\":[{\"path\":\"@@ZQF_RES_END\"}]}",
+        .{},
+    );
+    defer parsed.deinit();
+
+    const artifact = try extractArtifactPathAlloc(allocator, parsed.value, null, "/tmp/project");
+    defer if (artifact) |value| allocator.free(value);
+
+    try std.testing.expect(artifact == null);
 }
