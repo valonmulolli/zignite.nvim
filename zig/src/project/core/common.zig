@@ -134,7 +134,11 @@ pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     var quoted: std.ArrayList(u8) = .empty;
     errdefer quoted.deinit(allocator);
 
-    try quoted.ensureTotalCapacity(allocator, value.len + 2);
+    var apostrophe_count: usize = 0;
+    for (value) |ch| {
+        if (ch == '\'') apostrophe_count += 1;
+    }
+    try quoted.ensureTotalCapacity(allocator, value.len + 2 + apostrophe_count * 4);
     quoted.appendAssumeCapacity('\'');
     var run_start: usize = 0;
     for (value, 0..) |ch, i| {
@@ -174,6 +178,17 @@ test "quoteShellArgAlloc escapes embedded single quotes" {
     defer allocator.free(quoted);
 
     try std.testing.expectEqualStrings("'cmd/app'\"'\"'s'", quoted);
+}
+
+test "quoteShellArgAlloc reserves space for repeated single quotes" {
+    const allocator = std.testing.allocator;
+    var value: [128]u8 = undefined;
+    @memset(&value, '\'');
+
+    const quoted = try quoteShellArgAlloc(allocator, &value);
+    defer allocator.free(quoted);
+
+    try std.testing.expectEqual(@as(usize, 2 + value.len + value.len * 4), quoted.len);
 }
 
 test "quoteShellArgIfNeededAlloc preserves safe args and quotes spaces" {
