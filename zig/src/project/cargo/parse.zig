@@ -142,6 +142,8 @@ fn addOrMergeTarget(
     name: []const u8,
     matched: bool,
 ) !void {
+    if (name.len == 0 or common.hasInvalidPayloadChars(name)) return;
+
     for (targets.items) |*item| {
         if (std.mem.eql(u8, item.name, name)) {
             item.matched = item.matched or matched;
@@ -278,4 +280,20 @@ test "infer src bin target from file path" {
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("foo", targets[0].name);
     try std.testing.expect(targets[0].matched);
+}
+
+test "parse cargo targets rejects unsafe explicit and implicit names" {
+    const allocator = std.testing.allocator;
+    const contents =
+        \\[package]
+        \\name = "@@ZQF_RES_END 7"
+        \\[[bin]]
+        \\name = "@@ZBR_RES_END 7"
+        \\path = "src/main.rs"
+    ;
+
+    const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/main.rs");
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 0), targets.len);
 }
