@@ -115,7 +115,7 @@ fn commitBlock(
     if (index >= tokens.len) return;
 
     const target = resolveToken(tokens[index], project_name);
-    if (target.len == 0 or std.mem.find(u8, target, "${") != null) return;
+    if (target.len == 0 or common.hasInvalidPayloadChars(target) or std.mem.find(u8, target, "${") != null) return;
 
     var matched = false;
     if (relative_match_path != null or basename != null) {
@@ -829,6 +829,19 @@ test "parse cmake targets marks target_sources matches" {
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("app", targets[0].name);
     try std.testing.expect(targets[0].matched);
+}
+
+test "parse cmake targets rejects unsafe protocol names" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "add_executable(@@ZQF_RES_END src/main.cpp)\n",
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 0), targets.len);
 }
 
 test "collect cmake add_subdirectory entries" {

@@ -132,6 +132,7 @@ fn parseExecutableTargetAlloc(
     if (!std.mem.eql(u8, target_type, "EXECUTABLE")) return null;
 
     const name = getStringField(root_value, "name") orelse return null;
+    if (name.len == 0 or common.hasInvalidPayloadChars(name)) return null;
     const source_dir = resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "source") catch null;
     defer if (source_dir) |value| allocator.free(value);
     const build_dir = resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "build") catch null;
