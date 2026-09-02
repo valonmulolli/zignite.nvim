@@ -104,9 +104,8 @@ fn resolveActionTarget(
             } };
         },
         .last => blk: {
-            const stored_command_name = (try state.getLastCommand(io, allocator, environ_map, resolved_filetype)) orelse
+            const last_command_name = (try state.getLastCommand(io, allocator, environ_map, resolved_filetype)) orelse
                 return .{ .plan = try missingLastCommandPlan(allocator, resolved_filetype) };
-            const last_command_name = try allocator.dupe(u8, stored_command_name);
             if (std.mem.trim(u8, last_command_name, " \t\r\n").len == 0) {
                 allocator.free(last_command_name);
                 return .{ .plan = try missingLastCommandPlan(allocator, resolved_filetype) };
@@ -114,7 +113,7 @@ fn resolveActionTarget(
             errdefer allocator.free(last_command_name);
             const command_template = detected.findCommand(parsed_output.commands.items, last_command_name) orelse
                 {
-                    state.clearLastCommand(io, allocator, environ_map, resolved_filetype);
+                    try state.clearLastCommand(io, allocator, environ_map, resolved_filetype);
                     const plan = try staleLastCommandPlan(allocator, resolved_filetype, last_command_name, parsed_output.commands.items);
                     allocator.free(last_command_name);
                     return .{ .plan = plan };
