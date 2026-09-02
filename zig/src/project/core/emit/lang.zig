@@ -119,6 +119,24 @@ test "writeLanguageOutput emits make command records" {
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbench\tmake bench\n") != null);
 }
 
+test "writeLanguageOutput quotes shell-special make targets" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try std.testing.expect(try writeLanguageOutput(
+        &out.writer,
+        allocator,
+        .{
+            .kind = .make,
+            .path = "/tmp/Makefile",
+        },
+        "deploy;touch:\n\t@echo deploy\n",
+    ));
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tdeploy;touch\tmake 'deploy;touch'\n") != null);
+}
+
 test "writeLanguageOutput derives smarter make aliases from common target names" {
     const allocator = std.testing.allocator;
     var out: std.Io.Writer.Allocating = .init(allocator);
