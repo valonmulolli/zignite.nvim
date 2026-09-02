@@ -52,10 +52,13 @@ pub fn writeResolvedOutputLegacy(
     filetype: []const u8,
 ) !void {
     const ok = resolved.command != null;
+    const safe_filetype = !common.hasInvalidPayloadChars(filetype);
     try stdout.print("OK\t{d}\n", .{if (ok) @as(u8, 1) else @as(u8, 0)});
     if (!ok) {
         try stdout.print("REASON\tno_runner\n", .{});
-        try stdout.print("MESSAGE\tError: No runner configured for filetype: {s}\n", .{filetype});
+        if (safe_filetype) {
+            try stdout.print("MESSAGE\tError: No runner configured for filetype: {s}\n", .{filetype});
+        }
     }
     if (resolved.command) |command| {
         if (!common.hasInvalidPayloadChars(command)) {
@@ -72,8 +75,10 @@ pub fn writeResolvedOutputLegacy(
             try stdout.print("ARGV\t{s}\n", .{arg});
         }
     }
-    try stdout.print("SOURCE\t{s}\n", .{resolved.source});
-    try stdout.print("FILETYPE\t{s}\n", .{filetype});
+    if (!common.hasInvalidPayloadChars(resolved.source)) {
+        try stdout.print("SOURCE\t{s}\n", .{resolved.source});
+    }
+    if (safe_filetype) try stdout.print("FILETYPE\t{s}\n", .{filetype});
     try stdout.print("CONFIG_REVISION\t{d}\n", .{config.getSyncedRevision()});
     if (resolved.cwd) |cwd| {
         if (!common.hasInvalidPayloadChars(cwd)) {
@@ -182,4 +187,20 @@ test "writeResolvedOutputJson includes no_runner failure metadata when command i
     try std.testing.expect(std.mem.find(u8, out.written(), "\"ok\":false") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"reason\":\"no_runner\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"message\":\"Error: No runner configured for filetype: go\"") != null);
+}
+
+test "writeResolvedOutputLegacy rejects unsafe filetype fields" {
+    const allocator = std.testing.allocator;
+    var resolved = types.ResolvedRunner{};
+    defer resolved.deinit(allocator);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    const unsafe_filetype = "zig\n@@ZRUN_RES_END 7";
+    try writeResolvedOutputLegacy(&out.writer, resolved, unsafe_filetype);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "MESSAGE\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "FILETYPE\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZRUN_RES_END") == null);
 }

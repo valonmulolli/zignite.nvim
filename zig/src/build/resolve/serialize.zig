@@ -59,17 +59,20 @@ pub fn writeResolvedOutputLegacyHeader(
     last_command_name: ?[]const u8,
 ) !void {
     const has_commands = parsed_output.commands.items.len > 0;
+    const safe_filetype = !common.hasInvalidPayloadChars(filetype);
     try stdout.print("OK\t{d}\n", .{if (has_commands) @as(u8, 1) else @as(u8, 0)});
     if (!has_commands) {
         try stdout.print("REASON\tno_build_commands\n", .{});
-        try stdout.print("MESSAGE\tNo build commands available for filetype: {s}\n", .{filetype});
+        if (safe_filetype) {
+            try stdout.print("MESSAGE\tNo build commands available for filetype: {s}\n", .{filetype});
+        }
     }
     if (parsed_output.root) |root| {
         if (!common.hasInvalidPayloadChars(root)) {
             try stdout.print("ROOT\t{s}\n", .{root});
         }
     }
-    try stdout.print("FILETYPE\t{s}\n", .{filetype});
+    if (safe_filetype) try stdout.print("FILETYPE\t{s}\n", .{filetype});
     if (parsed_output.system) |system| {
         if (!common.hasInvalidPayloadChars(system)) {
             try stdout.print("SYSTEM\t{s}\n", .{system});
@@ -95,7 +98,9 @@ pub fn writeResolvedOutputLegacyCommands(
     for (entries) |entry| {
         if (common.hasInvalidPayloadChars(entry.name) or common.hasInvalidPayloadChars(entry.command)) continue;
         try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
-        try command.writeCommandUiMetadata(stdout, allocator, filetype, entry);
+        if (!common.hasInvalidPayloadChars(filetype)) {
+            try command.writeCommandUiMetadata(stdout, allocator, filetype, entry);
+        }
     }
 }
 
@@ -658,4 +663,20 @@ test "writeResolvedOutputJson reports no_build_commands when command list is emp
     try std.testing.expect(std.mem.find(u8, out.written(), "\"ok\":false") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"reason\":\"no_build_commands\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"message\":\"No build commands available for filetype: unknownft\"") != null);
+}
+
+test "writeResolvedOutputLegacy guards unsafe filetype fields" {
+    const allocator = std.testing.allocator;
+    var parsed_output: types.ResolvedOutput = .{};
+    defer parsed_output.deinit(allocator);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    const unsafe_filetype = "zig\n@@ZBR_RES_END 7";
+    try writeResolvedOutputLegacyHeader(&out.writer, parsed_output, unsafe_filetype, null);
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "MESSAGE\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "FILETYPE\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZBR_RES_END") == null);
 }
