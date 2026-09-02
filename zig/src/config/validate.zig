@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 
 pub fn collectWarnings(allocator: std.mem.Allocator, json_payload: []const u8) ![][]u8 {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_payload, .{});
@@ -84,7 +85,11 @@ fn validateRunner(
     runner: std.json.Value,
 ) !void {
     switch (runner) {
-        .string => {},
+        .string => |command| {
+            if (common.hasInvalidPayloadChars(command)) {
+                try pushWarning(allocator, warnings, "Invalid config runners.{s}: contains control characters or protocol markers", .{filetype});
+            }
+        },
         .array => |items| {
             for (items.items, 0..) |item, index| {
                 if (item != .string) {
@@ -93,6 +98,13 @@ fn validateRunner(
                         warnings,
                         "Invalid config runners.{s}[{d}]: expected string, got {s}",
                         .{ filetype, index, valueTypeName(item) },
+                    );
+                } else if (common.hasInvalidPayloadChars(item.string)) {
+                    try pushWarning(
+                        allocator,
+                        warnings,
+                        "Invalid config runners.{s}[{d}]: contains control characters or protocol markers",
+                        .{ filetype, index },
                     );
                 }
             }
@@ -103,7 +115,11 @@ fn validateRunner(
                 return;
             };
             switch (cmd) {
-                .string => {},
+                .string => |command| {
+                    if (common.hasInvalidPayloadChars(command)) {
+                        try pushWarning(allocator, warnings, "Invalid config runners.{s}.cmd: contains control characters or protocol markers", .{filetype});
+                    }
+                },
                 .array => |items| {
                     for (items.items, 0..) |item, index| {
                         if (item != .string) {
@@ -112,6 +128,13 @@ fn validateRunner(
                                 warnings,
                                 "Invalid config runners.{s}.cmd[{d}]: expected string, got {s}",
                                 .{ filetype, index, valueTypeName(item) },
+                            );
+                        } else if (common.hasInvalidPayloadChars(item.string)) {
+                            try pushWarning(
+                                allocator,
+                                warnings,
+                                "Invalid config runners.{s}.cmd[{d}]: contains control characters or protocol markers",
+                                .{ filetype, index },
                             );
                         }
                     }
@@ -132,11 +155,11 @@ fn validateRunner(
                         "Invalid config runners.{s}.cleanup_command: expected string, got {s}",
                         .{ filetype, valueTypeName(cleanup) },
                     );
-                } else if (std.mem.indexOfAny(u8, cleanup.string, "\r\n\x00") != null) {
+                } else if (common.hasInvalidPayloadChars(cleanup.string)) {
                     try pushWarning(
                         allocator,
                         warnings,
-                        "Invalid config runners.{s}.cleanup_command: contains control characters",
+                        "Invalid config runners.{s}.cleanup_command: contains control characters or protocol markers",
                         .{filetype},
                     );
                 }
@@ -150,11 +173,11 @@ fn validateRunner(
                         "Invalid config runners.{s}.cwd: expected string, got {s}",
                         .{ filetype, valueTypeName(cwd) },
                     );
-                } else if (std.mem.indexOfAny(u8, cwd.string, "\r\n\x00") != null) {
+                } else if (common.hasInvalidPayloadChars(cwd.string)) {
                     try pushWarning(
                         allocator,
                         warnings,
-                        "Invalid config runners.{s}.cwd: contains control characters",
+                        "Invalid config runners.{s}.cwd: contains control characters or protocol markers",
                         .{filetype},
                     );
                 }
@@ -188,12 +211,23 @@ fn validateBuildCommands(
 
         var command_it = filetype_entry.value_ptr.object.iterator();
         while (command_it.next()) |command_entry| {
+            if (common.hasInvalidPayloadChars(command_entry.key_ptr.*)) {
+                try pushWarning(allocator, warnings, "Invalid config build_commands.{s}: command name contains control characters or protocol markers", .{filetype_entry.key_ptr.*});
+                continue;
+            }
             if (command_entry.value_ptr.* != .string) {
                 try pushWarning(
                     allocator,
                     warnings,
                     "Invalid config build_commands.{s}.{s}: expected string, got {s}",
                     .{ filetype_entry.key_ptr.*, command_entry.key_ptr.*, valueTypeName(command_entry.value_ptr.*) },
+                );
+            } else if (common.hasInvalidPayloadChars(command_entry.value_ptr.string)) {
+                try pushWarning(
+                    allocator,
+                    warnings,
+                    "Invalid config build_commands.{s}.{s}: contains control characters or protocol markers",
+                    .{ filetype_entry.key_ptr.*, command_entry.key_ptr.* },
                 );
             }
         }
@@ -230,8 +264,10 @@ fn validateTimeout(
             }
         },
         .float => |value| {
-            if (!std.math.isFinite(value) or value <= 0) {
+            if (!std.math.isFinite(value) or value <= 0 or @trunc(value) != value) {
                 try pushWarning(allocator, warnings, "Invalid config timeout: expected positive number, got {d}", .{value});
+            } else if (value >= @as(f64, @floatFromInt(std.math.maxInt(u64)))) {
+                try pushWarning(allocator, warnings, "Invalid config timeout: value does not fit in u64 milliseconds, got {d}", .{value});
             }
         },
         .null => {},
@@ -339,6 +375,16 @@ test "collectWarnings rejects cleanup_command and cwd with control characters" {
     try std.testing.expectEqual(@as(usize, 2), warnings.len);
     try std.testing.expect(std.mem.find(u8, warnings[0], "cleanup_command: contains control characters") != null);
     try std.testing.expect(std.mem.find(u8, warnings[1], "cwd: contains control characters") != null);
+}
+
+test "collectWarnings rejects control characters in executable config values" {
+    const allocator = std.testing.allocator;
+    const warnings = try collectWarnings(allocator,
+        \\{"runners":{"go":{"cmd":"go run $file\n","cleanup_command":"rm\t-f /tmp/out"}},"build_commands":{"zig":{"build":"zig\r build"}}}
+    );
+    defer freeWarnings(allocator, warnings);
+
+    try std.testing.expect(warnings.len >= 3);
 }
 
 test "collectWarnings accepts null timeout and rejects non-positive numbers" {
