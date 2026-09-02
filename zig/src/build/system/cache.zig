@@ -30,7 +30,6 @@ const CacheEntry = struct {
     result: Result,
 };
 
-var cache_arena = std.heap.ArenaAllocator.init(page_allocator);
 var cache_map: std.StringHashMap(CacheEntry) = undefined;
 var cache_initialized = false;
 
@@ -117,15 +116,23 @@ fn storeFreshResult(cache_key: []u8, result_signature: []const u8, result: Resul
         ensureCacheInit();
     }
 
-    const cache_allocator = cache_arena.allocator();
+    const cache_allocator = page_allocator;
     const owned_key = try cache_allocator.dupe(u8, cache_key);
+    errdefer cache_allocator.free(owned_key);
     const cached_result = try cloneResult(cache_allocator, result);
+    errdefer types.freeOwnedResult(cache_allocator, cached_result);
     const cached_signature = try cache_allocator.dupe(u8, result_signature);
+    errdefer cache_allocator.free(cached_signature);
 
-    try cache_map.put(owned_key, .{
+    if (try cache_map.fetchPut(owned_key, .{
         .signature = cached_signature,
         .result = cached_result,
-    });
+    })) |old| {
+        // StringHashMap does not own or deinitialize user-provided values.
+        cache_allocator.free(owned_key);
+        cache_allocator.free(old.value.signature);
+        types.freeOwnedResult(cache_allocator, old.value.result);
+    }
 }
 
 fn cloneResult(allocator: std.mem.Allocator, result: Result) !Result {
@@ -412,16 +419,20 @@ fn findCommand(commands: []const types.CommandEntry, name: []const u8) ?[]const 
 
 fn ensureCacheInit() void {
     if (cache_initialized) return;
-    cache_map = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    cache_map = std.StringHashMap(CacheEntry).init(page_allocator);
     cache_initialized = true;
 }
 
 fn resetCache() void {
     if (!cache_initialized) return;
+    var it = cache_map.iterator();
+    while (it.next()) |entry| {
+        page_allocator.free(entry.key_ptr.*);
+        page_allocator.free(entry.value_ptr.*.signature);
+        types.freeOwnedResult(page_allocator, entry.value_ptr.*.result);
+    }
     cache_map.deinit();
-    cache_arena.deinit();
-    cache_arena = std.heap.ArenaAllocator.init(page_allocator);
-    cache_map = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    cache_map = std.StringHashMap(CacheEntry).init(page_allocator);
     cache_initialized = true;
     detection_count = 0;
 }

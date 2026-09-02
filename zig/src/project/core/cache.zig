@@ -10,11 +10,10 @@ const CacheEntry = struct {
     output: []u8,
 };
 
-var cache_arena = std.heap.ArenaAllocator.init(page_allocator);
 var auto_output_cache: std.StringHashMap(CacheEntry) = undefined;
 var cache_initialized = false;
 
-pub fn getAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
+pub fn getAutoOutput(allocator: std.mem.Allocator, options: Options, signature: []const u8) !?[]u8 {
     ensureCacheInit();
 
     const cache_key = try cacheKeyAlloc(page_allocator, options);
@@ -22,7 +21,7 @@ pub fn getAutoOutput(options: Options, signature: []const u8) !?[]const u8 {
 
     const entry = auto_output_cache.get(cache_key) orelse return null;
     if (!std.mem.eql(u8, entry.signature, signature)) return null;
-    return entry.output;
+    return try allocator.dupe(u8, entry.output);
 }
 
 pub fn storeAutoOutput(options: Options, signature: []const u8, output: []const u8) !void {
@@ -36,15 +35,23 @@ pub fn storeAutoOutput(options: Options, signature: []const u8, output: []const 
         ensureCacheInit();
     }
 
-    const cache_allocator = cache_arena.allocator();
+    const cache_allocator = page_allocator;
     const owned_key = try cache_allocator.dupe(u8, cache_key);
+    errdefer cache_allocator.free(owned_key);
     const owned_signature = try cache_allocator.dupe(u8, signature);
+    errdefer cache_allocator.free(owned_signature);
     const owned_output = try cache_allocator.dupe(u8, output);
+    errdefer cache_allocator.free(owned_output);
 
-    try auto_output_cache.put(owned_key, .{
+    if (try auto_output_cache.fetchPut(owned_key, .{
         .signature = owned_signature,
         .output = owned_output,
-    });
+    })) |old| {
+        // Replacements return the old value but do not retain the new key.
+        cache_allocator.free(owned_key);
+        cache_allocator.free(old.value.signature);
+        cache_allocator.free(old.value.output);
+    }
 
     page_allocator.free(cache_key);
 }
@@ -64,15 +71,19 @@ fn cacheKeyAlloc(allocator: std.mem.Allocator, options: Options) ![]u8 {
 
 fn ensureCacheInit() void {
     if (cache_initialized) return;
-    auto_output_cache = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    auto_output_cache = std.StringHashMap(CacheEntry).init(page_allocator);
     cache_initialized = true;
 }
 
 fn resetCache() void {
     if (!cache_initialized) return;
+    var it = auto_output_cache.iterator();
+    while (it.next()) |entry| {
+        page_allocator.free(entry.key_ptr.*);
+        page_allocator.free(entry.value_ptr.*.signature);
+        page_allocator.free(entry.value_ptr.*.output);
+    }
     auto_output_cache.deinit();
-    cache_arena.deinit();
-    cache_arena = std.heap.ArenaAllocator.init(page_allocator);
-    auto_output_cache = std.StringHashMap(CacheEntry).init(cache_arena.allocator());
+    auto_output_cache = std.StringHashMap(CacheEntry).init(page_allocator);
     cache_initialized = true;
 }
