@@ -192,7 +192,25 @@ fn extractAddExecutableArgs(block: []const u8) ?[]const u8 {
 
 fn countParenDelta(text: []const u8) isize {
     var delta: isize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
     for (text) |ch| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null) {
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == quote.?) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
         if (ch == '(') delta += 1;
         if (ch == ')') delta -= 1;
     }
@@ -713,6 +731,27 @@ test "parse cmake targets keeps hash inside quoted string literals" {
         contents,
         "/tmp/cmakeproj/CMakeLists.txt",
         "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse cmake targets ignores parentheses inside quoted strings" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "add_executable(\n" ++
+        "  app\n" ++
+        "  \"src/part(.cpp\"\n" ++
+        ")\n";
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/part(.cpp",
     );
     defer freeOwnedTargets(allocator, targets);
 
