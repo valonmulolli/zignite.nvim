@@ -143,11 +143,11 @@ test "termToExitCode treats unknown as raw status" {
 }
 
 fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
-    const clamped_duration = std.math.cast(u32, ctx.duration) orelse std.math.maxInt(u32);
-    if (std.Io.sleep(io, std.Io.Duration.fromMilliseconds(clamped_duration), .awake)) |_| {} else |err| switch (err) {
+    const duration_ms = std.math.cast(i64, ctx.duration) orelse std.math.maxInt(i64);
+    if (std.Io.sleep(io, std.Io.Duration.fromMilliseconds(duration_ms), .awake)) |_| {} else |err| switch (err) {
         error.Canceled => return,
     }
-    if (ctx.finished.load(.acquire)) {
+    if (ctx.finished.cmpxchgWeak(false, true, .acq_rel, .acquire) != null) {
         return;
     }
 
