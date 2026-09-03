@@ -103,7 +103,9 @@ fn commitBinBlock(
     var matched = false;
     if (relative_match_path) |relative_path| {
         if (parseNamedString(block, "path")) |explicit_path| {
-            matched = std.mem.eql(u8, common.trimSpaces(explicit_path), relative_path);
+            const normalized_explicit_path = try common.normalizePathAlloc(allocator, common.trimSpaces(explicit_path));
+            defer allocator.free(normalized_explicit_path);
+            matched = std.mem.eql(u8, normalized_explicit_path, relative_path);
         } else {
             var inferred_path_buf: [512]u8 = undefined;
             const inferred_path = try std.fmt.bufPrint(&inferred_path_buf, "src/bin/{s}.rs", .{name});
@@ -280,6 +282,30 @@ test "infer src bin target from file path" {
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("foo", targets[0].name);
     try std.testing.expect(targets[0].matched);
+}
+
+test "normalize explicit cargo bin paths before matching" {
+    const allocator = std.testing.allocator;
+    const contents =
+        \\[package]
+        \\name = "demo"
+        \\version = "0.1.0"
+        \\
+        \\[[bin]]
+        \\name = "first"
+        \\path = "src/first.rs"
+        \\
+        \\[[bin]]
+        \\name = "second"
+        \\path = "./src/second.rs"
+    ;
+
+    const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/second.rs");
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expect(!targets[0].matched);
+    try std.testing.expect(targets[1].matched);
 }
 
 test "parse cargo targets rejects unsafe explicit and implicit names" {
