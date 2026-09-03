@@ -27,29 +27,42 @@ pub fn parseTargets(allocator: std.mem.Allocator, contents: []const u8) ![]Targe
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
         const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture_rule == null) {
-            const rule_name = parseRuleName(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line);
-            depth = countParenDelta(line);
-            if (depth <= 0) {
-                try commitBlock(allocator, rule_name, list.items, &targets);
-                list.deinit(allocator);
-            } else {
-                capture_rule = rule_name;
+        var line_index: usize = 0;
+        while (line_index < line.len) {
+            if (capture_rule == null) {
+                const rule = parseRuleStart(line[line_index..]) orelse break;
+                const rule_start = line_index + rule.start;
+                const open_index = line_index + rule.open;
+                if (findMatchingParen(line, open_index)) |close_index| {
+                    try commitBlock(allocator, rule.name, line[rule_start .. close_index + 1], &targets);
+                    line_index = close_index + 1;
+                    continue;
+                }
+
+                var list: std.ArrayList(u8) = .empty;
+                errdefer list.deinit(allocator);
+                try list.appendSlice(allocator, line[rule_start..]);
+                depth = countParenDelta(line[open_index..]);
+                capture_rule = rule.name;
                 capture = list;
+                break;
             }
-        } else {
-            try capture.?.append(allocator, '\n');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
+
+            if (findClosingParen(line, depth)) |close_index| {
+                try capture.?.append(allocator, '\n');
+                try capture.?.appendSlice(allocator, line[0 .. close_index + 1]);
                 try commitBlock(allocator, capture_rule.?, capture.?.items, &targets);
                 capture.?.deinit(allocator);
                 capture = null;
                 capture_rule = null;
+                line_index = close_index + 1;
+                continue;
             }
+
+            try capture.?.append(allocator, '\n');
+            try capture.?.appendSlice(allocator, line);
+            depth += countParenDelta(line);
+            break;
         }
     }
 
@@ -131,7 +144,13 @@ fn stripHashComment(line: []const u8) []const u8 {
     return line;
 }
 
-fn parseRuleName(line: []const u8) ?[]const u8 {
+const RuleStart = struct {
+    name: []const u8,
+    start: usize,
+    open: usize,
+};
+
+fn parseRuleStart(line: []const u8) ?RuleStart {
     var index: usize = 0;
     while (index < line.len and isWhitespace(line[index])) : (index += 1) {}
     if (index >= line.len or !isIdentStart(line[index])) return null;
@@ -148,7 +167,69 @@ fn parseRuleName(line: []const u8) ?[]const u8 {
     const rule_name = line[start..index];
     while (index < line.len and isWhitespace(line[index])) : (index += 1) {}
     if (index >= line.len or line[index] != '(') return null;
-    return rule_name;
+    return .{ .name = rule_name, .start = start, .open = index };
+}
+
+fn findMatchingParen(text: []const u8, open_index: usize) ?usize {
+    if (open_index >= text.len or text[open_index] != '(') return null;
+
+    var depth: isize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
+    for (text[open_index..], open_index..) |ch, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null and ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '(') depth += 1;
+        if (ch == ')') {
+            depth -= 1;
+            if (depth == 0) return index;
+        }
+    }
+    return null;
+}
+
+fn findClosingParen(text: []const u8, initial_depth: isize) ?usize {
+    var depth = initial_depth;
+    var quote: ?u8 = null;
+    var escaped = false;
+    for (text, 0..) |ch, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote != null and ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '(') depth += 1;
+        if (ch == ')') {
+            depth -= 1;
+            if (depth <= 0) return index;
+        }
+    }
+    return null;
 }
 
 fn countParenDelta(text: []const u8) isize {
@@ -466,6 +547,18 @@ test "parse bazel targets accepts qualified rule names" {
     try std.testing.expectEqualStrings("native.cc_binary", targets[0].rule_name);
     try std.testing.expectEqualStrings("native_app", targets[0].name);
     try std.testing.expect(targets[0].supports_run);
+}
+
+test "parse bazel targets finds multiple rules on one line" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(allocator, "cc_binary(name = \"first\", srcs = [\"first.cc\"]) " ++
+        "cc_binary(name = \"second\", srcs = [\"second.cc\"])\n");
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expectEqualStrings("first", targets[0].name);
+    try std.testing.expectEqualStrings("second", targets[1].name);
+    try std.testing.expectEqualStrings("second.cc", targets[1].source_entries[0]);
 }
 
 test "parse bazel targets rejects unsafe protocol names" {
