@@ -171,14 +171,34 @@ fn stripHashComment(line: []const u8) []const u8 {
 }
 
 fn indexOfExecutable(line: []const u8) ?usize {
+    var quote: ?u8 = null;
+    var escaped = false;
     var index: usize = 0;
     while (index < line.len) : (index += 1) {
+        if (quote) |active_quote| {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (line[index] == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (line[index] == active_quote) quote = null;
+            continue;
+        }
+
+        if (line[index] == '"' or line[index] == '\'') {
+            quote = line[index];
+            continue;
+        }
         if (std.ascii.toLower(line[index]) != 'e') continue;
         const remaining = line[index..];
         if (remaining.len < "executable".len) continue;
-        if (std.ascii.eqlIgnoreCase(remaining[0.."executable".len], "executable")) {
-            return index;
-        }
+        if (!std.ascii.eqlIgnoreCase(remaining[0.."executable".len], "executable")) continue;
+        if (index > 0 and isIdentifierChar(line[index - 1])) continue;
+        const after = index + "executable".len;
+        if (after >= line.len or line[after] == '(' or std.ascii.isWhitespace(line[after])) return index;
     }
     return null;
 }
@@ -192,11 +212,33 @@ fn extractExecutableArgs(block: []const u8) ?[]const u8 {
 
 fn countParenDelta(text: []const u8) isize {
     var delta: isize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
     for (text) |ch| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
         if (ch == '(') delta += 1;
         if (ch == ')') delta -= 1;
     }
     return delta;
+}
+
+fn isIdentifierChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_';
 }
 
 fn tokenizeQuotedArgsAlloc(allocator: std.mem.Allocator, text: []const u8) ![][]u8 {
@@ -237,4 +279,35 @@ test "parse meson executable targets" {
     try std.testing.expect(targets[0].matched);
     try std.testing.expectEqualStrings("tool", targets[1].name);
     try std.testing.expect(!targets[1].matched);
+}
+
+test "parse meson ignores executable text inside strings and identifiers" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "message('executable(fake, src.cpp)')\nmy_executable('wrong', 'src.cpp')\nexecutable('real', 'src/main.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse meson ignores parentheses inside quoted sources" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "executable(\n  'app',\n  'src/part(.cpp',\n)\nexecutable('other', 'src/other.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/part(.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expectEqualStrings("app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+    try std.testing.expectEqualStrings("other", targets[1].name);
 }
