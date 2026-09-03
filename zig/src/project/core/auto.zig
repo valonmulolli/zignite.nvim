@@ -336,6 +336,60 @@ test "writeAutoOutput refreshes cached c-family-auto output after Makefile chang
     try std.testing.expect(std.mem.find(u8, second.written(), "COMMAND\ttest\tmake test\n") != null);
 }
 
+test "writeAutoOutput refreshes cached make output after included file changes" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    cache.resetForTests();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.cpp", .data = "int main() { return 0; }\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data =
+        \\include targets.mk
+        \\run:
+        \\\t@echo run
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "targets.mk", .data =
+        \\build:
+        \\\t@echo build
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.cpp" });
+    defer allocator.free(filepath);
+
+    var first: std.Io.Writer.Allocating = .init(allocator);
+    defer first.deinit();
+    try std.testing.expect(try writeAutoOutput(&first.writer, allocator, .{
+        .kind = .c_family_auto,
+        .path = filepath,
+        .project_root = root,
+    }));
+    try std.testing.expect(std.mem.find(u8, first.written(), "COMMAND\tbuild\tmake build\n") != null);
+    try std.testing.expect(std.mem.find(u8, first.written(), "COMMAND\ttest\tmake test\n") == null);
+
+    try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(2), .awake);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "targets.mk", .data =
+        \\build:
+        \\\t@echo build
+        \\test:
+        \\\t@echo test
+    });
+
+    var second: std.Io.Writer.Allocating = .init(allocator);
+    defer second.deinit();
+    try std.testing.expect(try writeAutoOutput(&second.writer, allocator, .{
+        .kind = .c_family_auto,
+        .path = filepath,
+        .project_root = root,
+    }));
+    try std.testing.expect(std.mem.find(u8, second.written(), "COMMAND\tbuild\tmake build\n") != null);
+    try std.testing.expect(std.mem.find(u8, second.written(), "COMMAND\ttest\tmake test\n") != null);
+}
+
 test "writeAutoOutput refreshes cached bazel-auto output after BUILD changes" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

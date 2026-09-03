@@ -41,7 +41,7 @@ pub fn buildCFamilyAutoSignatureAllocWithIO(
         return try buildBazelAutoSignatureAllocWithIO(io, allocator, options, result);
     }
     if (std.mem.eql(u8, system, "make")) {
-        return try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, make.marker_names);
+        return try buildMakeAutoSignatureAllocWithIO(io, allocator, root);
     }
     if (std.mem.eql(u8, system, "cmake")) {
         return try buildCmakeAutoSignatureAlloc(io, allocator, root);
@@ -50,6 +50,40 @@ pub fn buildCFamilyAutoSignatureAllocWithIO(
         return try buildMesonAutoSignatureAlloc(io, allocator, root);
     }
 
+    return null;
+}
+
+fn buildMakeAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]u8 {
+    const makefile_path = try findMakefilePathAllocWithIO(io, allocator, root) orelse {
+        return try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, make.marker_names);
+    };
+    defer allocator.free(makefile_path);
+
+    const referenced_files = try make.collectReferencedFilesFromFileAllocWithIO(io, allocator, makefile_path);
+    defer {
+        for (referenced_files) |path| allocator.free(path);
+        allocator.free(referenced_files);
+    }
+
+    var signature: std.ArrayList(u8) = .empty;
+    errdefer signature.deinit(allocator);
+
+    for (referenced_files, 0..) |path, index| {
+        if (index == 0) try signature.appendSlice(allocator, "make-includes");
+        try build_signature.appendSignatureFileWithIO(io, allocator, &signature, path);
+    }
+
+    return try signature.toOwnedSlice(allocator);
+}
+
+fn findMakefilePathAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
+    for (make.marker_names) |marker| {
+        const candidate = try std.fs.path.join(allocator, &.{ root, marker });
+        defer allocator.free(candidate);
+        if (common.isRegularFileWithIO(io, candidate)) {
+            return try allocator.dupe(u8, candidate);
+        }
+    }
     return null;
 }
 
