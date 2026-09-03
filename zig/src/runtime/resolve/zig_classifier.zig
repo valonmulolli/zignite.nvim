@@ -12,6 +12,12 @@ pub fn shouldPreferProjectRunnerWithIO(
     const root = try findBuildRootAllocWithIO(io, allocator, context_path, project_root, 12) orelse return false;
     defer allocator.free(root);
 
+    const build_path = try std.fs.path.join(allocator, &.{ root, "build.zig" });
+    defer allocator.free(build_path);
+    const build_contents = project_common.readFileAllocWithIO(io, allocator, build_path) catch return false;
+    defer allocator.free(build_contents);
+    if (!buildDefinesRunStep(build_contents)) return false;
+
     const contents = project_common.readFileAllocWithIO(io, allocator, path) catch return false;
     defer allocator.free(contents);
 
@@ -125,6 +131,66 @@ pub fn sourceRequiresProjectModules(contents: []const u8) bool {
     return false;
 }
 
+pub fn buildDefinesRunStep(contents: []const u8) bool {
+    var i: usize = 0;
+    while (i < contents.len) {
+        const ch = contents[i];
+
+        if (ch == '/' and i + 1 < contents.len and contents[i + 1] == '/') {
+            i = skipToLineEnd(contents, i + 2);
+            continue;
+        }
+        if (ch == '/' and i + 1 < contents.len and contents[i + 1] == '*') {
+            i = skipBlockComment(contents, i + 2);
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            i = skipQuoted(contents, i + 1, ch);
+            continue;
+        }
+
+        if (!std.mem.startsWith(u8, contents[i..], "step")) {
+            i += 1;
+            continue;
+        }
+        if (i > 0 and isIdentifierChar(contents[i - 1])) {
+            i += 1;
+            continue;
+        }
+
+        var cursor = i + "step".len;
+        while (cursor < contents.len and isWhitespace(contents[cursor])) : (cursor += 1) {}
+        if (cursor >= contents.len or contents[cursor] != '(') {
+            i += "step".len;
+            continue;
+        }
+        cursor += 1;
+        while (cursor < contents.len and isWhitespace(contents[cursor])) : (cursor += 1) {}
+        if (cursor >= contents.len or contents[cursor] != '"') {
+            i += "step".len;
+            continue;
+        }
+
+        cursor += 1;
+        var name_end = cursor;
+        var escaped = false;
+        while (name_end < contents.len) : (name_end += 1) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (contents[name_end] == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (contents[name_end] == '"') break;
+        }
+        if (name_end < contents.len and std.mem.eql(u8, contents[cursor..name_end], "run")) return true;
+        i = if (name_end < contents.len) name_end + 1 else contents.len;
+    }
+    return false;
+}
+
 fn isProjectModuleImport(name: []const u8) bool {
     if (name.len == 0) return false;
     if (std.mem.eql(u8, name, "std")) return false;
@@ -132,6 +198,14 @@ fn isProjectModuleImport(name: []const u8) bool {
     if (std.mem.eql(u8, name, "root")) return false;
     if (std.mem.endsWith(u8, name, ".zig")) return false;
     return true;
+}
+
+fn isIdentifierChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_';
+}
+
+fn isWhitespace(ch: u8) bool {
+    return ch == ' ' or ch == '\t' or ch == '\n' or ch == '\r';
 }
 
 fn skipToLineEnd(contents: []const u8, start: usize) usize {
@@ -209,6 +283,23 @@ test "sourceRequiresProjectModules detects build-defined module imports" {
     ;
 
     try std.testing.expect(sourceRequiresProjectModules(contents));
+}
+
+test "buildDefinesRunStep detects conventional run steps" {
+    try std.testing.expect(buildDefinesRunStep(
+        "const run_step = b.step(\"run\", \"Run the app\");",
+    ));
+    try std.testing.expect(buildDefinesRunStep(
+        "const run_step = b.step(\n  \"run\",\n  \"Run the app\",\n);",
+    ));
+}
+
+test "buildDefinesRunStep ignores comments, strings, and other step names" {
+    const contents =
+        "// b.step(\"run\", \"comment\")\n" ++
+        "const text = \"b.step('run', 'string')\";\n" ++
+        "const check_step = b.step(\"check\", \"Check\");\n";
+    try std.testing.expect(!buildDefinesRunStep(contents));
 }
 
 test "findBuildRootAlloc walks parents from relative path" {
