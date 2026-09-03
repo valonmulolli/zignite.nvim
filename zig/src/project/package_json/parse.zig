@@ -104,7 +104,7 @@ pub fn parseScripts(
     contents: []const u8,
     names: *std.ArrayList([]u8),
 ) !void {
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, contents, .{ .max_value_len = 1000 });
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, contents, .{});
     defer parsed.deinit();
 
     const root = parsed.value;
@@ -155,6 +155,25 @@ test "parseScriptsLenient ignores malformed package json" {
 
     try parseScriptsLenient(allocator, "{ invalid json", &names);
     try std.testing.expectEqual(@as(usize, 0), names.items.len);
+}
+
+test "parseScripts accepts long script bodies" {
+    const allocator = std.testing.allocator;
+    const prefix = "{\"scripts\":{\"long-script\":\"";
+    const suffix = "\"}}";
+    const contents = try allocator.alloc(u8, prefix.len + 1001 + suffix.len);
+    defer allocator.free(contents);
+
+    @memcpy(contents[0..prefix.len], prefix);
+    @memset(contents[prefix.len .. prefix.len + 1001], 'x');
+    @memcpy(contents[prefix.len + 1001 ..], suffix);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+    try parseScripts(allocator, contents, &names);
+
+    try std.testing.expectEqual(@as(usize, 1), names.items.len);
+    try std.testing.expectEqualStrings("long-script", names.items[0]);
 }
 
 test "format package script command respects package manager" {
