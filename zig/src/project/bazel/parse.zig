@@ -139,6 +139,12 @@ fn parseRuleName(line: []const u8) ?[]const u8 {
     const start = index;
     index += 1;
     while (index < line.len and isIdentContinue(line[index])) : (index += 1) {}
+    while (index < line.len and line[index] == '.') {
+        index += 1;
+        if (index >= line.len or !isIdentStart(line[index])) return null;
+        index += 1;
+        while (index < line.len and isIdentContinue(line[index])) : (index += 1) {}
+    }
     const rule_name = line[start..index];
     while (index < line.len and isWhitespace(line[index])) : (index += 1) {}
     if (index >= line.len or line[index] != '(') return null;
@@ -446,6 +452,20 @@ test "parse bazel targets ignores assignments inside quoted attributes" {
 
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("real", targets[0].name);
+}
+
+test "parse bazel targets accepts qualified rule names" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(allocator, "native.cc_binary(\n" ++
+        "    name = \"native_app\",\n" ++
+        "    srcs = [\"main.cc\"],\n" ++
+        ")\n");
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("native.cc_binary", targets[0].rule_name);
+    try std.testing.expectEqualStrings("native_app", targets[0].name);
+    try std.testing.expect(targets[0].supports_run);
 }
 
 test "parse bazel targets rejects unsafe protocol names" {
