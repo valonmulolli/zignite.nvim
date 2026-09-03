@@ -192,6 +192,7 @@ fn collectIncludePathsAlloc(
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
         const line = common.stripTrailingCR(raw_line);
+        if (line.len > 0 and line[0] == '\t') continue;
         const trimmed = common.trimSpaces(stripHashComment(line));
         if (trimmed.len == 0) continue;
 
@@ -414,6 +415,30 @@ test "parse make targets accepts tabbed and escaped-space includes" {
     try std.testing.expectEqual(@as(usize, 2), names.items.len);
     try std.testing.expectEqualStrings("all", names.items[0]);
     try std.testing.expectEqualStrings("serve", names.items[1]);
+}
+
+test "make include traversal ignores recipe commands" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = "all:\n" ++
+        "\tinclude recipe-command.mk\n" ++
+        "include real-targets.mk\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "recipe-command.mk", .data = "wrong:\n\t@echo wrong\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "real-targets.mk", .data = "right:\n\t@echo right\n" });
+
+    const makefile_path = try tmp.dir.realPathFileAlloc(std.testing.io, "Makefile", allocator);
+    defer allocator.free(makefile_path);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTargetsFromFileAlloc(allocator, makefile_path, &names);
+
+    try std.testing.expectEqual(@as(usize, 2), names.items.len);
+    try std.testing.expectEqualStrings("all", names.items[0]);
+    try std.testing.expectEqualStrings("right", names.items[1]);
 }
 
 test "collectReferencedFilesFromFileAlloc includes local includes" {
