@@ -5,7 +5,14 @@ const pathing = @import("../../pathing.zig");
 pub const Target = struct {
     name: []u8,
     matched: bool,
+    exact_match: bool = false,
     artifact_path: ?[]u8 = null,
+};
+
+const MatchKind = enum {
+    none,
+    basename,
+    exact,
 };
 
 pub fn freeOwnedTargets(allocator: std.mem.Allocator, items: []Target) void {
@@ -136,7 +143,7 @@ fn commitBlock(
     const target = tokens[0];
     if (target.len == 0 or common.hasInvalidPayloadChars(target)) return;
 
-    var matched = false;
+    var match_kind: MatchKind = .none;
     if (relative_match_path != null or basename != null) {
         var index: usize = 1;
         while (index < tokens.len) : (index += 1) {
@@ -145,20 +152,19 @@ fn commitBlock(
             if (normalized_source.len == 0) continue;
             if (relative_match_path) |relative_path| {
                 if (std.mem.eql(u8, normalized_source, relative_path)) {
-                    matched = true;
+                    match_kind = .exact;
                     break;
                 }
             }
             if (basename) |file_basename| {
                 if (std.mem.eql(u8, normalized_source, file_basename)) {
-                    matched = true;
-                    break;
+                    match_kind = .basename;
+                    continue;
                 }
                 if (std.mem.endsWith(u8, normalized_source, file_basename)) {
                     const prefix_len = normalized_source.len - file_basename.len;
                     if (prefix_len > 0 and normalized_source[prefix_len - 1] == '/') {
-                        matched = true;
-                        break;
+                        match_kind = .basename;
                     }
                 }
             }
@@ -167,7 +173,8 @@ fn commitBlock(
 
     for (targets.items) |*item| {
         if (std.mem.eql(u8, item.name, target)) {
-            item.matched = item.matched or matched;
+            item.matched = item.matched or match_kind != .none;
+            item.exact_match = item.exact_match or match_kind == .exact;
             return;
         }
     }
@@ -175,7 +182,8 @@ fn commitBlock(
     const owned_name = try allocator.dupe(u8, target);
     targets.append(allocator, .{
         .name = owned_name,
-        .matched = matched,
+        .matched = match_kind != .none,
+        .exact_match = match_kind == .exact,
         .artifact_path = null,
     }) catch |err| {
         allocator.free(owned_name);
@@ -372,6 +380,23 @@ test "parse meson targets finds multiple commands on one line" {
     try std.testing.expectEqual(@as(usize, 2), targets.len);
     try std.testing.expect(!targets[0].matched);
     try std.testing.expect(targets[1].matched);
+}
+
+test "parse meson prefers exact source matches over basename matches" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "executable('first', 'src/a/main.cpp') executable('second', 'src/b/main.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/b/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expect(targets[0].matched);
+    try std.testing.expect(!targets[0].exact_match);
+    try std.testing.expect(targets[1].matched);
+    try std.testing.expect(targets[1].exact_match);
 }
 
 test "parse meson rejects unsafe target without shifting source arguments" {

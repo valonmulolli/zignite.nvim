@@ -5,6 +5,12 @@ const project_io = @import("../core/io.zig");
 const pathing = @import("../../pathing.zig");
 const parse = @import("parse.zig");
 
+const MatchKind = enum {
+    none,
+    basename,
+    exact,
+};
+
 pub fn parseTargets(
     allocator: std.mem.Allocator,
     cmake_lists_path: []const u8,
@@ -97,6 +103,7 @@ fn appendOrMergeTarget(
         if (!std.mem.eql(u8, existing.name, incoming.name)) continue;
 
         existing.matched = existing.matched or incoming.matched;
+        existing.exact_match = existing.exact_match or incoming.exact_match;
         if (existing.artifact_path == null and incoming.artifact_path != null) {
             existing.artifact_path = incoming.artifact_path;
         } else if (incoming.artifact_path) |artifact_path| {
@@ -138,7 +145,7 @@ fn parseExecutableTargetAlloc(
     const build_dir = try resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "build");
     defer if (build_dir) |value| allocator.free(value);
 
-    const matched = try targetMatches(
+    const match_kind = try targetMatchKind(
         allocator,
         root_value,
         source_dir,
@@ -156,40 +163,42 @@ fn parseExecutableTargetAlloc(
 
     return .{
         .name = try allocator.dupe(u8, name),
-        .matched = matched,
+        .matched = match_kind != .none,
+        .exact_match = match_kind == .exact,
         .artifact_path = artifact_path,
     };
 }
 
-fn targetMatches(
+fn targetMatchKind(
     allocator: std.mem.Allocator,
     root_value: std.json.Value,
     source_dir: ?[]const u8,
     normalized_root: []const u8,
     relative_match_path: ?[]const u8,
     basename: ?[]const u8,
-) !bool {
-    if (relative_match_path == null and basename == null) return false;
+) !MatchKind {
+    if (relative_match_path == null and basename == null) return .none;
 
-    const sources = getArrayField(root_value, "sources") orelse return false;
+    const sources = getArrayField(root_value, "sources") orelse return .none;
+    var match_kind: MatchKind = .none;
     for (sources) |source_value| {
         const raw_path = getStringField(source_value, "path") orelse continue;
         const relative_source = try resolveRelativePathAlloc(allocator, normalized_root, source_dir, raw_path);
         defer allocator.free(relative_source);
 
         if (relative_match_path) |match_value| {
-            if (std.mem.eql(u8, relative_source, match_value)) return true;
+            if (std.mem.eql(u8, relative_source, match_value)) return .exact;
         }
         if (basename) |basename_value| {
-            if (std.mem.eql(u8, relative_source, basename_value)) return true;
+            if (std.mem.eql(u8, relative_source, basename_value)) match_kind = .basename;
             if (std.mem.endsWith(u8, relative_source, basename_value)) {
                 const prefix_len = relative_source.len - basename_value.len;
-                if (prefix_len > 0 and relative_source[prefix_len - 1] == '/') return true;
+                if (prefix_len > 0 and relative_source[prefix_len - 1] == '/') match_kind = .basename;
             }
         }
     }
 
-    return false;
+    return match_kind;
 }
 
 fn extractArtifactPathAlloc(
