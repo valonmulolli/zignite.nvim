@@ -279,7 +279,28 @@ fn findEnclosedList(block: []const u8, open_idx: usize, open_ch: u8, close_ch: u
 
 fn findAssignmentValueStart(block: []const u8, key: []const u8) ?usize {
     var index: usize = 0;
-    while (index + key.len <= block.len) : (index += 1) {
+    var quote: ?u8 = null;
+    var escaped = false;
+    while (index < block.len) : (index += 1) {
+        const ch = block[index];
+        if (quote) |active_quote| {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (index + key.len > block.len) continue;
         if (!std.mem.eql(u8, block[index .. index + key.len], key)) continue;
         if (index > 0 and isIdentContinue(block[index - 1])) continue;
         if (index + key.len < block.len and isIdentContinue(block[index + key.len])) continue;
@@ -412,6 +433,19 @@ test "parse bazel targets preserves hashes inside quoted sources" {
     try std.testing.expect(targets[0].supports_run);
     try std.testing.expectEqual(@as(usize, 1), targets[0].source_entries.len);
     try std.testing.expectEqualStrings("tool#dev.py", targets[0].source_entries[0]);
+}
+
+test "parse bazel targets ignores assignments inside quoted attributes" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(allocator, "cc_binary(\n" ++
+        "    description = \"name = 'fake'\",\n" ++
+        "    name = \"real\",\n" ++
+        "    srcs = [\"main.cc\"],\n" ++
+        ")\n");
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
 }
 
 test "parse bazel targets rejects unsafe protocol names" {
