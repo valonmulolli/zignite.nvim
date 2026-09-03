@@ -212,13 +212,13 @@ pub fn discoverBuildRunPathAllocWithIO(
     for (candidate_dirs) |prefix| {
         const base_path = try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, prefix, target });
         defer allocator.free(base_path);
-        if (buildRelativePathExistsWithIO(io, allocator, root, base_path)) {
+        if (try buildRelativePathExistsWithIO(io, allocator, root, base_path)) {
             return try allocator.dupe(u8, base_path);
         }
 
         const exe_path = try std.fmt.allocPrint(allocator, "./{s}/{s}{s}", .{ build_dir, prefix, target_exe });
         defer allocator.free(exe_path);
-        if (buildRelativePathExistsWithIO(io, allocator, root, exe_path)) {
+        if (try buildRelativePathExistsWithIO(io, allocator, root, exe_path)) {
             return try allocator.dupe(u8, exe_path);
         }
     }
@@ -251,8 +251,8 @@ pub fn discoverBuildRunPathAllocWithIO(
     return null;
 }
 
-fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) bool {
-    const full_path = std.fs.path.join(allocator, &.{ root, relative_path }) catch return false;
+fn buildRelativePathExistsWithIO(io: std.Io, allocator: std.mem.Allocator, root: []const u8, relative_path: []const u8) !bool {
+    const full_path = try std.fs.path.join(allocator, &.{ root, relative_path });
     defer allocator.free(full_path);
     return project_common.isRegularFileWithIO(io, full_path);
 }
@@ -427,6 +427,32 @@ test "discoverBuildRunPathAlloc prefers common build output directories" {
 
     try std.testing.expect(run_path != null);
     try std.testing.expectEqualStrings("./build/bin/demo-app", run_path.?);
+}
+
+fn discoverBuildRunPathForAllocationFailure(allocator: std.mem.Allocator, root: []const u8) !void {
+    const run_path = try discoverBuildRunPathAlloc(allocator, root, "build", "demo-app");
+    defer if (run_path) |value| allocator.free(value);
+}
+
+test "discoverBuildRunPathAlloc propagates allocation failures" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "build/bin");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "build/bin/demo-app",
+        .data = "",
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        discoverBuildRunPathForAllocationFailure,
+        .{root},
+    );
 }
 
 test "discoverBuildRunPathAlloc ignores generated build internals" {
