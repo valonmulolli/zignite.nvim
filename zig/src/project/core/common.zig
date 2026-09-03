@@ -86,15 +86,32 @@ pub fn stripTrailingCR(text: []const u8) []const u8 {
 pub fn normalizePathAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
     if (value.len == 0) return allocator.dupe(u8, "");
 
-    const absolute = value[0] == '/' or value[0] == '\\';
+    const RootKind = enum { relative, posix, drive, unc };
+    const root_kind: RootKind = if (value.len >= 3 and std.ascii.isAlphabetic(value[0]) and value[1] == ':' and isPathSeparator(value[2]))
+        .drive
+    else if (value.len >= 2 and isPathSeparator(value[0]) and isPathSeparator(value[1]))
+        .unc
+    else if (isPathSeparator(value[0]))
+        .posix
+    else
+        .relative;
+    const absolute = root_kind != .relative;
+    const root_part_count: usize = if (root_kind == .unc) 2 else 0;
+
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
 
-    var it = std.mem.tokenizeAny(u8, value, "/\\");
+    const tokenized_path = switch (root_kind) {
+        .relative => value,
+        .posix => value[1..],
+        .drive => value[2..],
+        .unc => value[2..],
+    };
+    var it = std.mem.tokenizeAny(u8, tokenized_path, "/\\");
     while (it.next()) |part| {
         if (std.mem.eql(u8, part, ".")) continue;
         if (std.mem.eql(u8, part, "..")) {
-            if (parts.items.len > 0 and !std.mem.eql(u8, parts.items[parts.items.len - 1], "..")) {
+            if (parts.items.len > root_part_count and !std.mem.eql(u8, parts.items[parts.items.len - 1], "..")) {
                 _ = parts.pop();
             } else if (!absolute) {
                 try parts.append(allocator, part);
@@ -106,15 +123,32 @@ pub fn normalizePathAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
 
     var normalized: std.ArrayList(u8) = .empty;
     errdefer normalized.deinit(allocator);
-    if (absolute) try normalized.append(allocator, '/');
+    switch (root_kind) {
+        .relative => {},
+        .posix => try normalized.append(allocator, '/'),
+        .drive => {
+            try normalized.appendSlice(allocator, value[0..2]);
+            if (parts.items.len == 0) try normalized.append(allocator, '/');
+        },
+        .unc => try normalized.appendSlice(allocator, "//"),
+    }
     for (parts.items, 0..) |part, index| {
-        if (index > 0) try normalized.append(allocator, '/');
+        if (index > 0 or root_kind == .drive) try normalized.append(allocator, '/');
         try normalized.appendSlice(allocator, part);
     }
     if (normalized.items.len == 0) {
-        try normalized.append(allocator, if (absolute) '/' else '.');
+        switch (root_kind) {
+            .relative => try normalized.append(allocator, '.'),
+            .posix => try normalized.append(allocator, '/'),
+            .drive => try normalized.append(allocator, '/'),
+            .unc => try normalized.appendSlice(allocator, "//"),
+        }
     }
     return try normalized.toOwnedSlice(allocator);
+}
+
+fn isPathSeparator(ch: u8) bool {
+    return ch == '/' or ch == '\\';
 }
 
 pub fn isRegularFileWithIO(io: std.Io, path: []const u8) bool {
@@ -133,7 +167,7 @@ pub fn isPathWithinRoot(root: []const u8, filepath: []const u8) bool {
 }
 
 fn isWindowsAbsolutePath(path: []const u8) bool {
-    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and path[2] == '/';
+    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isPathSeparator(path[2]);
 }
 
 pub fn isPathWithinRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) !bool {
@@ -239,6 +273,22 @@ test "normalizePathAlloc collapses separators and trims trailing slash" {
     defer allocator.free(normalized);
 
     try std.testing.expectEqualStrings("C:/work/demo/src", normalized);
+}
+
+test "normalizePathAlloc preserves drive roots while resolving parents" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalizePathAlloc(allocator, "C:/../work/demo");
+    defer allocator.free(normalized);
+
+    try std.testing.expectEqualStrings("C:/work/demo", normalized);
+}
+
+test "normalizePathAlloc preserves UNC roots while resolving parents" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalizePathAlloc(allocator, "\\\\server\\share\\..\\app");
+    defer allocator.free(normalized);
+
+    try std.testing.expectEqualStrings("//server/share/app", normalized);
 }
 
 test "hasControlChars detects newline, tab, and DEL" {
