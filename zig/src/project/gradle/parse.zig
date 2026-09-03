@@ -147,8 +147,14 @@ fn collectDeclaredTasks(
         const line = common.trimSpaces(common.stripTrailingCR(raw_line));
         if (line.len == 0) continue;
 
-        if (extractQuotedTaskName(line)) |name| {
-            try common.pushUniqueName(allocator, names, name);
+        var quoted_task_index: usize = 0;
+        var found_quoted_task = false;
+        while (extractNextQuotedTaskName(line, quoted_task_index)) |match| {
+            try common.pushUniqueName(allocator, names, match.name);
+            found_quoted_task = true;
+            quoted_task_index = match.next_index;
+        }
+        if (found_quoted_task) {
             continue;
         }
 
@@ -163,7 +169,12 @@ fn collectDeclaredTasks(
     }
 }
 
-fn extractQuotedTaskName(line: []const u8) ?[]const u8 {
+const QuotedTaskMatch = struct {
+    name: []const u8,
+    next_index: usize,
+};
+
+fn extractNextQuotedTaskName(line: []const u8, start_index: usize) ?QuotedTaskMatch {
     const prefixes = [_][]const u8{
         "tasks.register",
         "tasks.create",
@@ -171,23 +182,31 @@ fn extractQuotedTaskName(line: []const u8) ?[]const u8 {
         "task(",
     };
 
+    var prefix_index: ?usize = null;
+    var prefix_len: usize = 0;
     for (prefixes) |prefix| {
-        const index = findCodePrefix(line, prefix) orelse continue;
-        const rest = line[index + prefix.len ..];
-        const quote_index = std.mem.findAny(u8, rest, "\"'") orelse continue;
-        const quote = rest[quote_index];
-        const name_start = quote_index + 1;
-        const name_end = std.mem.findScalarPos(u8, rest, name_start, quote) orelse continue;
-        const name = rest[name_start..name_end];
-        if (name.len == 0) continue;
-        return name;
+        const index = findCodePrefix(line, prefix, start_index) orelse continue;
+        if (prefix_index == null or index < prefix_index.?) {
+            prefix_index = index;
+            prefix_len = prefix.len;
+        }
     }
-
-    return null;
+    const index = prefix_index orelse return null;
+    const rest = line[index + prefix_len ..];
+    const quote_index = std.mem.findAny(u8, rest, "\"'") orelse return null;
+    const quote = rest[quote_index];
+    const name_start = quote_index + 1;
+    const name_end = std.mem.findScalarPos(u8, rest, name_start, quote) orelse return null;
+    const name = rest[name_start..name_end];
+    if (name.len == 0) return null;
+    return .{
+        .name = name,
+        .next_index = index + prefix_len + name_end + 1,
+    };
 }
 
-fn findCodePrefix(line: []const u8, prefix: []const u8) ?usize {
-    var index: usize = 0;
+fn findCodePrefix(line: []const u8, prefix: []const u8, start_index: usize) ?usize {
+    var index: usize = start_index;
     var quote: u8 = 0;
     var triple_quote = false;
 
@@ -324,6 +343,22 @@ test "parse gradle tasks discovers declared tasks across common styles" {
     try std.testing.expect(containsName(names.items, "smokeTest"));
     try std.testing.expect(containsName(names.items, "e2e"));
     try std.testing.expect(containsName(names.items, "dist"));
+}
+
+test "parse gradle tasks discovers multiple quoted declarations on one line" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator, "tasks.register(\"first\"); tasks.register(\"second\")\n" ++
+        "tasks.create(\"third\"); tasks.named(\"fourth\")\n" ++
+        "task(\"fifth\")", &names);
+
+    try std.testing.expect(containsName(names.items, "first"));
+    try std.testing.expect(containsName(names.items, "second"));
+    try std.testing.expect(containsName(names.items, "third"));
+    try std.testing.expect(containsName(names.items, "fourth"));
+    try std.testing.expect(containsName(names.items, "fifth"));
 }
 
 test "parse gradle tasks ignores commented declarations" {
