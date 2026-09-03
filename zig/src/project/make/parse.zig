@@ -2,6 +2,9 @@ const std = @import("std");
 const common = @import("../core/common.zig");
 const project_io = @import("../core/io.zig");
 
+const MAX_INCLUDE_DEPTH: usize = 64;
+const MAX_INCLUDED_FILES: usize = 256;
+
 pub fn parseTargetsFromFileAlloc(
     allocator: std.mem.Allocator,
     makefile_path: []const u8,
@@ -19,7 +22,7 @@ pub fn parseTargetsFromFileAllocWithIO(
 ) !void {
     var visited: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &visited);
-    try parseTargetsFromFileInner(io, allocator, makefile_path, names, &visited);
+    try parseTargetsFromFileInner(io, allocator, makefile_path, names, &visited, 0);
 }
 
 pub fn collectReferencedFilesFromFileAlloc(
@@ -38,7 +41,7 @@ pub fn collectReferencedFilesFromFileAllocWithIO(
     var visited: std.ArrayList([]u8) = .empty;
     errdefer common.deinitOwnedNameList(allocator, &visited);
 
-    try collectReferencedFilesInner(io, allocator, makefile_path, &visited);
+    try collectReferencedFilesInner(io, allocator, makefile_path, &visited, 0);
     return try visited.toOwnedSlice(allocator);
 }
 
@@ -48,6 +51,7 @@ fn parseTargetsFromFileInner(
     makefile_path: []const u8,
     names: *std.ArrayList([]u8),
     visited: *std.ArrayList([]u8),
+    depth: usize,
 ) !void {
     const normalized = try common.normalizePathAlloc(allocator, makefile_path);
     defer allocator.free(normalized);
@@ -55,6 +59,7 @@ fn parseTargetsFromFileInner(
     for (visited.items) |existing| {
         if (std.mem.eql(u8, existing, normalized)) return;
     }
+    if (visited.items.len >= MAX_INCLUDED_FILES) return;
     try appendOwnedName(allocator, visited, normalized);
 
     const contents = try common.readFileAllocWithIO(io, allocator, makefile_path);
@@ -65,9 +70,10 @@ fn parseTargetsFromFileInner(
     var includes = try collectIncludePathsAlloc(allocator, contents, current_dir);
     defer common.deinitOwnedNameList(allocator, &includes);
 
+    if (depth >= MAX_INCLUDE_DEPTH) return;
     for (includes.items) |include_path| {
         if (!common.isRegularFileWithIO(io, include_path)) continue;
-        try parseTargetsFromFileInner(io, allocator, include_path, names, visited);
+        try parseTargetsFromFileInner(io, allocator, include_path, names, visited, depth + 1);
     }
 }
 
@@ -76,6 +82,7 @@ fn collectReferencedFilesInner(
     allocator: std.mem.Allocator,
     makefile_path: []const u8,
     visited: *std.ArrayList([]u8),
+    depth: usize,
 ) !void {
     const normalized = try common.normalizePathAlloc(allocator, makefile_path);
     defer allocator.free(normalized);
@@ -83,6 +90,7 @@ fn collectReferencedFilesInner(
     for (visited.items) |existing| {
         if (std.mem.eql(u8, existing, normalized)) return;
     }
+    if (visited.items.len >= MAX_INCLUDED_FILES) return;
     try appendOwnedName(allocator, visited, normalized);
 
     const contents = try common.readFileAllocWithIO(io, allocator, makefile_path);
@@ -92,9 +100,10 @@ fn collectReferencedFilesInner(
     var includes = try collectIncludePathsAlloc(allocator, contents, current_dir);
     defer common.deinitOwnedNameList(allocator, &includes);
 
+    if (depth >= MAX_INCLUDE_DEPTH) return;
     for (includes.items) |include_path| {
         if (!common.isRegularFileWithIO(io, include_path)) continue;
-        try collectReferencedFilesInner(io, allocator, include_path, visited);
+        try collectReferencedFilesInner(io, allocator, include_path, visited, depth + 1);
     }
 }
 
@@ -377,4 +386,35 @@ test "collectReferencedFilesFromFileAlloc includes local includes" {
     try std.testing.expectEqual(@as(usize, 2), files.len);
     try std.testing.expectEqualStrings(makefile_path, files[0]);
     try std.testing.expectEqualStrings(included_path, files[1]);
+}
+
+test "make include traversal is bounded" {
+    const allocator = std.testing.allocator;
+    const file_count = MAX_INCLUDE_DEPTH + 3;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var index: usize = 0;
+    while (index < file_count) : (index += 1) {
+        var file_name_buf: [64]u8 = undefined;
+        const file_name = try std.fmt.bufPrint(&file_name_buf, "chain-{d}.mk", .{index});
+        var contents_buf: [128]u8 = undefined;
+        const contents = if (index + 1 < file_count)
+            try std.fmt.bufPrint(&contents_buf, "include chain-{d}.mk\n", .{index + 1})
+        else
+            "leaf:\n";
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = file_name, .data = contents });
+    }
+
+    const makefile_path = try tmp.dir.realPathFileAlloc(std.testing.io, "chain-0.mk", allocator);
+    defer allocator.free(makefile_path);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+    try parseTargetsFromFileAlloc(allocator, makefile_path, &names);
+    try std.testing.expect(names.items.len <= MAX_INCLUDE_DEPTH + 1);
+
+    const files = try collectReferencedFilesFromFileAlloc(allocator, makefile_path);
+    defer common.freeOwnedNameList(allocator, files);
+    try std.testing.expect(files.len <= MAX_INCLUDE_DEPTH + 1);
 }
