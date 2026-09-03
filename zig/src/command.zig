@@ -46,6 +46,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         }
         break :blk try std.process.spawn(io, .{
             .argv = child_args,
+            .pgid = childProcessGroupId(),
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
@@ -56,6 +57,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         const shell_args = [_][]const u8{ shell, shell_flag, full_command };
         break :blk try std.process.spawn(io, .{
             .argv = &shell_args,
+            .pgid = childProcessGroupId(),
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
@@ -82,6 +84,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         // wait() failed (e.g. platform error). The child may still be alive;
         // kill it best-effort before propagating the error.
         stopTimeoutWatcher(io, &finished, &timeout_future);
+        requestChildTermination(child.id.?);
         child.kill(io);
         return err;
     };
@@ -114,6 +117,10 @@ fn termToExitCode(term: std.process.Child.Term) u8 {
         },
         .unknown => |status| if (status > 255) 255 else @as(u8, @intCast(status)),
     };
+}
+
+fn childProcessGroupId() ?std.posix.pid_t {
+    return if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) null else 0;
 }
 
 test "termToExitCode passes through small exit codes" {
@@ -170,7 +177,11 @@ fn requestChildTermination(child_id: std.process.Child.Id) void {
         },
         .wasi => {},
         else => {
-            _ = std.posix.kill(child_id, .TERM) catch {};
+            // The runner can start a shell or a process tree. Signal the
+            // dedicated group so descendants do not outlive the timeout.
+            _ = std.posix.kill(-child_id, .TERM) catch {
+                _ = std.posix.kill(child_id, .TERM) catch {};
+            };
         },
     }
 }
@@ -186,6 +197,7 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
 
     var child = std.process.spawn(io, .{
         .argv = &shell_args,
+        .pgid = childProcessGroupId(),
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
@@ -208,6 +220,40 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
 
     _ = child.wait(io) catch |err| {
         std.log.warn("Failed to wait for cleanup command: {}", .{err});
+        requestChildTermination(child.id.?);
         child.kill(io);
     };
+}
+
+test "timeout termination includes descendant processes" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const marker = try std.fs.path.join(allocator, &.{ root, "marker" });
+    defer allocator.free(marker);
+    const script = try std.fmt.allocPrint(allocator, "(sleep 0.2; touch '{s}') & wait", .{marker});
+    defer allocator.free(script);
+    const shell_args = [_][]const u8{ "/bin/sh", "-c", script };
+
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &shell_args,
+        .pgid = childProcessGroupId(),
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    requestChildTermination(child.id.?);
+    _ = try child.wait(std.testing.io);
+
+    std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(350), .awake) catch unreachable;
+    if (tmp.dir.access(std.testing.io, "marker", .{})) |_| {
+        return error.DescendantSurvivedTimeout;
+    } else |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    }
 }
