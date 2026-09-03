@@ -54,36 +54,15 @@ pub fn parseTargets(
     defer deinitVariables(allocator, &variables);
     try collectSetVariables(allocator, contents, &variables);
 
-    var capture: ?std.ArrayList(u8) = null;
-    defer if (capture) |*list| list.deinit(allocator);
-    var depth: isize = 0;
-
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture == null) {
-            const start_idx = indexOfAddExecutable(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line[start_idx..]);
-            depth = countParenDelta(line[start_idx..]);
-            if (depth <= 0) {
-                try commitBlock(allocator, list.items, project_name, relative_match_path, basename, variables.items, &targets);
-                list.deinit(allocator);
-            } else {
-                capture = list;
-            }
-        } else {
-            try capture.?.append(allocator, ' ');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
-                try commitBlock(allocator, capture.?.items, project_name, relative_match_path, basename, variables.items, &targets);
-                capture.?.deinit(allocator);
-                capture = null;
-            }
-        }
-    }
+    try parseExecutableBlocks(
+        allocator,
+        contents,
+        project_name,
+        relative_match_path,
+        basename,
+        variables.items,
+        &targets,
+    );
 
     try applyTargetSources(allocator, contents, project_name, relative_match_path, basename, variables.items, &targets);
 
@@ -160,6 +139,85 @@ fn indexOfAddExecutable(line: []const u8) ?usize {
     return indexOfCommandCall(line, "add_executable");
 }
 
+fn parseExecutableBlocks(
+    allocator: std.mem.Allocator,
+    contents: []const u8,
+    project_name: ?[]const u8,
+    relative_match_path: ?[]const u8,
+    basename: ?[]const u8,
+    variables: []const Variable,
+    targets: *std.ArrayList(Target),
+) !void {
+    const sanitized = try stripHashCommentsAlloc(allocator, contents);
+    defer allocator.free(sanitized);
+
+    var cursor: usize = 0;
+    while (cursor < sanitized.len) {
+        const relative_start = indexOfAddExecutable(sanitized[cursor..]) orelse break;
+        const start = cursor + relative_start;
+        const relative_end = findMatchingParen(sanitized[start..]) orelse break;
+        const end = start + relative_end + 1;
+        try commitBlock(
+            allocator,
+            sanitized[start..end],
+            project_name,
+            relative_match_path,
+            basename,
+            variables,
+            targets,
+        );
+        cursor = end;
+    }
+}
+
+fn stripHashCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
+    var sanitized: std.ArrayList(u8) = .empty;
+    errdefer sanitized.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw_line| {
+        try sanitized.appendSlice(allocator, stripHashComment(common.stripTrailingCR(raw_line)));
+        try sanitized.append(allocator, '\n');
+    }
+
+    return try sanitized.toOwnedSlice(allocator);
+}
+
+fn findMatchingParen(text: []const u8) ?usize {
+    const open_idx = std.mem.findScalar(u8, text, '(') orelse return null;
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
+
+    var index = open_idx;
+    while (index < text.len) : (index += 1) {
+        const ch = text[index];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quote) |active_quote| {
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '(') {
+            depth += 1;
+        } else if (ch == ')') {
+            depth -= 1;
+            if (depth == 0) return index;
+        }
+    }
+    return null;
+}
+
 fn indexOfSet(line: []const u8) ?usize {
     return indexOfCommandCall(line, "set");
 }
@@ -213,7 +271,7 @@ fn isCmakeIdentChar(ch: u8) bool {
 
 fn extractAddExecutableArgs(block: []const u8) ?[]const u8 {
     const open_idx = std.mem.findScalar(u8, block, '(') orelse return null;
-    const close_idx = std.mem.lastIndexOfScalar(u8, block, ')') orelse return null;
+    const close_idx = findMatchingParen(block) orelse return null;
     if (close_idx <= open_idx) return null;
     return block[open_idx + 1 .. close_idx];
 }
@@ -713,6 +771,23 @@ test "parse cmake targets resolves project name and matches relative source" {
     try std.testing.expect(targets[0].matched);
     try std.testing.expectEqualStrings("helper", targets[1].name);
     try std.testing.expect(!targets[1].matched);
+}
+
+test "parse cmake targets finds multiple commands on one line" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "add_executable(first src/one.cpp) add_executable(second src/two.cpp)\n",
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/two.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expectEqualStrings("first", targets[0].name);
+    try std.testing.expect(!targets[0].matched);
+    try std.testing.expectEqualStrings("second", targets[1].name);
+    try std.testing.expect(targets[1].matched);
 }
 
 test "parse cmake resolves project name across multiline project call" {
