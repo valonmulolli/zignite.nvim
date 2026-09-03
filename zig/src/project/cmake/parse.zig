@@ -117,6 +117,15 @@ fn commitBlock(
     const target = resolveToken(tokens[index], project_name);
     if (target.len == 0 or common.hasInvalidPayloadChars(target) or std.mem.find(u8, target, "${") != null) return;
 
+    // IMPORTED and ALIAS declarations name existing targets; they do not
+    // create an artifact that `cmake --build --target` can build.
+    if (index + 1 < tokens.len and
+        (std.ascii.eqlIgnoreCase(tokens[index + 1], "IMPORTED") or
+            std.ascii.eqlIgnoreCase(tokens[index + 1], "ALIAS")))
+    {
+        return;
+    }
+
     var matched = false;
     if (relative_match_path != null or basename != null) {
         var source_index = index + 1;
@@ -768,6 +777,21 @@ test "parse cmake ignores command names inside strings and identifiers" {
     const targets = try parseTargets(
         allocator,
         "message(\"project(fake)\")\nmessage(\"add_executable(fake)\")\nmyproject(wrong)\nset(PROJECT_NAME wrong)\nproject(real)\nadd_executable(${PROJECT_NAME} src/main.cpp)\n",
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse cmake ignores imported and alias executable targets" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "project(demo)\nadd_executable(imported IMPORTED GLOBAL)\nadd_executable(alias ALIAS imported)\nadd_executable(real src/main.cpp)\n",
         "/tmp/cmakeproj/CMakeLists.txt",
         "/tmp/cmakeproj/src/main.cpp",
     );
