@@ -6,7 +6,7 @@ pub fn parseGoals(
     contents: []const u8,
     names: *std.ArrayList([]u8),
 ) !void {
-    const source = try stripXmlCommentsAlloc(allocator, contents);
+    const source = try sanitizeXmlAlloc(allocator, contents);
     defer allocator.free(source);
 
     try common.pushUniqueName(allocator, names, "compile");
@@ -29,22 +29,33 @@ pub fn parseGoals(
     }
 }
 
-fn stripXmlCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
+fn sanitizeXmlAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
     const source = try allocator.alloc(u8, contents.len);
     errdefer allocator.free(source);
 
     var input_index: usize = 0;
     var output_index: usize = 0;
     var comment = false;
+    var cdata = false;
 
     while (input_index < contents.len) {
-        if (!comment and input_index + 3 < contents.len and
+        if (!comment and !cdata and input_index + 3 < contents.len and
             std.mem.eql(u8, contents[input_index .. input_index + 4], "<!--"))
         {
             @memset(source[output_index .. output_index + 4], ' ');
             output_index += 4;
             input_index += 4;
             comment = true;
+            continue;
+        }
+
+        if (!comment and !cdata and input_index + "<![CDATA[".len <= contents.len and
+            std.mem.eql(u8, contents[input_index .. input_index + "<![CDATA[".len], "<![CDATA["))
+        {
+            @memset(source[output_index .. output_index + "<![CDATA[".len], ' ');
+            output_index += "<![CDATA[".len;
+            input_index += "<![CDATA[".len;
+            cdata = true;
             continue;
         }
 
@@ -56,6 +67,22 @@ fn stripXmlCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]
                 output_index += 3;
                 input_index += 3;
                 comment = false;
+            } else {
+                source[output_index] = if (contents[input_index] == '\n') '\n' else ' ';
+                output_index += 1;
+                input_index += 1;
+            }
+            continue;
+        }
+
+        if (cdata) {
+            if (input_index + 2 < contents.len and
+                std.mem.eql(u8, contents[input_index .. input_index + 3], "]]>"))
+            {
+                @memset(source[output_index .. output_index + 3], ' ');
+                output_index += 3;
+                input_index += 3;
+                cdata = false;
             } else {
                 source[output_index] = if (contents[input_index] == '\n') '\n' else ' ';
                 output_index += 1;
@@ -217,6 +244,7 @@ test "parse maven goals ignores markers outside plugin blocks" {
     try parseGoals(allocator,
         \\<project>
         \\  <description>spring-boot:run and &lt;goal&gt;apply&lt;/goal&gt;</description>
+        \\  <properties><![CDATA[<plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin>]]></properties>
         \\  <build>
         \\    <plugins>
         \\      <plugin>
