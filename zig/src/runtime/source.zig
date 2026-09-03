@@ -232,7 +232,7 @@ fn isSafePathComponent(value: []const u8) bool {
     if (value.len == 0) return false;
     if (std.mem.indexOfScalar(u8, value, 0) != null) return false;
     if (std.mem.indexOfScalar(u8, value, '\n') != null) return false;
-    var it = std.mem.tokenizeAny(u8, value, "/");
+    var it = std.mem.tokenizeAny(u8, value, "/\\");
     while (it.next()) |part| {
         if (std.mem.eql(u8, part, "..")) return false;
     }
@@ -552,4 +552,9 @@ test "pruneScratchRootBestEffort keeps current file and bounds entry count" {
     const contents = try dir.readFileAlloc(std.testing.io, std.fs.path.basename(current_path.?), allocator, .limited(4096));
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("pub fn main() void {}\n", contents);
+}
+
+test "scratch root rejects parent components across path separators" {
+    try std.testing.expect(!isSafePathComponent("/cache/../outside"));
+    try std.testing.expect(!isSafePathComponent("C:\\cache\\..\\outside"));
 }
