@@ -195,18 +195,10 @@ fn collectIncludePathsAlloc(
         const trimmed = common.trimSpaces(stripHashComment(line));
         if (trimmed.len == 0) continue;
 
-        const remainder = if (std.mem.startsWith(u8, trimmed, "include "))
-            trimmed["include ".len..]
-        else if (std.mem.startsWith(u8, trimmed, "-include "))
-            trimmed["-include ".len..]
-        else if (std.mem.startsWith(u8, trimmed, "sinclude "))
-            trimmed["sinclude ".len..]
-        else
-            continue;
-
-        var path_it = std.mem.tokenizeScalar(u8, remainder, ' ');
-        while (path_it.next()) |raw_value| {
-            const value = common.trimSpaces(raw_value);
+        const remainder = parseIncludeDirective(trimmed) orelse continue;
+        var cursor: usize = 0;
+        while (try nextIncludePathAlloc(allocator, remainder, &cursor)) |value| {
+            defer allocator.free(value);
             if (!isSupportedIncludePath(value)) continue;
 
             const include_path = if (std.fs.path.isAbsolute(value))
@@ -216,13 +208,56 @@ fn collectIncludePathsAlloc(
                 defer allocator.free(joined);
                 break :blk try common.normalizePathAlloc(allocator, joined);
             };
-            errdefer allocator.free(include_path);
+            defer allocator.free(include_path);
             try common.pushUniqueName(allocator, &includes, include_path);
-            allocator.free(include_path);
         }
     }
 
     return includes;
+}
+
+fn parseIncludeDirective(line: []const u8) ?[]const u8 {
+    var keyword_end: usize = 0;
+    while (keyword_end < line.len and !isIncludeWhitespace(line[keyword_end])) : (keyword_end += 1) {}
+
+    const keyword = line[0..keyword_end];
+    if (!std.mem.eql(u8, keyword, "include") and
+        !std.mem.eql(u8, keyword, "-include") and
+        !std.mem.eql(u8, keyword, "sinclude")) return null;
+    return line[keyword_end..];
+}
+
+fn nextIncludePathAlloc(
+    allocator: std.mem.Allocator,
+    remainder: []const u8,
+    cursor: *usize,
+) !?[]u8 {
+    while (cursor.* < remainder.len and isIncludeWhitespace(remainder[cursor.*])) : (cursor.* += 1) {}
+    if (cursor.* >= remainder.len) return null;
+
+    var path: std.ArrayList(u8) = .empty;
+    errdefer path.deinit(allocator);
+
+    while (cursor.* < remainder.len) {
+        const ch = remainder[cursor.*];
+        if (isIncludeWhitespace(ch)) break;
+
+        if (ch == '\\' and cursor.* + 1 < remainder.len) {
+            cursor.* += 1;
+            try path.append(allocator, remainder[cursor.*]);
+            cursor.* += 1;
+            continue;
+        }
+
+        try path.append(allocator, ch);
+        cursor.* += 1;
+    }
+
+    return try path.toOwnedSlice(allocator);
+}
+
+fn isIncludeWhitespace(ch: u8) bool {
+    return ch == ' ' or ch == '\t';
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
@@ -357,6 +392,28 @@ test "parse make targets follows local includes" {
     try std.testing.expectEqualStrings("all", names.items[0]);
     try std.testing.expectEqualStrings("serve", names.items[1]);
     try std.testing.expectEqualStrings("verify", names.items[2]);
+}
+
+test "parse make targets accepts tabbed and escaped-space includes" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "dir with spaces");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = "include\tdir\\ with\\ spaces/targets.mk\nall:\n\t@echo all\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dir with spaces/targets.mk", .data = "serve:\n\t@echo serve\n" });
+
+    const makefile_path = try tmp.dir.realPathFileAlloc(std.testing.io, "Makefile", allocator);
+    defer allocator.free(makefile_path);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTargetsFromFileAlloc(allocator, makefile_path, &names);
+
+    try std.testing.expectEqual(@as(usize, 2), names.items.len);
+    try std.testing.expectEqualStrings("all", names.items[0]);
+    try std.testing.expectEqualStrings("serve", names.items[1]);
 }
 
 test "collectReferencedFilesFromFileAlloc includes local includes" {
