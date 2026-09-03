@@ -59,7 +59,10 @@ pub fn appendSignatureFileWithIO(
 }
 
 pub fn fileMtimeKeyAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
-    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return null,
+        else => return err,
+    };
     defer file.close(io);
 
     const stat = try file.stat(io);
@@ -79,4 +82,11 @@ test "buildMarkerSignatureAlloc marks missing files" {
 
     try std.testing.expect(std.mem.find(u8, signature, "present.txt:missing") != null);
     try std.testing.expect(std.mem.find(u8, signature, "missing.txt:missing") != null);
+}
+
+test "fileMtimeKeyAlloc propagates invalid paths" {
+    try std.testing.expectError(
+        error.BadPathName,
+        fileMtimeKeyAllocWithIO(std.testing.io, std.testing.allocator, "invalid\x00path"),
+    );
 }
