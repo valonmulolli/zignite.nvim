@@ -73,19 +73,80 @@ fn stripXmlCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]
 }
 
 fn containsExecJava(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "<artifactId>exec-maven-plugin</artifactId>") != null or std.mem.find(u8, contents, "<goal>java</goal>") != null;
+    return containsPluginArtifact(contents, "exec-maven-plugin");
 }
 
 fn containsSpringBootRun(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "<artifactId>spring-boot-maven-plugin</artifactId>") != null or std.mem.find(u8, contents, "spring-boot:run") != null;
+    return containsPluginArtifact(contents, "spring-boot-maven-plugin");
 }
 
 fn containsIntegrationTest(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "<artifactId>maven-failsafe-plugin</artifactId>") != null or std.mem.find(u8, contents, "<goal>integration-test</goal>") != null or std.mem.find(u8, contents, "<goal>verify</goal>") != null;
+    return containsPluginArtifact(contents, "maven-failsafe-plugin");
 }
 
 fn containsSpotlessApply(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "<artifactId>spotless-maven-plugin</artifactId>") != null or std.mem.find(u8, contents, "spotless:apply") != null or std.mem.find(u8, contents, "<goal>apply</goal>") != null;
+    return containsPluginArtifact(contents, "spotless-maven-plugin");
+}
+
+const PluginBlock = struct {
+    contents: []const u8,
+    next_index: usize,
+};
+
+fn containsPluginArtifact(contents: []const u8, artifact_id: []const u8) bool {
+    var search_index: usize = 0;
+    while (findPluginBlock(contents, search_index)) |plugin| {
+        if (containsArtifactId(plugin.contents, artifact_id)) return true;
+        search_index = plugin.next_index;
+    }
+    return false;
+}
+
+fn findPluginBlock(contents: []const u8, start_index: usize) ?PluginBlock {
+    var search_index = start_index;
+    while (std.mem.find(u8, contents[search_index..], "<plugin")) |relative_index| {
+        const open_index = search_index + relative_index;
+        const name_end = open_index + "<plugin".len;
+        if (name_end < contents.len and
+            (contents[name_end] == '>' or isXmlSpace(contents[name_end])))
+        {
+            const open_end = std.mem.findScalar(u8, contents[name_end..], '>') orelse return null;
+            const body_start = name_end + open_end + 1;
+            const close_relative = std.mem.find(u8, contents[body_start..], "</plugin>") orelse return null;
+            const close_index = body_start + close_relative;
+            return .{
+                .contents = contents[body_start..close_index],
+                .next_index = close_index + "</plugin>".len,
+            };
+        }
+        search_index = name_end;
+    }
+    return null;
+}
+
+fn containsArtifactId(contents: []const u8, expected: []const u8) bool {
+    var search_index: usize = 0;
+    while (std.mem.find(u8, contents[search_index..], "<artifactId")) |relative_index| {
+        const open_index = search_index + relative_index;
+        const name_end = open_index + "<artifactId".len;
+        if (name_end < contents.len and
+            (contents[name_end] == '>' or isXmlSpace(contents[name_end])))
+        {
+            const open_end = std.mem.findScalar(u8, contents[name_end..], '>') orelse return false;
+            const value_start = name_end + open_end + 1;
+            const close_relative = std.mem.find(u8, contents[value_start..], "</artifactId>") orelse return false;
+            const value_end = value_start + close_relative;
+            if (std.mem.eql(u8, std.mem.trim(u8, contents[value_start..value_end], " \t\r\n"), expected)) return true;
+            search_index = value_end + "</artifactId>".len;
+        } else {
+            search_index = name_end;
+        }
+    }
+    return false;
+}
+
+fn isXmlSpace(byte: u8) bool {
+    return byte == ' ' or byte == '\t' or byte == '\r' or byte == '\n';
 }
 
 test "parse maven goals" {
@@ -139,6 +200,32 @@ test "parse maven goals ignores XML comments" {
         \\  spring-boot:run
         \\-->
         \\<project><description>real pom</description></project>
+    , &names);
+
+    try std.testing.expectEqual(@as(usize, 5), names.items.len);
+    try std.testing.expect(!containsName(names.items, "spring-boot:run"));
+    try std.testing.expect(!containsName(names.items, "exec:java"));
+    try std.testing.expect(!containsName(names.items, "integration-test"));
+    try std.testing.expect(!containsName(names.items, "spotless:apply"));
+}
+
+test "parse maven goals ignores markers outside plugin blocks" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseGoals(allocator,
+        \\<project>
+        \\  <description>spring-boot:run and &lt;goal&gt;apply&lt;/goal&gt;</description>
+        \\  <build>
+        \\    <plugins>
+        \\      <plugin>
+        \\        <artifactId>maven-compiler-plugin</artifactId>
+        \\        <executions><execution><goals><goal>java</goal><goal>verify</goal><goal>apply</goal></goals></execution></executions>
+        \\      </plugin>
+        \\    </plugins>
+        \\  </build>
+        \\</project>
     , &names);
 
     try std.testing.expectEqual(@as(usize, 5), names.items.len);
