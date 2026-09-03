@@ -35,7 +35,10 @@ pub fn materializeRunner(
         allocator.free(command);
         runner.command = resolved;
 
-        runner.argv = try tokenizeCommand(allocator, resolved);
+        const new_argv = try tokenizeCommand(allocator, resolved);
+        for (runner.argv.items) |arg| allocator.free(arg);
+        runner.argv.deinit(allocator);
+        runner.argv = new_argv;
     }
 
     if (std.mem.eql(u8, runner.source, "project") and runner.cwd == null) {
@@ -358,6 +361,24 @@ test "materializeRunner keeps file paths with spaces as one argv argument" {
     try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
     try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
     try std.testing.expectEqualStrings("/tmp/example dir/main.py", runner.argv.items[2]);
+}
+
+test "materializeRunner releases argv when a runner is reused" {
+    const allocator = std.testing.allocator;
+
+    var runner = types.ResolvedRunner{
+        .source = "filetype",
+        .filetype = try allocator.dupe(u8, "python"),
+        .command = try allocator.dupe(u8, "python3 -u $file"),
+    };
+
+    try materializeRunner(allocator, &runner, "/tmp/first.py");
+    allocator.free(runner.command.?);
+    runner.command = try allocator.dupe(u8, "python3 -u $file");
+    try materializeRunner(allocator, &runner, "/tmp/second.py");
+    defer runner.deinit(allocator);
+
+    try std.testing.expectEqualStrings("/tmp/second.py", runner.argv.items[2]);
 }
 
 test "substituteVariablesShell preserves double-quoted variable context" {
