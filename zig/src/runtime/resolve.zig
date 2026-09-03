@@ -641,7 +641,7 @@ test "resolveRunner prefers zig project run when source imports build-defined mo
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(std.testing.io, "src");
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data = "pub fn build(b: *std.Build) void { _ = b; }\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data = "pub fn build(b: *std.Build) void { _ = b.step(\"run\", \"Run the app\"); }\n" });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.zig", .data =
         \\const zig = @import("zig");
         \\pub fn main() void { _ = zig; }
@@ -664,6 +664,48 @@ test "resolveRunner prefers zig project run when source imports build-defined mo
     try std.testing.expectEqualStrings("zig build run", resolved.command.?);
     try std.testing.expectEqualStrings(root, resolved.cwd.?);
     try std.testing.expectEqualStrings("Zig Project", resolved.name.?);
+}
+
+test "resolveRunner does not select missing zig project run step" {
+    const allocator = std.testing.allocator;
+    defer config_store.reset();
+
+    try config_store.setSyncedConfigJson(
+        "{" ++
+            "\"runners\":{\"zig\":\"zig run $file\"}," ++
+            "\"build_commands\":{}," ++
+            "\"detect\":{}," ++
+            "\"revision\":71" ++
+            "}",
+        71,
+    );
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data = "pub fn build(b: *std.Build) void { _ = b; }\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "src/main.zig", .data =
+        \\const zig = @import("zig");
+        \\pub fn main() void { _ = zig; }
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "src", "main.zig" });
+    defer allocator.free(filepath);
+
+    var resolved = try resolveRunner(std.testing.io, allocator, null, .{
+        .path = filepath,
+        .filetype = "zig",
+        .project_root = root,
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("filetype", resolved.source);
+    try std.testing.expectEqualStrings("zig", resolved.name.?);
+    try std.testing.expect(resolved.cwd == null);
+    try std.testing.expectEqualStrings(filepath, resolved.execution_path.?);
 }
 
 test "resolveRunner ignores commented and quoted zig imports when choosing project runner" {
