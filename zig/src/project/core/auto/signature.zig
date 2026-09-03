@@ -118,6 +118,10 @@ pub fn buildBazelAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocat
     const normalized_match = try common.normalizePathAlloc(allocator, match_path);
     defer allocator.free(normalized_match);
 
+    if (!common.isPathWithinRoot(normalized_root, normalized_match)) {
+        return try signature.toOwnedSlice(allocator);
+    }
+
     var current_dir = try allocator.dupe(u8, pathing.dirOrDot(normalized_match));
     defer allocator.free(current_dir);
 

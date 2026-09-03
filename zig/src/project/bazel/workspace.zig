@@ -42,6 +42,10 @@ pub fn buildWorkspaceCommandInfoWithIO(
     const normalized_match = try common.normalizePathAlloc(allocator, match_path.?);
     defer allocator.free(normalized_match);
 
+    if (!common.isPathWithinRoot(normalized_root, normalized_match)) {
+        return .{ .commands = try commands.toOwnedSlice(allocator) };
+    }
+
     var current_dir = try std.fmt.allocPrint(
         allocator,
         "{s}",
@@ -153,4 +157,34 @@ fn packagePathFromDirAlloc(allocator: std.mem.Allocator, dir: []const u8, worksp
         return allocator.dupe(u8, dir[workspace_root.len + 1 ..]);
     }
     return allocator.dupe(u8, "");
+}
+
+test "workspace command discovery ignores match paths outside the workspace" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "repo");
+    try tmp.dir.createDirPath(std.testing.io, "outside");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "outside/BUILD.bazel", .data =
+        \\cc_binary(
+        \\    name = "outside",
+        \\    srcs = ["main.cc"],
+        \\)
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "outside/main.cc", .data = "" });
+
+    const workspace_root = try tmp.dir.realPathFileAlloc(std.testing.io, "repo", allocator);
+    defer allocator.free(workspace_root);
+    const match_path = try tmp.dir.realPathFileAlloc(std.testing.io, "outside/main.cc", allocator);
+    defer allocator.free(match_path);
+
+    const info = try buildWorkspaceCommandInfoWithIO(std.testing.io, allocator, workspace_root, match_path);
+    defer model.freeOwnedCommandInfo(allocator, info);
+
+    try std.testing.expectEqual(@as(usize, 0), info.commands.len);
+    try std.testing.expect(info.primary_build == null);
+    try std.testing.expect(info.primary_run == null);
+    try std.testing.expect(info.primary_test == null);
 }
