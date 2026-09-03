@@ -60,7 +60,7 @@ fn parseExplicitBins(
         const line = stripHashComment(common.stripTrailingCR(raw_line));
         const trimmed = common.trimSpaces(line);
         const is_section = trimmed.len >= 3 and trimmed[0] == '[';
-        if (std.mem.eql(u8, trimmed, "[[bin]]")) {
+        if (isArrayTableHeader(trimmed, "bin")) {
             if (capture != null) {
                 try commitBinBlock(allocator, capture.?.items, relative_match_path, targets);
                 capture.?.deinit(allocator);
@@ -170,7 +170,7 @@ fn parsePackageName(contents: []const u8) ?[]const u8 {
         const trimmed = common.trimSpaces(line);
         if (trimmed.len == 0) continue;
         if (trimmed[0] == '[') {
-            in_package = std.mem.eql(u8, trimmed, "[package]");
+            in_package = isTableHeader(trimmed, "package");
             continue;
         }
         if (!in_package) continue;
@@ -179,6 +179,17 @@ fn parsePackageName(contents: []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+fn isTableHeader(line: []const u8, name: []const u8) bool {
+    if (line.len < 3 or line[0] != '[' or line[line.len - 1] != ']') return false;
+    if (line.len >= 2 and line[1] == '[') return false;
+    return std.mem.eql(u8, common.trimSpaces(line[1 .. line.len - 1]), name);
+}
+
+fn isArrayTableHeader(line: []const u8, name: []const u8) bool {
+    if (line.len < 5 or !std.mem.startsWith(u8, line, "[[") or !std.mem.endsWith(u8, line, "]]")) return false;
+    return std.mem.eql(u8, common.trimSpaces(line[2 .. line.len - 2]), name);
 }
 
 fn parseNamedString(block: []const u8, key: []const u8) ?[]const u8 {
@@ -306,6 +317,23 @@ test "normalize explicit cargo bin paths before matching" {
     try std.testing.expectEqual(@as(usize, 2), targets.len);
     try std.testing.expect(!targets[0].matched);
     try std.testing.expect(targets[1].matched);
+}
+
+test "parse cargo bins accepts whitespace in table headers" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "[ package ]\n" ++
+        "name = \"demo\"\n" ++
+        "[[ bin ]]\n" ++
+        "name = \"tool\"\n" ++
+        "path = \"src/tool.rs\"\n";
+
+    const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/tool.rs");
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("tool", targets[0].name);
+    try std.testing.expect(targets[0].matched);
 }
 
 test "parse cargo targets rejects unsafe explicit and implicit names" {
