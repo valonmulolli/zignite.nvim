@@ -102,7 +102,10 @@ fn parseWorkspaceModuleNameWithIO(
     const go_mod_path = try std.fs.path.join(allocator, &.{ module_root, "go.mod" });
     defer allocator.free(go_mod_path);
 
-    const go_mod_contents = common.readFileAllocWithIO(io, allocator, go_mod_path) catch return null;
+    const go_mod_contents = common.readFileAllocWithIO(io, allocator, go_mod_path) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return null,
+        else => return err,
+    };
     defer allocator.free(go_mod_contents);
 
     return try go_mod.parseModuleName(allocator, go_mod_contents);
@@ -194,4 +197,32 @@ test "parse go module info omits unsafe package selectors" {
     try std.testing.expect(info.primary_build == null);
     try std.testing.expect(info.primary_run == null);
     try std.testing.expect(info.primary_test == null);
+}
+
+fn parseWorkspaceInfoForAllocationFailure(allocator: std.mem.Allocator, go_work_path: []const u8) !void {
+    const info = try parseInfoWithIO(
+        std.testing.io,
+        allocator,
+        "go 1.24.0\nuse .\n",
+        go_work_path,
+        null,
+    );
+    freeOwnedInfo(allocator, info);
+}
+
+test "parse workspace info propagates allocation failures" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "go.mod", .data = "module example.com/demo\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "go.work", .data = "go 1.24.0\nuse .\n" });
+    const go_work_path = try tmp.dir.realPathFileAlloc(std.testing.io, "go.work", allocator);
+    defer allocator.free(go_work_path);
+
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        parseWorkspaceInfoForAllocationFailure,
+        .{go_work_path},
+    );
 }
