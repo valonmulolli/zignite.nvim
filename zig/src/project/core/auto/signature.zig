@@ -100,6 +100,7 @@ fn buildCmakeAutoSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: 
     const marker_path = try std.fs.path.join(allocator, &.{ root, build_dir, "CMakeCache.txt" });
     defer allocator.free(marker_path);
     try build_signature.appendSignatureFileWithIO(io, allocator, &signature, marker_path);
+    try appendCmakeReplySignaturesWithIO(io, allocator, &signature, root, build_dir);
 
     return try signature.toOwnedSlice(allocator);
 }
@@ -123,7 +124,85 @@ fn buildMesonAutoSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: 
     defer allocator.free(coredata_path);
     try build_signature.appendSignatureFileWithIO(io, allocator, &signature, coredata_path);
 
+    const intro_targets_path = try std.fs.path.join(allocator, &.{ root, build_dir, "meson-info", "intro-targets.json" });
+    defer allocator.free(intro_targets_path);
+    try build_signature.appendSignatureFileWithIO(io, allocator, &signature, intro_targets_path);
+
     return try signature.toOwnedSlice(allocator);
+}
+
+fn appendCmakeReplySignaturesWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    signature: *std.ArrayList(u8),
+    root: []const u8,
+    build_dir: []const u8,
+) !void {
+    const reply_dir = try std.fs.path.join(allocator, &.{ root, build_dir, ".cmake", "api", "v1", "reply" });
+    defer allocator.free(reply_dir);
+
+    var dir = std.Io.Dir.cwd().openDir(io, reply_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return,
+        else => return err,
+    };
+    defer dir.close(io);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |name| allocator.free(name);
+        names.deinit(allocator);
+    }
+
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".json")) continue;
+        const name = try allocator.dupe(u8, entry.name);
+        names.append(allocator, name) catch |err| {
+            allocator.free(name);
+            return err;
+        };
+    }
+
+    std.mem.sort([]u8, names.items, {}, struct {
+        fn lessThan(_: void, lhs: []u8, rhs: []u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+
+    for (names.items) |name| {
+        const path = try std.fs.path.join(allocator, &.{ reply_dir, name });
+        defer allocator.free(path);
+        try build_signature.appendSignatureFileWithIO(io, allocator, signature, path);
+    }
+}
+
+test "cmake auto signature tracks file API reply changes" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "build/.cmake/api/v1/reply");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "CMakeLists.txt", .data = "project(demo)\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build/CMakeCache.txt", .data = "" });
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "build/.cmake/api/v1/reply/index-1.json",
+        .data = "{}",
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    const first = try buildCmakeAutoSignatureAlloc(std.testing.io, allocator, root);
+    defer allocator.free(first);
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "build/.cmake/api/v1/reply/index-1.json",
+        .data = "{\"reply\":{}}",
+    });
+
+    const second = try buildCmakeAutoSignatureAlloc(std.testing.io, allocator, root);
+    defer allocator.free(second);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
 }
 
 pub fn buildPythonAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
