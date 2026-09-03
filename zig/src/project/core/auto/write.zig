@@ -4,6 +4,7 @@ const cache = @import("../cache.zig");
 const common = @import("../common.zig");
 const direct = @import("direct.zig");
 const emit = @import("../emit.zig");
+const make = @import("../../make/api.zig");
 const project_io = @import("../io.zig");
 const signature = @import("signature.zig");
 const types = @import("../types.zig");
@@ -185,11 +186,13 @@ fn writeCFamilyAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
     }
 
     if (std.mem.eql(u8, system, "make")) {
-        const auto_contents = try project_io.readProjectFileWithIO(io, allocator, .make_auto, options.path);
+        const makefile_path = (try project_io.findParentFileAnyAllocWithIO(io, allocator, options.path, make.marker_names, 12)) orelse return;
+        defer allocator.free(makefile_path);
+        const auto_contents = try common.readFileAllocWithIO(io, allocator, makefile_path);
         defer allocator.free(auto_contents);
         try emit.writeDirectOutputWithIO(io, stdout, allocator, .{
             .kind = .make_auto,
-            .path = options.path,
+            .path = makefile_path,
             .project_root = result.root,
         }, auto_contents);
         return;
