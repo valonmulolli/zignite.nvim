@@ -67,7 +67,10 @@ pub fn buildWorkspaceCommandInfoWithIO(
         if (build_file) |path| {
             defer allocator.free(path);
 
-            const contents = common.readFileAllocWithIO(io, allocator, path) catch continue;
+            const contents = common.readFileAllocWithIO(io, allocator, path) catch |err| switch (err) {
+                error.FileNotFound, error.NotDir => continue,
+                else => return err,
+            };
             defer allocator.free(contents);
 
             const items = try parse.parseTargets(allocator, contents);
@@ -187,4 +190,38 @@ test "workspace command discovery ignores match paths outside the workspace" {
     try std.testing.expect(info.primary_build == null);
     try std.testing.expect(info.primary_run == null);
     try std.testing.expect(info.primary_test == null);
+}
+
+fn buildWorkspaceInfoForAllocationFailure(
+    allocator: std.mem.Allocator,
+    workspace_root: []const u8,
+    match_path: []const u8,
+) !void {
+    const info = try buildWorkspaceCommandInfoWithIO(std.testing.io, allocator, workspace_root, match_path);
+    model.freeOwnedCommandInfo(allocator, info);
+}
+
+test "workspace command discovery propagates allocation failures" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "BUILD.bazel", .data =
+        \\cc_binary(
+        \\    name = "demo",
+        \\    srcs = ["main.cc"],
+        \\)
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.cc", .data = "" });
+
+    const workspace_root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(workspace_root);
+    const match_path = try tmp.dir.realPathFileAlloc(std.testing.io, "main.cc", allocator);
+    defer allocator.free(match_path);
+
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        buildWorkspaceInfoForAllocationFailure,
+        .{ workspace_root, match_path },
+    );
 }
