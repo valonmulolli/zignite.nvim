@@ -68,49 +68,51 @@ pub fn buildWorkspaceCommandInfoWithIO(
             defer allocator.free(path);
 
             const contents = common.readFileAllocWithIO(io, allocator, path) catch |err| switch (err) {
-                error.FileNotFound, error.NotDir => continue,
+                error.FileNotFound, error.NotDir => null,
                 else => return err,
             };
-            defer allocator.free(contents);
+            if (contents) |owned_contents| {
+                defer allocator.free(owned_contents);
 
-            const items = try parse.parseTargets(allocator, contents);
-            defer model.freeOwnedTargets(allocator, items);
+                const items = try parse.parseTargets(allocator, owned_contents);
+                defer model.freeOwnedTargets(allocator, items);
 
-            const package_path = try packagePathFromDirAlloc(allocator, current_dir, normalized_root);
-            defer allocator.free(package_path);
+                const package_path = try packagePathFromDirAlloc(allocator, current_dir, normalized_root);
+                defer allocator.free(package_path);
 
-            const info = try infer.buildCommandInfo(allocator, items, path, package_path, normalized_match);
-            defer model.freeOwnedCommandInfo(allocator, info);
+                const info = try infer.buildCommandInfo(allocator, items, path, package_path, normalized_match);
+                defer model.freeOwnedCommandInfo(allocator, info);
 
-            for (info.commands) |entry| {
-                const owned_name = try allocator.dupe(u8, entry.name);
-                const owned_command = allocator.dupe(u8, entry.command) catch |err| {
-                    allocator.free(owned_name);
-                    return err;
-                };
-                commands.append(allocator, .{
-                    .name = owned_name,
-                    .command = owned_command,
-                }) catch |err| {
-                    allocator.free(owned_name);
-                    allocator.free(owned_command);
-                    return err;
-                };
-            }
-
-            if (info.primary_build) |value| {
-                if (primary_build == null) {
-                    primary_build = try allocator.dupe(u8, value);
+                for (info.commands) |entry| {
+                    const owned_name = try allocator.dupe(u8, entry.name);
+                    const owned_command = allocator.dupe(u8, entry.command) catch |err| {
+                        allocator.free(owned_name);
+                        return err;
+                    };
+                    commands.append(allocator, .{
+                        .name = owned_name,
+                        .command = owned_command,
+                    }) catch |err| {
+                        allocator.free(owned_name);
+                        allocator.free(owned_command);
+                        return err;
+                    };
                 }
-            }
-            if (info.primary_run) |value| {
-                if (primary_run == null) {
-                    primary_run = try allocator.dupe(u8, value);
+
+                if (info.primary_build) |value| {
+                    if (primary_build == null) {
+                        primary_build = try allocator.dupe(u8, value);
+                    }
                 }
-            }
-            if (info.primary_test) |value| {
-                if (primary_test == null) {
-                    primary_test = try allocator.dupe(u8, value);
+                if (info.primary_run) |value| {
+                    if (primary_run == null) {
+                        primary_run = try allocator.dupe(u8, value);
+                    }
+                }
+                if (info.primary_test) |value| {
+                    if (primary_test == null) {
+                        primary_test = try allocator.dupe(u8, value);
+                    }
                 }
             }
         }
