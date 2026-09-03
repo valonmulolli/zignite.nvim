@@ -137,7 +137,7 @@ pub fn parseTargets(
         if (target_segment.len == 0) continue;
 
         if (std.mem.eql(u8, target_segment, ".PHONY")) {
-            var phony_it = std.mem.tokenizeScalar(u8, common.trimSpaces(trimmed[colon_idx + 1 ..]), ' ');
+            var phony_it = std.mem.tokenizeAny(u8, common.trimSpaces(trimmed[colon_idx + 1 ..]), " \t");
             while (phony_it.next()) |raw_target| {
                 const target = common.trimSpaces(raw_target);
                 if (!isValidMakeTarget(target)) continue;
@@ -146,7 +146,7 @@ pub fn parseTargets(
             continue;
         }
 
-        var target_it = std.mem.tokenizeScalar(u8, target_segment, ' ');
+        var target_it = std.mem.tokenizeAny(u8, target_segment, " \t");
         while (target_it.next()) |raw_target| {
             const target = common.trimSpaces(raw_target);
             if (!isValidMakeTarget(target)) continue;
@@ -328,6 +328,24 @@ test "parse make targets" {
     try std.testing.expectEqual(@as(usize, 2), names.items.len);
     try std.testing.expectEqualStrings("build", names.items[0]);
     try std.testing.expectEqualStrings("bench", names.items[1]);
+}
+
+test "parse make targets accepts tabs between target names" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTargets(
+        allocator,
+        "all\tcheck:\n\t@echo ok\n.PHONY: run\ttest\n",
+        &names,
+    );
+
+    try std.testing.expectEqual(@as(usize, 4), names.items.len);
+    try std.testing.expectEqualStrings("all", names.items[0]);
+    try std.testing.expectEqualStrings("check", names.items[1]);
+    try std.testing.expectEqualStrings("run", names.items[2]);
+    try std.testing.expectEqualStrings("test", names.items[3]);
 }
 
 test "skip cmake generated makefile" {
