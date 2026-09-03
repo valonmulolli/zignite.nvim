@@ -6,18 +6,127 @@ pub fn parseTasks(
     contents: []const u8,
     names: *std.ArrayList([]u8),
 ) !void {
+    const source = try stripCommentsAlloc(allocator, contents);
+    defer allocator.free(source);
+
     try common.pushUniqueName(allocator, names, "build");
     try common.pushUniqueName(allocator, names, "test");
     try common.pushUniqueName(allocator, names, "clean");
 
-    if (containsSpringBoot(contents)) {
+    if (containsSpringBoot(source)) {
         try common.pushUniqueName(allocator, names, "bootRun");
     }
-    if (containsApplicationRun(contents)) {
+    if (containsApplicationRun(source)) {
         try common.pushUniqueName(allocator, names, "run");
     }
 
-    try collectDeclaredTasks(allocator, contents, names);
+    try collectDeclaredTasks(allocator, source, names);
+}
+
+fn stripCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
+    const source = try allocator.alloc(u8, contents.len);
+    errdefer allocator.free(source);
+
+    var input_index: usize = 0;
+    var output_index: usize = 0;
+    var quote: u8 = 0;
+    var triple_quote = false;
+    var block_comment = false;
+
+    while (input_index < contents.len) {
+        const current = contents[input_index];
+
+        if (block_comment) {
+            if (current == '*' and input_index + 1 < contents.len and contents[input_index + 1] == '/') {
+                source[output_index] = ' ';
+                source[output_index + 1] = ' ';
+                output_index += 2;
+                input_index += 2;
+                block_comment = false;
+            } else {
+                source[output_index] = if (current == '\n') '\n' else ' ';
+                output_index += 1;
+                input_index += 1;
+            }
+            continue;
+        }
+
+        if (quote != 0) {
+            if (triple_quote and input_index + 2 < contents.len and
+                contents[input_index] == quote and
+                contents[input_index + 1] == quote and
+                contents[input_index + 2] == quote)
+            {
+                source[output_index] = quote;
+                source[output_index + 1] = quote;
+                source[output_index + 2] = quote;
+                output_index += 3;
+                input_index += 3;
+                quote = 0;
+                triple_quote = false;
+                continue;
+            }
+
+            source[output_index] = current;
+            output_index += 1;
+            input_index += 1;
+            if (!triple_quote and current == '\\' and input_index < contents.len) {
+                source[output_index] = contents[input_index];
+                output_index += 1;
+                input_index += 1;
+            } else if (!triple_quote and current == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+
+        if (current == '/' and input_index + 1 < contents.len) {
+            const next = contents[input_index + 1];
+            if (next == '/') {
+                source[output_index] = ' ';
+                source[output_index + 1] = ' ';
+                output_index += 2;
+                input_index += 2;
+                while (input_index < contents.len and contents[input_index] != '\n') {
+                    source[output_index] = ' ';
+                    output_index += 1;
+                    input_index += 1;
+                }
+                continue;
+            }
+            if (next == '*') {
+                source[output_index] = ' ';
+                source[output_index + 1] = ' ';
+                output_index += 2;
+                input_index += 2;
+                block_comment = true;
+                continue;
+            }
+        }
+
+        if (current == '\'' or current == '"') {
+            quote = current;
+            triple_quote = input_index + 2 < contents.len and
+                contents[input_index + 1] == current and
+                contents[input_index + 2] == current;
+            source[output_index] = current;
+            output_index += 1;
+            input_index += 1;
+            if (triple_quote) {
+                source[output_index] = current;
+                source[output_index + 1] = current;
+                output_index += 2;
+                input_index += 2;
+            }
+            continue;
+        }
+
+        source[output_index] = current;
+        output_index += 1;
+        input_index += 1;
+    }
+
+    return source;
 }
 
 fn containsSpringBoot(contents: []const u8) bool {
@@ -25,13 +134,7 @@ fn containsSpringBoot(contents: []const u8) bool {
 }
 
 fn containsApplicationRun(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "id 'application'") != null
-        or std.mem.find(u8, contents, "id \"application\"") != null
-        or std.mem.find(u8, contents, "id(\"application\")") != null
-        or std.mem.find(u8, contents, "apply plugin: 'application'") != null
-        or std.mem.find(u8, contents, "apply plugin: \"application\"") != null
-        or std.mem.find(u8, contents, "application {") != null
-        or std.mem.find(u8, contents, "application{") != null;
+    return std.mem.find(u8, contents, "id 'application'") != null or std.mem.find(u8, contents, "id \"application\"") != null or std.mem.find(u8, contents, "id(\"application\")") != null or std.mem.find(u8, contents, "apply plugin: 'application'") != null or std.mem.find(u8, contents, "apply plugin: \"application\"") != null or std.mem.find(u8, contents, "application {") != null or std.mem.find(u8, contents, "application{") != null;
 }
 
 fn collectDeclaredTasks(
@@ -69,7 +172,7 @@ fn extractQuotedTaskName(line: []const u8) ?[]const u8 {
     };
 
     for (prefixes) |prefix| {
-        const index = std.mem.find(u8, line, prefix) orelse continue;
+        const index = findCodePrefix(line, prefix) orelse continue;
         const rest = line[index + prefix.len ..];
         const quote_index = std.mem.findAny(u8, rest, "\"'") orelse continue;
         const quote = rest[quote_index];
@@ -81,6 +184,60 @@ fn extractQuotedTaskName(line: []const u8) ?[]const u8 {
     }
 
     return null;
+}
+
+fn findCodePrefix(line: []const u8, prefix: []const u8) ?usize {
+    var index: usize = 0;
+    var quote: u8 = 0;
+    var triple_quote = false;
+
+    while (index < line.len) {
+        const current = line[index];
+
+        if (quote != 0) {
+            if (triple_quote and index + 2 < line.len and
+                line[index] == quote and
+                line[index + 1] == quote and
+                line[index + 2] == quote)
+            {
+                index += 3;
+                quote = 0;
+                triple_quote = false;
+                continue;
+            }
+
+            if (!triple_quote and current == '\\' and index + 1 < line.len) {
+                index += 2;
+                continue;
+            }
+            if (!triple_quote and current == quote) quote = 0;
+            index += 1;
+            continue;
+        }
+
+        if (current == '\'' or current == '"') {
+            quote = current;
+            triple_quote = index + 2 < line.len and
+                line[index + 1] == current and
+                line[index + 2] == current;
+            index += if (triple_quote) 3 else 1;
+            continue;
+        }
+
+        if (std.mem.startsWith(u8, line[index..], prefix) and
+            (index == 0 or !isIdentifierChar(line[index - 1])) and
+            (index + prefix.len == line.len or !isIdentifierChar(line[index + prefix.len])))
+        {
+            return index;
+        }
+        index += 1;
+    }
+
+    return null;
+}
+
+fn isIdentifierChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '$';
 }
 
 fn extractRegisteredValueTaskName(line: []const u8) ?[]const u8 {
@@ -127,8 +284,7 @@ test "parse gradle tasks" {
     var names: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &names);
 
-    try parseTasks(
-        allocator,
+    try parseTasks(allocator,
         \\plugins {
         \\    id("application")
         \\    id("org.springframework.boot") version "3.5.0"
@@ -148,8 +304,7 @@ test "parse gradle tasks discovers declared tasks across common styles" {
     var names: std.ArrayList([]u8) = .empty;
     defer common.deinitOwnedNameList(allocator, &names);
 
-    try parseTasks(
-        allocator,
+    try parseTasks(allocator,
         \\tasks.register("integrationTest")
         \\tasks.register<Test>("spotlessApply")
         \\tasks.create("bundle")
@@ -169,4 +324,55 @@ test "parse gradle tasks discovers declared tasks across common styles" {
     try std.testing.expect(containsName(names.items, "smokeTest"));
     try std.testing.expect(containsName(names.items, "e2e"));
     try std.testing.expect(containsName(names.items, "dist"));
+}
+
+test "parse gradle tasks ignores commented declarations" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator,
+        \\// tasks.register("commentedLine")
+        \\/*
+        \\tasks.register("commentedBlock")
+        \\id("application")
+        \\*/
+        \\tasks.register("realTask")
+    , &names);
+
+    try std.testing.expect(containsName(names.items, "realTask"));
+    try std.testing.expect(!containsName(names.items, "commentedLine"));
+    try std.testing.expect(!containsName(names.items, "commentedBlock"));
+    try std.testing.expect(!containsName(names.items, "run"));
+}
+
+test "parse gradle tasks preserves comment markers inside strings" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator,
+        \\val url = "https://example.test//notAComment"
+        \\val raw = """this // remains text"""
+        \\tasks.register("realTask")
+    , &names);
+
+    try std.testing.expect(containsName(names.items, "realTask"));
+    try std.testing.expect(!containsName(names.items, "run"));
+}
+
+test "parse gradle tasks ignores task declarations inside strings" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator,
+        \\val text = "tasks.register(\\\"fakeTask\\\")"
+        \\val raw = """tasks.create("fakeRawTask")"""
+        \\tasks.register("realTask")
+    , &names);
+
+    try std.testing.expect(containsName(names.items, "realTask"));
+    try std.testing.expect(!containsName(names.items, "fakeTask"));
+    try std.testing.expect(!containsName(names.items, "fakeRawTask"));
 }
