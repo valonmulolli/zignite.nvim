@@ -209,18 +209,24 @@ fn buildMakeCommandsAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root: 
     const default_targets = [_][]const u8{ "run", "clean", "test", "install", "debug" };
     for (default_targets) |target| {
         if (!shared.nameListContains(names.items, target)) continue;
-        const command = try std.fmt.allocPrint(allocator, "make {s}", .{target});
+        const command = try makeTargetCommandAlloc(allocator, target);
         try shared.appendOwnedCommand(&commands, allocator, target, command);
     }
     for (task_alias.canonical_aliases) |alias| {
         if (std.mem.eql(u8, alias, "build")) continue;
         if (commandListContains(commands.items, alias)) continue;
         const source_name = task_alias.findSourceName(names.items, alias) orelse continue;
-        const command = try std.fmt.allocPrint(allocator, "make {s}", .{source_name});
+        const command = try makeTargetCommandAlloc(allocator, source_name);
         try shared.appendOwnedCommand(&commands, allocator, alias, command);
     }
 
     return try commands.toOwnedSlice(allocator);
+}
+
+fn makeTargetCommandAlloc(allocator: std.mem.Allocator, target: []const u8) ![]u8 {
+    const quoted_target = try project_common.quoteShellArgIfNeededAlloc(allocator, target);
+    defer allocator.free(quoted_target);
+    return try std.fmt.allocPrint(allocator, "make {s}", .{quoted_target});
 }
 
 fn commandListContains(commands: []const CommandEntry, name: []const u8) bool {
@@ -243,6 +249,13 @@ test "buildMakeCommandsAlloc returns owned empty slice when root has no makefile
     defer allocator.free(commands);
 
     try std.testing.expectEqual(@as(usize, 0), commands.len);
+}
+
+test "make target commands quote shell-special target names" {
+    const command = try makeTargetCommandAlloc(std.testing.allocator, "run`touch`");
+    defer std.testing.allocator.free(command);
+
+    try std.testing.expectEqualStrings("make 'run`touch`'", command);
 }
 
 fn findMakefilePathAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
