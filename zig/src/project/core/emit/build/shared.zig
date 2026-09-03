@@ -1,12 +1,33 @@
 const std = @import("std");
 
 pub fn findPrimaryTargetName(items: anytype) ?[]const u8 {
-    var primary_target: ?[]const u8 = null;
+    var exact_target: ?[]const u8 = null;
+    var fallback_target: ?[]const u8 = null;
     for (items) |item| {
-        if (item.matched and primary_target == null) primary_target = item.name;
+        if (!item.matched) continue;
+        if (item.exact_match) {
+            if (exact_target == null) exact_target = item.name;
+        } else if (fallback_target == null) {
+            fallback_target = item.name;
+        }
     }
-    if (primary_target == null and items.len > 0) primary_target = items[0].name;
-    return primary_target;
+    if (exact_target) |target| return target;
+    if (fallback_target) |target| return target;
+    if (items.len > 0) return items[0].name;
+    return null;
+}
+
+test "findPrimaryTargetName prefers exact matches" {
+    const items = [_]struct {
+        name: []const u8,
+        matched: bool,
+        exact_match: bool,
+    }{
+        .{ .name = "first", .matched = true, .exact_match = false },
+        .{ .name = "second", .matched = true, .exact_match = true },
+    };
+
+    try std.testing.expectEqualStrings("second", findPrimaryTargetName(&items).?);
 }
 
 pub fn emitTargetBuildRunCommands(

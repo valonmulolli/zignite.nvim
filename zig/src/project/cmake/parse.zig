@@ -5,7 +5,14 @@ const pathing = @import("../../pathing.zig");
 pub const Target = struct {
     name: []u8,
     matched: bool,
+    exact_match: bool = false,
     artifact_path: ?[]u8 = null,
+};
+
+const MatchKind = enum {
+    none,
+    basename,
+    exact,
 };
 
 const Variable = struct {
@@ -105,21 +112,24 @@ fn commitBlock(
         return;
     }
 
-    var matched = false;
+    var match_kind: MatchKind = .none;
     if (relative_match_path != null or basename != null) {
         var source_index = index + 1;
         while (source_index < tokens.len) : (source_index += 1) {
             if (isCmakeSourceListKeyword(tokens[source_index])) continue;
-            if (try sourceTokenMatches(allocator, tokens[source_index], project_name, relative_match_path, basename, variables)) {
-                matched = true;
+            const token_match = try sourceTokenMatchKind(allocator, tokens[source_index], project_name, relative_match_path, basename, variables);
+            if (token_match == .exact) {
+                match_kind = .exact;
                 break;
             }
+            if (token_match == .basename) match_kind = .basename;
         }
     }
 
     for (targets.items) |*item| {
         if (std.mem.eql(u8, item.name, target)) {
-            item.matched = item.matched or matched;
+            item.matched = item.matched or match_kind != .none;
+            item.exact_match = item.exact_match or match_kind == .exact;
             return;
         }
     }
@@ -127,7 +137,8 @@ fn commitBlock(
     const owned_name = try allocator.dupe(u8, target);
     targets.append(allocator, .{
         .name = owned_name,
-        .matched = matched,
+        .matched = match_kind != .none,
+        .exact_match = match_kind == .exact,
         .artifact_path = null,
     }) catch |err| {
         allocator.free(owned_name);
@@ -388,47 +399,48 @@ fn resolveToken(token: []const u8, project_name: ?[]const u8) []const u8 {
     return token;
 }
 
-fn sourceTokenMatches(
+fn sourceTokenMatchKind(
     allocator: std.mem.Allocator,
     token: []const u8,
     project_name: ?[]const u8,
     relative_match_path: ?[]const u8,
     basename: ?[]const u8,
     variables: []const Variable,
-) !bool {
-    if (std.mem.startsWith(u8, token, "$<")) return false;
+) !MatchKind {
+    if (std.mem.startsWith(u8, token, "$<")) return .none;
     if (variableValues(variables, token)) |values| {
+        var match_kind: MatchKind = .none;
         for (values) |value| {
-            if (try sourceTokenMatches(allocator, value, project_name, relative_match_path, basename, variables)) {
-                return true;
-            }
+            const value_match = try sourceTokenMatchKind(allocator, value, project_name, relative_match_path, basename, variables);
+            if (value_match == .exact) return .exact;
+            if (value_match == .basename) match_kind = .basename;
         }
-        return false;
+        return match_kind;
     }
 
     const source_token = resolveToken(token, project_name);
     const normalized_source = try common.normalizePathAlloc(allocator, source_token);
     defer allocator.free(normalized_source);
-    return normalizedSourceMatches(normalized_source, relative_match_path, basename);
+    return normalizedSourceMatchKind(normalized_source, relative_match_path, basename);
 }
 
-fn normalizedSourceMatches(
+fn normalizedSourceMatchKind(
     normalized_source: []const u8,
     relative_match_path: ?[]const u8,
     basename: ?[]const u8,
-) bool {
-    if (normalized_source.len == 0) return false;
+) MatchKind {
+    if (normalized_source.len == 0) return .none;
     if (relative_match_path) |relative_path| {
-        if (std.mem.eql(u8, normalized_source, relative_path)) return true;
+        if (std.mem.eql(u8, normalized_source, relative_path)) return .exact;
     }
     if (basename) |file_basename| {
-        if (std.mem.eql(u8, normalized_source, file_basename)) return true;
+        if (std.mem.eql(u8, normalized_source, file_basename)) return .basename;
         if (std.mem.endsWith(u8, normalized_source, file_basename)) {
             const prefix_len = normalized_source.len - file_basename.len;
-            if (prefix_len > 0 and normalized_source[prefix_len - 1] == '/') return true;
+            if (prefix_len > 0 and normalized_source[prefix_len - 1] == '/') return .basename;
         }
     }
-    return false;
+    return .none;
 }
 
 fn variableValues(variables: []const Variable, token: []const u8) ?[][]u8 {
@@ -627,13 +639,18 @@ fn commitTargetSourcesBlock(
     const target_name = resolveToken(tokens[0], project_name);
     for (targets.items) |*target| {
         if (!std.mem.eql(u8, target.name, target_name)) continue;
+        var match_kind: MatchKind = .none;
         for (tokens[1..]) |token| {
             if (isCmakeSourceListKeyword(token)) continue;
-            if (try sourceTokenMatches(allocator, token, project_name, relative_match_path, basename, variables)) {
+            const token_match = try sourceTokenMatchKind(allocator, token, project_name, relative_match_path, basename, variables);
+            if (token_match == .exact) {
                 target.matched = true;
+                target.exact_match = true;
                 return;
             }
+            if (token_match == .basename) match_kind = .basename;
         }
+        if (match_kind == .basename) target.matched = true;
     }
 }
 
@@ -788,6 +805,23 @@ test "parse cmake targets finds multiple commands on one line" {
     try std.testing.expect(!targets[0].matched);
     try std.testing.expectEqualStrings("second", targets[1].name);
     try std.testing.expect(targets[1].matched);
+}
+
+test "parse cmake prefers exact source matches over basename matches" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "add_executable(first src/a/main.cpp) add_executable(second src/b/main.cpp)\n",
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/b/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expect(targets[0].matched);
+    try std.testing.expect(!targets[0].exact_match);
+    try std.testing.expect(targets[1].matched);
+    try std.testing.expect(targets[1].exact_match);
 }
 
 test "parse cmake resolves project name across multiline project call" {

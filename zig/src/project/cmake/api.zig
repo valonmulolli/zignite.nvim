@@ -99,6 +99,7 @@ fn appendOrMergeOwnedTarget(
         if (!std.mem.eql(u8, existing.name, incoming.name)) continue;
 
         existing.matched = existing.matched or incoming.matched;
+        existing.exact_match = existing.exact_match or incoming.exact_match;
         if (existing.artifact_path == null and incoming.artifact_path != null) {
             existing.artifact_path = incoming.artifact_path;
             allocator.free(incoming.name);
