@@ -260,6 +260,7 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
     var current: std.ArrayList(u8) = .empty;
     defer current.deinit(allocator);
     var quote: ?u8 = null;
+    var token_started = false;
     var index: usize = 0;
     while (index < command.len) : (index += 1) {
         const ch = command[index];
@@ -275,15 +276,19 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
         } else {
             if (ch == '\'' or ch == '"') {
                 quote = ch;
+                token_started = true;
             } else if (std.ascii.isWhitespace(ch)) {
-                if (current.items.len > 0) {
+                if (token_started) {
                     try appendCurrentToken(allocator, &tokens, &current);
+                    token_started = false;
                 }
             } else if (ch == '\\' and index + 1 < command.len) {
                 index += 1;
                 try current.append(allocator, command[index]);
+                token_started = true;
             } else {
                 try current.append(allocator, ch);
+                token_started = true;
             }
         }
     }
@@ -291,7 +296,7 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
     if (quote != null) {
         return tokens;
     }
-    if (current.items.len > 0) {
+    if (token_started) {
         try appendCurrentToken(allocator, &tokens, &current);
     }
     return tokens;
@@ -409,4 +414,18 @@ test "substituteVariablesShell does not expand escaped placeholders" {
         argv.deinit(allocator);
     }
     try std.testing.expectEqualStrings("$file", argv.items[1]);
+}
+
+test "tokenizeCommand preserves empty quoted arguments" {
+    const allocator = std.testing.allocator;
+    var argv = try tokenizeCommand(allocator, "printf '%s' ''");
+    defer {
+        for (argv.items) |arg| allocator.free(arg);
+        argv.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), argv.items.len);
+    try std.testing.expectEqualStrings("printf", argv.items[0]);
+    try std.testing.expectEqualStrings("%s", argv.items[1]);
+    try std.testing.expectEqualStrings("", argv.items[2]);
 }
