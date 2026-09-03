@@ -133,9 +133,9 @@ fn parseExecutableTargetAlloc(
 
     const name = getStringField(root_value, "name") orelse return null;
     if (name.len == 0 or common.hasInvalidPayloadChars(name)) return null;
-    const source_dir = resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "source") catch null;
+    const source_dir = try resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "source");
     defer if (source_dir) |value| allocator.free(value);
-    const build_dir = resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "build") catch null;
+    const build_dir = try resolveTargetPathBaseAlloc(allocator, normalized_root, root_value, "build");
     defer if (build_dir) |value| allocator.free(value);
 
     const matched = try targetMatches(
@@ -435,4 +435,36 @@ test "extractArtifactPathAlloc ignores invalid metadata paths" {
     defer if (artifact) |value| allocator.free(value);
 
     try std.testing.expect(artifact == null);
+}
+
+fn parseExecutableTargetForAllocationFailure(allocator: std.mem.Allocator, target_json_path: []const u8) !void {
+    const target = try parseExecutableTargetAlloc(
+        std.testing.io,
+        allocator,
+        target_json_path,
+        "/tmp/project",
+        null,
+        null,
+    ) orelse return;
+    allocator.free(target.name);
+    if (target.artifact_path) |artifact_path| allocator.free(artifact_path);
+}
+
+test "parseExecutableTargetAlloc propagates allocation failures" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "target.json",
+        .data = "{\"type\":\"EXECUTABLE\",\"name\":\"demo\",\"paths\":{\"source\":\"/tmp/project\",\"build\":\"/tmp/project/build\"}}",
+    });
+    const target_json_path = try tmp.dir.realPathFileAlloc(std.testing.io, "target.json", allocator);
+    defer allocator.free(target_json_path);
+
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        parseExecutableTargetForAllocationFailure,
+        .{target_json_path},
+    );
 }
