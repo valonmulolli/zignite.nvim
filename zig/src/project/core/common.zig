@@ -123,8 +123,17 @@ pub fn isRegularFileWithIO(io: std.Io, path: []const u8) bool {
 }
 
 pub fn isPathWithinRoot(root: []const u8, filepath: []const u8) bool {
-    if (root.len == 0 or !std.mem.startsWith(u8, filepath, root)) return false;
+    if (root.len == 0) return false;
+    if (std.mem.eql(u8, root, ".")) {
+        if (std.fs.path.isAbsolute(filepath) or isWindowsAbsolutePath(filepath)) return false;
+        return !std.mem.eql(u8, filepath, "..") and !std.mem.startsWith(u8, filepath, "../");
+    }
+    if (!std.mem.startsWith(u8, filepath, root)) return false;
     return root[root.len - 1] == '/' or filepath.len == root.len or filepath[root.len] == '/';
+}
+
+fn isWindowsAbsolutePath(path: []const u8) bool {
+    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and path[2] == '/';
 }
 
 pub fn isPathWithinRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) !bool {
@@ -136,6 +145,11 @@ pub fn isPathWithinRootAlloc(allocator: std.mem.Allocator, root: []const u8, fil
 }
 
 pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, filepath: []const u8) ![]u8 {
+    if (std.mem.eql(u8, root, ".")) {
+        if (!isPathWithinRoot(root, filepath)) return allocator.dupe(u8, std.fs.path.basename(filepath));
+        if (std.mem.eql(u8, filepath, ".")) return allocator.dupe(u8, "");
+        return allocator.dupe(u8, filepath);
+    }
     if (isPathWithinRoot(root, filepath)) {
         var start = root.len;
         if (filepath.len > start and filepath[start] == '/') {
@@ -321,6 +335,29 @@ test "isPathWithinRoot requires a path component boundary" {
     try std.testing.expect(isPathWithinRoot("/project", "/project/src/main.zig"));
     try std.testing.expect(!isPathWithinRoot("/project", "/project-old/src/main.zig"));
     try std.testing.expect(isPathWithinRoot("/", "/project/src/main.zig"));
+}
+
+test "relative dot root contains relative paths without parent escapes" {
+    try std.testing.expect(isPathWithinRoot(".", "."));
+    try std.testing.expect(isPathWithinRoot(".", "src/main.zig"));
+    try std.testing.expect(!isPathWithinRoot(".", "../outside/main.zig"));
+    try std.testing.expect(!isPathWithinRoot(".", "C:/outside/main.zig"));
+}
+
+test "makeRelativeToRootAlloc preserves paths under a relative dot root" {
+    const allocator = std.testing.allocator;
+
+    const relative = try makeRelativeToRootAlloc(allocator, ".", "src/main.zig");
+    defer allocator.free(relative);
+    try std.testing.expectEqualStrings("src/main.zig", relative);
+
+    const root = try makeRelativeToRootAlloc(allocator, ".", ".");
+    defer allocator.free(root);
+    try std.testing.expectEqualStrings("", root);
+
+    const outside = try makeRelativeToRootAlloc(allocator, ".", "../outside/main.zig");
+    defer allocator.free(outside);
+    try std.testing.expectEqualStrings("main.zig", outside);
 }
 
 test "quoteShellArgIfNeededAlloc quotes empty string" {
