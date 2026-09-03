@@ -219,7 +219,8 @@ fn joinCommandArray(allocator: std.mem.Allocator, items: []const std.json.Value)
 
     var appended = false;
     for (items) |item| {
-        if (item != .string or item.string.len == 0) continue;
+        if (item != .string) return null;
+        if (item.string.len == 0) continue;
         if (common.hasInvalidPayloadChars(item.string)) return null;
         if (appended) try joined.appendSlice(allocator, " && ");
         try joined.appendSlice(allocator, item.string);
@@ -314,6 +315,18 @@ test "view ignores unsafe runner and build command payloads" {
     const commands = try listBuildCommands(std.testing.allocator, "zig");
     defer freeBuildCommands(std.testing.allocator, commands);
     try std.testing.expectEqual(@as(usize, 0), commands.len);
+}
+
+test "view rejects runner arrays with non-string entries" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"runners":{"python":["python3",42],"go":{"cmd":["go run $file",false]}},"build_commands":{},"detect":{},"revision":11}
+    , 11);
+
+    try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "python")) == null);
+    try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "go")) == null);
 }
 
 test "view ignores fractional and overflowing timeout values" {
