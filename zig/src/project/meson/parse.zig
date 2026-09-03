@@ -44,38 +44,81 @@ pub fn parseTargets(
         targets.deinit(allocator);
     }
 
-    var capture: ?std.ArrayList(u8) = null;
-    defer if (capture) |*list| list.deinit(allocator);
-    var depth: isize = 0;
+    try parseExecutableBlocks(allocator, contents, relative_match_path, basename, &targets);
+
+    return try targets.toOwnedSlice(allocator);
+}
+
+fn parseExecutableBlocks(
+    allocator: std.mem.Allocator,
+    contents: []const u8,
+    relative_match_path: ?[]const u8,
+    basename: ?[]const u8,
+    targets: *std.ArrayList(Target),
+) !void {
+    const source = try stripHashCommentsAlloc(allocator, contents);
+    defer allocator.free(source);
+
+    var cursor: usize = 0;
+    while (cursor < source.len) {
+        const command_index = indexOfExecutable(source[cursor..]) orelse break;
+        const block_start = cursor + command_index;
+        const open_offset = std.mem.findScalar(u8, source[block_start..], '(') orelse break;
+        const open_index = block_start + open_offset;
+        const close_index = findMatchingParen(source[open_index..]) orelse break;
+        const block_end = open_index + close_index + 1;
+
+        try commitBlock(allocator, source[block_start..block_end], relative_match_path, basename, targets);
+        cursor = block_end;
+    }
+}
+
+fn stripHashCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
+    var source: std.ArrayList(u8) = .empty;
+    errdefer source.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture == null) {
-            const start_idx = indexOfExecutable(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line[start_idx..]);
-            depth = countParenDelta(line[start_idx..]);
-            if (depth <= 0) {
-                try commitBlock(allocator, list.items, relative_match_path, basename, &targets);
-                list.deinit(allocator);
-            } else {
-                capture = list;
+        try source.appendSlice(allocator, stripHashComment(common.stripTrailingCR(raw_line)));
+        try source.append(allocator, '\n');
+    }
+
+    return try source.toOwnedSlice(allocator);
+}
+
+fn findMatchingParen(text: []const u8) ?usize {
+    const open_index = std.mem.findScalar(u8, text, '(') orelse return null;
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    var escaped = false;
+
+    for (text[open_index..], 0..) |ch, offset| {
+        if (quote) |active_quote| {
+            if (escaped) {
+                escaped = false;
+                continue;
             }
-        } else {
-            try capture.?.append(allocator, ' ');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
-                try commitBlock(allocator, capture.?.items, relative_match_path, basename, &targets);
-                capture.?.deinit(allocator);
-                capture = null;
+            if (ch == '\\') {
+                escaped = true;
+                continue;
             }
+            if (ch == active_quote) quote = null;
+            continue;
+        }
+
+        if (ch == '\'' or ch == '"') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '(') {
+            depth += 1;
+        } else if (ch == ')') {
+            depth -= 1;
+            if (depth == 0) return open_index + offset;
         }
     }
 
-    return try targets.toOwnedSlice(allocator);
+    return null;
 }
 
 fn commitBlock(
@@ -205,7 +248,7 @@ fn indexOfExecutable(line: []const u8) ?usize {
 
 fn extractExecutableArgs(block: []const u8) ?[]const u8 {
     const open_idx = std.mem.findScalar(u8, block, '(') orelse return null;
-    const close_idx = std.mem.lastIndexOfScalar(u8, block, ')') orelse return null;
+    const close_idx = findMatchingParen(block) orelse return null;
     if (close_idx <= open_idx) return null;
     return block[open_idx + 1 .. close_idx];
 }
@@ -314,6 +357,21 @@ test "parse meson ignores parentheses inside quoted sources" {
     try std.testing.expectEqualStrings("app", targets[0].name);
     try std.testing.expect(targets[0].matched);
     try std.testing.expectEqualStrings("other", targets[1].name);
+}
+
+test "parse meson targets finds multiple commands on one line" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "executable('first', 'src/first.cpp') executable('second', 'src/second.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/second.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expect(!targets[0].matched);
+    try std.testing.expect(targets[1].matched);
 }
 
 test "parse meson rejects unsafe target without shifting source arguments" {
