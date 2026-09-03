@@ -357,9 +357,11 @@ test "writeLanguageOutput emits maven command records" {
         .kind = .maven,
         .path = "/tmp/pom.xml",
     },
-        \\| mvn compile
-        \\| mvn test
-        \\| mvn spring-boot:run
+        \\<project>
+        \\  <build><plugins><plugin>
+        \\    <artifactId>spring-boot-maven-plugin</artifactId>
+        \\  </plugin></plugins></build>
+        \\</project>
     ));
 
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tmvn-build\tmvn compile\n") != null);
