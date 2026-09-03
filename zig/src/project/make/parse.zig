@@ -126,7 +126,7 @@ pub fn parseTargets(
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
-        const line = common.stripTrailingCR(raw_line);
+        const line = stripHashComment(common.stripTrailingCR(raw_line));
         const trimmed = common.trimSpaces(line);
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
         if (line.len > 0 and line[0] == '\t') continue;
@@ -137,22 +137,54 @@ pub fn parseTargets(
         if (target_segment.len == 0) continue;
 
         if (std.mem.eql(u8, target_segment, ".PHONY")) {
-            var phony_it = std.mem.tokenizeAny(u8, common.trimSpaces(trimmed[colon_idx + 1 ..]), " \t");
-            while (phony_it.next()) |raw_target| {
-                const target = common.trimSpaces(raw_target);
-                if (!isValidMakeTarget(target)) continue;
-                try common.pushUniqueName(allocator, names, target);
-            }
+            try appendMakeTargets(allocator, common.trimSpaces(trimmed[colon_idx + 1 ..]), names);
             continue;
         }
 
-        var target_it = std.mem.tokenizeAny(u8, target_segment, " \t");
-        while (target_it.next()) |raw_target| {
-            const target = common.trimSpaces(raw_target);
-            if (!isValidMakeTarget(target)) continue;
-            try common.pushUniqueName(allocator, names, target);
-        }
+        try appendMakeTargets(allocator, target_segment, names);
     }
+}
+
+fn appendMakeTargets(
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    names: *std.ArrayList([]u8),
+) !void {
+    var cursor: usize = 0;
+    while (try nextMakeTargetAlloc(allocator, text, &cursor)) |owned_target| {
+        defer allocator.free(owned_target);
+        if (!isValidMakeTarget(owned_target)) continue;
+        try common.pushUniqueName(allocator, names, owned_target);
+    }
+}
+
+fn nextMakeTargetAlloc(
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    cursor: *usize,
+) !?[]u8 {
+    while (cursor.* < text.len and isIncludeWhitespace(text[cursor.*])) : (cursor.* += 1) {}
+    if (cursor.* >= text.len) return null;
+
+    var target: std.ArrayList(u8) = .empty;
+    errdefer target.deinit(allocator);
+
+    while (cursor.* < text.len) {
+        const ch = text[cursor.*];
+        if (isIncludeWhitespace(ch)) break;
+
+        if (ch == '\\' and cursor.* + 1 < text.len) {
+            cursor.* += 1;
+            try target.append(allocator, text[cursor.*]);
+            cursor.* += 1;
+            continue;
+        }
+
+        try target.append(allocator, ch);
+        cursor.* += 1;
+    }
+
+    return try target.toOwnedSlice(allocator);
 }
 
 fn isCmakeGeneratedMakefile(contents: []const u8) bool {
@@ -266,11 +298,12 @@ fn stripHashComment(line: []const u8) []const u8 {
     var escaped = false;
 
     for (line, 0..) |ch, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+
         if (quote) |active_quote| {
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
             if (ch == '\\') {
                 escaped = true;
                 continue;
@@ -283,6 +316,10 @@ fn stripHashComment(line: []const u8) []const u8 {
 
         if (ch == '"' or ch == '\'') {
             quote = ch;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
             continue;
         }
         if (ch == '#') return line[0..index];
@@ -346,6 +383,21 @@ test "parse make targets accepts tabs between target names" {
     try std.testing.expectEqualStrings("check", names.items[1]);
     try std.testing.expectEqualStrings("run", names.items[2]);
     try std.testing.expectEqualStrings("test", names.items[3]);
+}
+
+test "parse make targets preserves escaped spaces and ignores comments" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTargets(
+        allocator,
+        "foo\\ bar:\n.PHONY: foo\\ bar # generated target\n",
+        &names,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), names.items.len);
+    try std.testing.expectEqualStrings("foo bar", names.items[0]);
 }
 
 test "skip cmake generated makefile" {
