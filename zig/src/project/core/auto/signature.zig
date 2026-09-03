@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_common = @import("../../../build/common.zig");
 const build_signature = @import("../../../build/signature.zig");
+const cmake_parse = @import("../../cmake/parse.zig");
 const common = @import("../common.zig");
 const make = @import("../../make/api.zig");
 const pathing = @import("../../../pathing.zig");
@@ -8,6 +9,8 @@ const types = @import("../types.zig");
 const build_system = @import("../../../build/system.zig");
 
 const Options = types.Options;
+const MAX_CMAKE_SIGNATURE_DEPTH: usize = 8;
+const MAX_CMAKE_SIGNATURE_FILES: usize = 256;
 
 pub fn buildJVMAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator, result: build_system.Result) !?[]u8 {
     const root = result.root orelse return null;
@@ -94,6 +97,7 @@ fn buildCmakeAutoSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: 
     const base = try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, &.{"CMakeLists.txt"});
     defer allocator.free(base);
     try signature.appendSlice(allocator, base);
+    try appendCmakeSourceSignaturesWithIO(io, allocator, &signature, root);
 
     const build_dir = try build_common.discoverCmakeBuildDirAllocWithIO(io, allocator, root) orelse try allocator.dupe(u8, "build");
     defer allocator.free(build_dir);
@@ -176,6 +180,93 @@ fn appendCmakeReplySignaturesWithIO(
     }
 }
 
+fn appendCmakeSourceSignaturesWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    signature: *std.ArrayList(u8),
+    root: []const u8,
+) !void {
+    const root_path = try std.fs.path.join(allocator, &.{ root, "CMakeLists.txt" });
+    defer allocator.free(root_path);
+    const root_contents = common.readFileAllocWithIO(io, allocator, root_path) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return,
+        else => return err,
+    };
+    defer allocator.free(root_contents);
+
+    var visited: std.ArrayList([]u8) = .empty;
+    defer {
+        for (visited.items) |path| allocator.free(path);
+        visited.deinit(allocator);
+    }
+    const normalized_root_path = try common.normalizePathAlloc(allocator, root_path);
+    defer allocator.free(normalized_root_path);
+    const owned_root_path = try allocator.dupe(u8, normalized_root_path);
+    visited.append(allocator, owned_root_path) catch |err| {
+        allocator.free(owned_root_path);
+        return err;
+    };
+
+    try appendCmakeChildSignaturesWithIO(io, allocator, signature, root_path, root_contents, &visited, 0);
+}
+
+fn appendCmakeChildSignaturesWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    signature: *std.ArrayList(u8),
+    current_path: []const u8,
+    contents: []const u8,
+    visited: *std.ArrayList([]u8),
+    depth: usize,
+) !void {
+    if (depth >= MAX_CMAKE_SIGNATURE_DEPTH or visited.items.len >= MAX_CMAKE_SIGNATURE_FILES) return;
+
+    const subdirs = try cmake_parse.collectAddSubdirectoriesAlloc(allocator, contents);
+    defer common.freeOwnedNameList(allocator, subdirs);
+
+    const current_dir = std.fs.path.dirname(current_path) orelse ".";
+    for (subdirs) |subdir| {
+        if (std.fs.path.isAbsolute(subdir) or common.hasInvalidPayloadChars(subdir)) continue;
+
+        const child_path = try std.fs.path.join(allocator, &.{ current_dir, subdir, "CMakeLists.txt" });
+        defer allocator.free(child_path);
+        if (!common.isRegularFileWithIO(io, child_path)) continue;
+
+        const normalized_child_path = try common.normalizePathAlloc(allocator, child_path);
+        defer allocator.free(normalized_child_path);
+        var already_seen = false;
+        for (visited.items) |existing| {
+            if (std.mem.eql(u8, existing, normalized_child_path)) {
+                already_seen = true;
+                break;
+            }
+        }
+        if (already_seen or visited.items.len >= MAX_CMAKE_SIGNATURE_FILES) continue;
+
+        const owned_child_path = try allocator.dupe(u8, normalized_child_path);
+        visited.append(allocator, owned_child_path) catch |err| {
+            allocator.free(owned_child_path);
+            return err;
+        };
+        try build_signature.appendSignatureFileWithIO(io, allocator, signature, child_path);
+
+        const child_contents = common.readFileAllocWithIO(io, allocator, child_path) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => continue,
+            else => return err,
+        };
+        defer allocator.free(child_contents);
+        try appendCmakeChildSignaturesWithIO(
+            io,
+            allocator,
+            signature,
+            child_path,
+            child_contents,
+            visited,
+            depth + 1,
+        );
+    }
+}
+
 test "cmake auto signature tracks file API reply changes" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -198,6 +289,37 @@ test "cmake auto signature tracks file API reply changes" {
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "build/.cmake/api/v1/reply/index-1.json",
         .data = "{\"reply\":{}}",
+    });
+
+    const second = try buildCmakeAutoSignatureAlloc(std.testing.io, allocator, root);
+    defer allocator.free(second);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+}
+
+test "cmake auto signature tracks nested CMakeLists changes" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "app");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "CMakeLists.txt",
+        .data = "project(demo)\nadd_subdirectory(app)\n",
+    });
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/CMakeLists.txt",
+        .data = "add_executable(app main.cpp)\n",
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    const first = try buildCmakeAutoSignatureAlloc(std.testing.io, allocator, root);
+    defer allocator.free(first);
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/CMakeLists.txt",
+        .data = "add_executable(app main.cpp)\nadd_executable(cli cli.cpp)\n",
     });
 
     const second = try buildCmakeAutoSignatureAlloc(std.testing.io, allocator, root);
