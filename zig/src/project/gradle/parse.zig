@@ -134,7 +134,19 @@ fn containsSpringBoot(contents: []const u8) bool {
 }
 
 fn containsApplicationRun(contents: []const u8) bool {
-    return std.mem.find(u8, contents, "id 'application'") != null or std.mem.find(u8, contents, "id \"application\"") != null or std.mem.find(u8, contents, "id(\"application\")") != null or std.mem.find(u8, contents, "apply plugin: 'application'") != null or std.mem.find(u8, contents, "apply plugin: \"application\"") != null or std.mem.find(u8, contents, "application {") != null or std.mem.find(u8, contents, "application{") != null;
+    const patterns = [_][]const u8{
+        "id 'application'",
+        "id \"application\"",
+        "id(\"application\")",
+        "apply plugin: 'application'",
+        "apply plugin: \"application\"",
+        "application {",
+        "application{",
+    };
+    for (patterns) |pattern| {
+        if (findCodePrefix(contents, pattern, 0) != null) return true;
+    }
+    return false;
 }
 
 fn collectDeclaredTasks(
@@ -410,4 +422,15 @@ test "parse gradle tasks ignores task declarations inside strings" {
     try std.testing.expect(containsName(names.items, "realTask"));
     try std.testing.expect(!containsName(names.items, "fakeTask"));
     try std.testing.expect(!containsName(names.items, "fakeRawTask"));
+}
+
+test "parse gradle tasks ignores application blocks inside strings" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator, "val text = \"application {\"\n" ++
+        "val other = \"id('application')\"\n", &names);
+
+    try std.testing.expect(!containsName(names.items, "run"));
 }
