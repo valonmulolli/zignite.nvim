@@ -132,7 +132,6 @@ fn findBuildFileAlloc(allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
 
 fn findBuildFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
     const build_bazel = try std.fs.path.join(allocator, &.{ dir, "BUILD.bazel" });
-    errdefer allocator.free(build_bazel);
     if (common.isRegularFileWithIO(io, build_bazel)) return build_bazel;
     allocator.free(build_bazel);
 
