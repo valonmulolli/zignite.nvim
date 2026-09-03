@@ -91,7 +91,7 @@ fn commitBlock(
     if (tokens.len == 0) return;
 
     const target = tokens[0];
-    if (target.len == 0) return;
+    if (target.len == 0 or common.hasInvalidPayloadChars(target)) return;
 
     var matched = false;
     if (relative_match_path != null or basename != null) {
@@ -252,8 +252,12 @@ fn tokenizeQuotedArgsAlloc(allocator: std.mem.Allocator, text: []const u8) ![][]
         const start = index + 1;
         index = start;
         while (index < text.len and text[index] != quote) : (index += 1) {}
-        if (index > start and index < text.len and text[index] == quote) {
-            try common.pushUniqueName(allocator, &tokens, text[start..index]);
+        if (index < text.len and text[index] == quote) {
+            const token = try allocator.dupe(u8, text[start..index]);
+            tokens.append(allocator, token) catch |err| {
+                allocator.free(token);
+                return err;
+            };
         }
     }
 
@@ -310,4 +314,27 @@ test "parse meson ignores parentheses inside quoted sources" {
     try std.testing.expectEqualStrings("app", targets[0].name);
     try std.testing.expect(targets[0].matched);
     try std.testing.expectEqualStrings("other", targets[1].name);
+}
+
+test "parse meson rejects unsafe target without shifting source arguments" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "executable('bad@@ZQF_BEGIN', 'src/main.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 0), targets.len);
+
+    const empty_targets = try parseTargets(
+        allocator,
+        "executable('', 'src/main.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, empty_targets);
+
+    try std.testing.expectEqual(@as(usize, 0), empty_targets.len);
 }
