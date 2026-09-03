@@ -230,8 +230,8 @@ fn scratchRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.proce
 
 fn isSafePathComponent(value: []const u8) bool {
     if (value.len == 0) return false;
-    if (std.mem.indexOfScalar(u8, value, 0) != null) return false;
-    if (std.mem.indexOfScalar(u8, value, '\n') != null) return false;
+    if (std.mem.findScalar(u8, value, 0) != null) return false;
+    if (std.mem.findScalar(u8, value, '\n') != null) return false;
     var it = std.mem.tokenizeAny(u8, value, "/\\");
     while (it.next()) |part| {
         if (std.mem.eql(u8, part, "..")) return false;
