@@ -267,15 +267,27 @@ fn stripHashComment(line: []const u8) []const u8 {
 }
 
 fn parseProjectName(contents: []const u8) ?[]const u8 {
+    var awaiting_name = false;
+    var project_depth: isize = 0;
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
         const line = stripHashComment(common.stripTrailingCR(raw_line));
-        const project_idx = indexOfProjectCall(line) orelse continue;
-        const open_idx = std.mem.findScalar(u8, line[project_idx..], '(') orelse continue;
-        const args = line[project_idx + open_idx + 1 ..];
-        const trimmed = common.trimSpaces(args);
-        const token = extractFirstToken(trimmed);
-        if (token.len > 0) return token;
+        if (!awaiting_name) {
+            const project_idx = indexOfProjectCall(line) orelse continue;
+            const open_idx = std.mem.findScalar(u8, line[project_idx..], '(') orelse continue;
+            const args = line[project_idx + open_idx + 1 ..];
+            const token = extractFirstToken(args);
+            if (token.len > 0 and !std.mem.eql(u8, token, ")")) return token;
+
+            project_depth = countParenDelta(line[project_idx..]);
+            awaiting_name = project_depth > 0;
+            continue;
+        }
+
+        const token = extractFirstToken(line);
+        if (token.len > 0 and !std.mem.eql(u8, token, ")")) return token;
+        project_depth += countParenDelta(line);
+        if (project_depth <= 0) awaiting_name = false;
     }
     return null;
 }
@@ -692,6 +704,28 @@ test "parse cmake targets resolves project name and matches relative source" {
     try std.testing.expect(targets[0].matched);
     try std.testing.expectEqualStrings("helper", targets[1].name);
     try std.testing.expect(!targets[1].matched);
+}
+
+test "parse cmake resolves project name across multiline project call" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "project(\n" ++
+        "  demo-app\n" ++
+        "  LANGUAGES CXX\n" ++
+        ")\n" ++
+        "add_executable(${PROJECT_NAME} src/main.cpp)\n";
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("demo-app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
 }
 
 test "parse cmake targets merges duplicate target matches" {
