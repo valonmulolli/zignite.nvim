@@ -46,7 +46,7 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
         if (std.mem.eql(u8, name, "test-obj")) return allocator.dupe(u8, "zig test-obj $file");
         if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "zig version");
         if (std.mem.eql(u8, name, "zen")) return allocator.dupe(u8, "zig zen");
-        return std.fmt.allocPrint(allocator, "zig {s}", .{name});
+        return buildToolCommandTemplate(allocator, "zig", name);
     }
 
     if (tool == .go) {
@@ -69,7 +69,7 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
         if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "go version");
         if (std.mem.eql(u8, name, "vet")) return allocator.dupe(u8, "go vet ./...");
         if (std.mem.eql(u8, name, "work")) return allocator.dupe(u8, "go work sync");
-        return std.fmt.allocPrint(allocator, "go {s}", .{name});
+        return buildToolCommandTemplate(allocator, "go", name);
     }
 
     if (tool == .cargo) {
@@ -104,7 +104,7 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
         if (std.mem.eql(u8, name, "update")) return allocator.dupe(u8, "cargo update");
         if (std.mem.eql(u8, name, "vendor")) return allocator.dupe(u8, "cargo vendor");
         if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "cargo version");
-        return std.fmt.allocPrint(allocator, "cargo {s}", .{name});
+        return buildToolCommandTemplate(allocator, "cargo", name);
     }
 
     if (std.mem.eql(u8, name, "build")) return allocator.dupe(u8, "odin build .");
@@ -114,7 +114,13 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
     if (std.mem.eql(u8, name, "run")) return allocator.dupe(u8, "odin run .");
     if (std.mem.eql(u8, name, "test")) return allocator.dupe(u8, "odin test .");
     if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "odin version");
-    return std.fmt.allocPrint(allocator, "odin {s}", .{name});
+    return buildToolCommandTemplate(allocator, "odin", name);
+}
+
+fn buildToolCommandTemplate(allocator: std.mem.Allocator, tool: []const u8, name: []const u8) ![]u8 {
+    const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, name);
+    defer allocator.free(quoted_name);
+    return std.fmt.allocPrint(allocator, "{s} {s}", .{ tool, quoted_name });
 }
 
 test "detect command records include rendered templates" {
@@ -145,6 +151,14 @@ test "detect command records fall through to default for unknown names" {
     defer types.freeOwnedCommandList(allocator, commands);
 
     try std.testing.expectEqualStrings("custom\tzig custom", commands[0]);
+}
+
+test "detect command records quote shell syntax in unknown names" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .zig, &.{"custom;touch"});
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("custom;touch\tzig 'custom;touch'", commands[0]);
 }
 
 test "detect command records use $zignite_args placeholder for argument-taking cargo subcommands" {
