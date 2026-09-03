@@ -245,6 +245,8 @@ pub fn handleDaemonLine(
 
 fn hasFlag(args: []const []const u8, needle: []const u8) bool {
     for (args) |arg| {
+        // Everything after --argv belongs to the child process, not Zignite.
+        if (std.mem.eql(u8, arg, "--argv")) break;
         if (std.mem.eql(u8, arg, needle)) {
             return true;
         }
@@ -276,6 +278,11 @@ test "handleDaemonLine returns false for unrecognised lines" {
     const handled = try handleDaemonLine(allocator, std.testing.io, null, &reader, &out.writer, "garbage line");
 
     try std.testing.expect(!handled);
+}
+
+test "hasFlag ignores child argv payload" {
+    try std.testing.expect(!hasFlag(&.{ "--argv", "echo", "--daemon" }, "--daemon"));
+    try std.testing.expect(hasFlag(&.{ "--timeout=100", "--daemon" }, "--daemon"));
 }
 
 test "handleDaemonLine returns quickfix error for malformed header with request id" {
