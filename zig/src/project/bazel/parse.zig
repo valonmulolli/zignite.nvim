@@ -23,10 +23,11 @@ pub fn parseTargets(allocator: std.mem.Allocator, contents: []const u8) ![]Targe
     var capture: ?std.ArrayList(u8) = null;
     defer if (capture) |*list| list.deinit(allocator);
     var depth: isize = 0;
+    var multiline_quote: ?MultilineQuote = null;
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
+        const line = stripHashComment(common.stripTrailingCR(raw_line), &multiline_quote);
         var line_index: usize = 0;
         while (line_index < line.len) {
             if (capture_rule == null) {
@@ -117,31 +118,77 @@ fn commitBlock(
     };
 }
 
-fn stripHashComment(line: []const u8) []const u8 {
+const MultilineQuote = enum { basic, literal };
+
+fn stripHashComment(line: []const u8, multiline_quote: *?MultilineQuote) []const u8 {
+    var index: usize = 0;
     var quote: ?u8 = null;
     var escaped = false;
+    var saw_multiline_quote = false;
 
-    for (line, 0..) |ch, index| {
+    while (index < line.len) {
+        const ch = line[index];
+
+        if (multiline_quote.*) |active_multiline| {
+            const delimiter: u8 = if (active_multiline == .basic) '"' else '\'';
+            if (hasTripleQuote(line, index, delimiter) and
+                (active_multiline == .literal or !isEscaped(line, index)))
+            {
+                multiline_quote.* = null;
+                saw_multiline_quote = true;
+                index += 3;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+
         if (escaped) {
             escaped = false;
+            index += 1;
             continue;
         }
         if (quote != null and ch == '\\') {
             escaped = true;
+            index += 1;
             continue;
         }
         if (quote) |active_quote| {
             if (ch == active_quote) quote = null;
+            index += 1;
+            continue;
+        }
+        if (hasTripleQuote(line, index, ch)) {
+            multiline_quote.* = if (ch == '"') .basic else .literal;
+            saw_multiline_quote = true;
+            index += 3;
             continue;
         }
         if (ch == '"' or ch == '\'') {
             quote = ch;
+            index += 1;
             continue;
         }
         if (ch == '#') return line[0..index];
+        index += 1;
     }
 
+    if (multiline_quote.* != null or saw_multiline_quote) return line[0..0];
     return line;
+}
+
+fn hasTripleQuote(line: []const u8, index: usize, quote: u8) bool {
+    return (quote == '"' or quote == '\'') and index + 3 <= line.len and
+        line[index] == quote and line[index + 1] == quote and line[index + 2] == quote;
+}
+
+fn isEscaped(line: []const u8, index: usize) bool {
+    var slash_count: usize = 0;
+    var cursor = index;
+    while (cursor > 0 and line[cursor - 1] == '\\') : (cursor -= 1) {
+        slash_count += 1;
+    }
+    return slash_count % 2 == 1;
 }
 
 const RuleStart = struct {
@@ -495,12 +542,14 @@ test "parse bazel targets" {
 
 test "stripHashComment ignores hashes inside strings" {
     const line = "    srcs = [\"main#debug.cc\", 'lib#test.cc'], # real comment";
-    try std.testing.expectEqualStrings("    srcs = [\"main#debug.cc\", 'lib#test.cc'], ", stripHashComment(line));
+    var multiline_quote: ?MultilineQuote = null;
+    try std.testing.expectEqualStrings("    srcs = [\"main#debug.cc\", 'lib#test.cc'], ", stripHashComment(line, &multiline_quote));
 }
 
 test "stripHashComment handles escaped quotes before comment" {
     const line = "    srcs = [\"main\\\"#debug.cc\"], # real comment";
-    try std.testing.expectEqualStrings("    srcs = [\"main\\\"#debug.cc\"], ", stripHashComment(line));
+    var multiline_quote: ?MultilineQuote = null;
+    try std.testing.expectEqualStrings("    srcs = [\"main\\\"#debug.cc\"], ", stripHashComment(line, &multiline_quote));
 }
 
 test "parse bazel targets preserves hashes inside quoted sources" {
@@ -533,6 +582,22 @@ test "parse bazel targets ignores assignments inside quoted attributes" {
 
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("real", targets[0].name);
+}
+
+test "parse bazel targets ignores rules inside multiline strings" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "documentation = \"\"\"\n" ++
+        "cc_binary(name = \"fake\", srcs = [\"fake.cc\"])\n" ++
+        "\"\"\"\n" ++
+        "cc_binary(name = \"real\", srcs = [\"main.cc\"])\n";
+
+    const targets = try parseTargets(allocator, contents);
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].supports_run);
 }
 
 test "parse bazel targets accepts qualified rule names" {
