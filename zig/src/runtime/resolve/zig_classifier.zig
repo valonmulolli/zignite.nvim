@@ -133,8 +133,33 @@ pub fn sourceRequiresProjectModules(contents: []const u8) bool {
 
 pub fn buildDefinesRunStep(contents: []const u8) bool {
     var i: usize = 0;
+    var line_start = true;
+    var only_leading_whitespace = true;
+
     while (i < contents.len) {
         const ch = contents[i];
+
+        if (ch == '\n') {
+            line_start = true;
+            only_leading_whitespace = true;
+            i += 1;
+            continue;
+        }
+
+        if (line_start and only_leading_whitespace and (ch == ' ' or ch == '\t' or ch == '\r')) {
+            i += 1;
+            continue;
+        }
+
+        if (line_start and only_leading_whitespace and ch == '\\' and i + 1 < contents.len and contents[i + 1] == '\\') {
+            i = skipToLineEnd(contents, i + 2);
+            line_start = false;
+            only_leading_whitespace = false;
+            continue;
+        }
+
+        line_start = false;
+        only_leading_whitespace = false;
 
         if (ch == '/' and i + 1 < contents.len and contents[i + 1] == '/') {
             i = skipToLineEnd(contents, i + 2);
@@ -299,6 +324,16 @@ test "buildDefinesRunStep ignores comments, strings, and other step names" {
         "// b.step(\"run\", \"comment\")\n" ++
         "const text = \"b.step('run', 'string')\";\n" ++
         "const check_step = b.step(\"check\", \"Check\");\n";
+    try std.testing.expect(!buildDefinesRunStep(contents));
+}
+
+test "buildDefinesRunStep ignores multiline string contents" {
+    const contents =
+        \\const docs =
+        \\    \\b.step("run", "not a real step")
+        \\;
+    ;
+
     try std.testing.expect(!buildDefinesRunStep(contents));
 }
 
