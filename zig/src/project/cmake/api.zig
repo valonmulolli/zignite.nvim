@@ -84,8 +84,10 @@ fn appendOwnedTargets(
         allocator.free(items);
     }
 
-    while (index < items.len) : (index += 1) {
-        try appendOrMergeOwnedTarget(allocator, targets, items[index]);
+    while (index < items.len) {
+        const item = items[index];
+        index += 1;
+        try appendOrMergeOwnedTarget(allocator, targets, item);
     }
     allocator.free(items);
 }
@@ -149,4 +151,37 @@ test "parseTargetsWithIO follows add_subdirectory fallback projects" {
     try std.testing.expectEqual(@as(usize, 1), targets.len);
     try std.testing.expectEqualStrings("child", targets[0].name);
     try std.testing.expect(targets[0].matched);
+}
+
+fn appendOwnedTargetsForAllocationFailure(allocator: std.mem.Allocator) !void {
+    var targets: std.ArrayList(Target) = .empty;
+    defer {
+        for (targets.items) |target| freeOwnedTarget(allocator, target);
+        targets.deinit(allocator);
+    }
+    try targets.ensureTotalCapacity(allocator, 1);
+
+    const items = try allocator.alloc(Target, 2);
+    var initialized: usize = 0;
+    errdefer {
+        for (items[0..initialized]) |item| freeOwnedTarget(allocator, item);
+        allocator.free(items);
+    }
+
+    while (initialized < items.len) : (initialized += 1) {
+        items[initialized] = .{
+            .name = try allocator.dupe(u8, if (initialized == 0) "first" else "second"),
+            .matched = false,
+        };
+    }
+
+    try appendOwnedTargets(allocator, &targets, items);
+}
+
+test "appendOwnedTargets propagates allocation failures without double freeing" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        appendOwnedTargetsForAllocationFailure,
+        .{},
+    );
 }
