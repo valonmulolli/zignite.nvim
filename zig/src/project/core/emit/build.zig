@@ -274,6 +274,42 @@ test "writeBuildOutput emits cmake commands from fixture project" {
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\trun\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
 }
 
+test "writeBuildOutput omits commands with unsafe build directories" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "CMakeLists.txt", .data =
+        \\project(demo)
+        \\add_executable(demo main.cpp)
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.cpp", .data = "int main() { return 0; }\n" });
+    try tmp.dir.createDirPath(std.testing.io, "build\nunsafe");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build\nunsafe/CMakeCache.txt", .data = "" });
+
+    const cmake_path = try tmp.dir.realPathFileAlloc(std.testing.io, "CMakeLists.txt", allocator);
+    defer allocator.free(cmake_path);
+    const match_path = try tmp.dir.realPathFileAlloc(std.testing.io, "main.cpp", allocator);
+    defer allocator.free(match_path);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    const contents = try tmp.dir.readFileAlloc(std.testing.io, "CMakeLists.txt", allocator, .limited(4096));
+    defer allocator.free(contents);
+
+    try std.testing.expect(try writeBuildOutput(&out.writer, allocator, .{
+        .kind = .cmake,
+        .path = cmake_path,
+        .match_path = match_path,
+    }, contents));
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_TARGET\tdemo\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tcmake-config\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\t") == null);
+}
+
 test "writeBuildOutput prefers CMake File API targets and artifacts when available" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

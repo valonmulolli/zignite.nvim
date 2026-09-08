@@ -55,6 +55,20 @@ pub fn hasInvalidPayloadChars(value: []const u8) bool {
     return hasControlChars(value) or hasProtocolMarkers(value);
 }
 
+/// Emit a legacy record only when all string fields are safe for the
+/// line-delimited project protocol.
+pub fn writeSafeStringRecord(stdout: anytype, comptime record: []const u8, fields: anytype) !void {
+    inline for (fields) |field| {
+        if (hasInvalidPayloadChars(field)) return;
+    }
+
+    try stdout.print("{s}", .{record});
+    inline for (fields) |field| {
+        try stdout.print("\t{s}", .{field});
+    }
+    try stdout.writeByte('\n');
+}
+
 pub fn pushUniqueName(
     allocator: std.mem.Allocator,
     names: *std.ArrayList([]u8),
@@ -326,6 +340,18 @@ test "hasInvalidPayloadChars combines control char and protocol marker checks" {
     try std.testing.expect(hasInvalidPayloadChars("@@ZQF_BEGIN"));
     try std.testing.expect(hasInvalidPayloadChars("/tmp/@@ZQF_END/file"));
     try std.testing.expect(hasInvalidPayloadChars("tab\t here"));
+}
+
+test "writeSafeStringRecord omits records with unsafe fields" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try writeSafeStringRecord(&out.writer, "COMMAND", .{ "build", "echo\nbad" });
+    try std.testing.expectEqualStrings("", out.written());
+
+    try writeSafeStringRecord(&out.writer, "COMMAND", .{ "build", "echo good" });
+    try std.testing.expectEqualStrings("COMMAND\tbuild\techo good\n", out.written());
 }
 
 test "pushUniqueName deduplicates and rejects empty/control/protocol inputs" {

@@ -19,7 +19,7 @@ fn emitCanonicalTaskAliases(
         defer allocator.free(quoted_source_name);
         const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, quoted_source_name });
         defer allocator.free(command);
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ alias, command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ alias, command });
     }
 }
 
@@ -33,7 +33,7 @@ pub fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents:
         defer allocator.free(quoted_name);
         const command = try std.fmt.allocPrint(allocator, "mvn {s}", .{quoted_name});
         defer allocator.free(command);
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ name, command });
     }
 
     try emitCanonicalTaskAliases(stdout, allocator, names.items, "mvn", &task_alias.canonical_aliases);
@@ -58,10 +58,10 @@ pub fn writeMavenOutput(stdout: anytype, allocator: std.mem.Allocator, contents:
     }
 
     if (run_command) |command| {
-        try stdout.print("COMMAND\tmvn-run\t{s}\n", .{command});
-        try stdout.print("COMMAND\trun\t{s}\n", .{command});
-        try stdout.print("PRIMARY_RUN\t{s}\n", .{command});
-        try stdout.print("PREFERRED\trun\t{s}\n", .{command});
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ "mvn-run", command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ "run", command });
+        try common.writeSafeStringRecord(stdout, "PRIMARY_RUN", .{command});
+        try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "run", command });
     }
 }
 
@@ -87,19 +87,19 @@ pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
         defer allocator.free(quoted_name);
         const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, quoted_name });
         defer allocator.free(command);
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ name, command });
     }
 
     try emitCanonicalTaskAliases(stdout, allocator, names.items, prefix, &task_alias.canonical_aliases);
 
-    try stdout.print("COMMAND\tgradle-build\t{s}\n", .{build_command});
-    try stdout.print("COMMAND\tgradle-test\t{s}\n", .{test_command});
-    try stdout.print("COMMAND\tgradle-clean\t{s}\n", .{clean_command});
-    try stdout.print("COMMAND\tbuild\t{s}\n", .{build_command});
-    try stdout.print("COMMAND\ttest\t{s}\n", .{test_command});
-    try stdout.print("COMMAND\tclean\t{s}\n", .{clean_command});
-    try stdout.print("PREFERRED\tbuild\t{s}\n", .{build_command});
-    try stdout.print("PREFERRED\ttest\t{s}\n", .{test_command});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "gradle-build", build_command });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "gradle-test", test_command });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "gradle-clean", clean_command });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "build", build_command });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "test", test_command });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "clean", clean_command });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "build", build_command });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "test", test_command });
 
     var run_task: ?[]const u8 = null;
     for (names.items) |name| {
@@ -115,9 +115,9 @@ pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
     if (run_task) |task| {
         const run_command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ prefix, task });
         defer allocator.free(run_command);
-        try stdout.print("COMMAND\tgradle-run\t{s}\n", .{run_command});
-        try stdout.print("COMMAND\trun\t{s}\n", .{run_command});
-        try stdout.print("PRIMARY_RUN\t{s}\n", .{run_command});
-        try stdout.print("PREFERRED\trun\t{s}\n", .{run_command});
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ "gradle-run", run_command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ "run", run_command });
+        try common.writeSafeStringRecord(stdout, "PRIMARY_RUN", .{run_command});
+        try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "run", run_command });
     }
 }

@@ -18,7 +18,9 @@ pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
     for (names.items) |name| {
         const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, name);
         defer allocator.free(quoted_name);
-        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ name, quoted_name });
+        const command = try std.fmt.allocPrint(allocator, "make {s}", .{quoted_name});
+        defer allocator.free(command);
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ name, command });
     }
     for (task_alias.canonical_aliases) |alias| {
         if (task_alias.containsName(names.items, alias)) continue;
@@ -29,7 +31,9 @@ pub fn writeMakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
         }
         const quoted_source_name = try common.quoteShellArgIfNeededAlloc(allocator, source_name);
         defer allocator.free(quoted_source_name);
-        try stdout.print("COMMAND\t{s}\tmake {s}\n", .{ alias, quoted_source_name });
+        const command = try std.fmt.allocPrint(allocator, "make {s}", .{quoted_source_name});
+        defer allocator.free(command);
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ alias, command });
     }
 
     if (!task_alias.containsName(names.items, "build") and task_alias.findSourceName(names.items, "build") == null) {
@@ -66,12 +70,12 @@ pub fn writePackageJsonOutputWithIO(
 
     const install_command = try package_json.formatInstallCommandAlloc(allocator, manager);
     defer allocator.free(install_command);
-    try stdout.print("COMMAND\tinstall\t{s}\n", .{install_command});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "install", install_command });
 
     for (names.items) |name| {
         const command = try package_json.formatScriptCommandAlloc(allocator, manager, name);
         defer allocator.free(command);
-        try stdout.print("COMMAND\t{s}\t{s}\n", .{ name, command });
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ name, command });
     }
 
     for (task_alias.canonical_aliases) |alias| {
@@ -87,7 +91,7 @@ pub fn writePackageJsonOutputWithIO(
             if (std.mem.eql(u8, alias, "live") and std.mem.eql(u8, name, "live")) continue;
             const alias_command = try package_json.formatScriptCommandAlloc(allocator, manager, name);
             defer allocator.free(alias_command);
-            try stdout.print("COMMAND\t{s}\t{s}\n", .{ alias, alias_command });
+            try common.writeSafeStringRecord(stdout, "COMMAND", .{ alias, alias_command });
         }
     }
 
@@ -99,7 +103,7 @@ pub fn writePyprojectOutput(stdout: anytype, allocator: std.mem.Allocator, conte
     defer common.deinitOwnedNameList(allocator, &names);
     try pyproject.parseTools(allocator, contents, &names);
     for (names.items) |name| {
-        try stdout.print("TOOL\t{s}\n", .{name});
+        try common.writeSafeStringRecord(stdout, "TOOL", .{name});
     }
 }
 

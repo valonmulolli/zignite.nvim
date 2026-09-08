@@ -13,22 +13,16 @@ const Options = types.Options;
 
 pub fn writeSystemResult(stdout: anytype, result: build_system.Result) !void {
     if (result.root) |root| {
-        if (!common.hasInvalidPayloadChars(root)) {
-            try stdout.print("ROOT\t{s}\n", .{root});
-        }
+        try common.writeSafeStringRecord(stdout, "ROOT", .{root});
     }
     if (result.system) |name| {
-        if (!common.hasInvalidPayloadChars(name)) {
-            try stdout.print("SYSTEM\t{s}\n", .{name});
-        }
+        try common.writeSafeStringRecord(stdout, "SYSTEM", .{name});
     }
     if (result.build_ready) |ready| {
         try stdout.print("BUILD_READY\t{d}\n", .{if (ready) @as(u8, 1) else @as(u8, 0)});
     }
     for (result.commands) |entry| {
-        if (!common.hasInvalidPayloadChars(entry.name) and !common.hasInvalidPayloadChars(entry.command)) {
-            try stdout.print("COMMAND\t{s}\t{s}\n", .{ entry.name, entry.command });
-        }
+        try common.writeSafeStringRecord(stdout, "COMMAND", .{ entry.name, entry.command });
     }
 }
 

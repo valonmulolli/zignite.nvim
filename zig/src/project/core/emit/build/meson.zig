@@ -30,17 +30,17 @@ pub fn writeMesonOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
     defer allocator.free(meson_test_command);
     const meson_install_command = try std.fmt.allocPrint(allocator, "meson install -C {s}", .{shell_build_dir});
     defer allocator.free(meson_install_command);
-    try stdout.print("COMMAND\tmeson-setup\t{s}\n", .{meson_setup_command});
-    try stdout.print("COMMAND\tmeson-clean\t{s}\n", .{meson_clean_command});
-    try stdout.print("COMMAND\tmeson-test\t{s}\n", .{meson_test_command});
-    try stdout.print("COMMAND\tinstall\t{s}\n", .{meson_install_command});
-    try stdout.print("COMMAND\tsetup\t{s}\n", .{meson_setup_command});
-    try stdout.print("COMMAND\tclean\t{s}\n", .{meson_clean_command});
-    try stdout.print("COMMAND\ttest\t{s}\n", .{meson_test_command});
-    try stdout.print("PREFERRED\tsetup\t{s}\n", .{meson_setup_command});
-    try stdout.print("PREFERRED\tclean\t{s}\n", .{meson_clean_command});
-    try stdout.print("PREFERRED\ttest\t{s}\n", .{meson_test_command});
-    try stdout.print("PREFERRED\tinstall\t{s}\n", .{meson_install_command});
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "meson-setup", meson_setup_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "meson-clean", meson_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "meson-test", meson_test_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "install", meson_install_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "setup", meson_setup_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "clean", meson_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "test", meson_test_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "setup", meson_setup_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "clean", meson_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "test", meson_test_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "install", meson_install_command });
     const primary_run_path = try shared.emitTargetBuildRunCommandsWithIO(
         io,
         stdout,

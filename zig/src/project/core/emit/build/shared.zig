@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../../common.zig");
 
 pub fn findPrimaryTargetName(items: anytype) ?[]const u8 {
     var exact_target: ?[]const u8 = null;
@@ -47,7 +48,9 @@ pub fn emitTargetBuildRunCommands(
     errdefer if (primary_run_path) |value| allocator.free(value);
 
     for (items) |item| {
-        try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        if (!common.hasInvalidPayloadChars(item.name)) {
+            try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        }
         const run_path = if (item.artifact_path) |artifact_path|
             try allocator.dupe(u8, artifact_path)
         else
@@ -56,14 +59,24 @@ pub fn emitTargetBuildRunCommands(
 
         const build_command = try buildCommandFn(allocator, root, item.name);
         defer allocator.free(build_command);
-        try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ build_label_prefix, item.name, build_command });
+        if (!common.hasInvalidPayloadChars(build_label_prefix) and
+            !common.hasInvalidPayloadChars(item.name) and
+            !common.hasInvalidPayloadChars(build_command))
+        {
+            try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ build_label_prefix, item.name, build_command });
+        }
 
         const run_command = try runCommandFn(allocator, root, item.name, run_path);
         defer allocator.free(run_command);
-        try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ run_label_prefix, item.name, run_command });
+        if (!common.hasInvalidPayloadChars(run_label_prefix) and
+            !common.hasInvalidPayloadChars(item.name) and
+            !common.hasInvalidPayloadChars(run_command))
+        {
+            try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ run_label_prefix, item.name, run_command });
+        }
 
         if (run_path) |value| {
-            try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
+            try common.writeSafeStringRecord(stdout, "RUN_PATH", .{ item.name, value });
             if (primary_target) |target_name| {
                 if (primary_run_path == null and std.mem.eql(u8, item.name, target_name)) {
                     primary_run_path = try allocator.dupe(u8, value);
@@ -93,7 +106,9 @@ pub fn emitTargetBuildRunCommandsWithIO(
     errdefer if (primary_run_path) |value| allocator.free(value);
 
     for (items) |item| {
-        try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        if (!common.hasInvalidPayloadChars(item.name)) {
+            try stdout.print("TARGET\t{s}\t{d}\n", .{ item.name, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+        }
         const run_path = if (item.artifact_path) |artifact_path|
             try allocator.dupe(u8, artifact_path)
         else
@@ -102,14 +117,24 @@ pub fn emitTargetBuildRunCommandsWithIO(
 
         const build_command = try buildCommandFn(io, allocator, root, item.name);
         defer allocator.free(build_command);
-        try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ build_label_prefix, item.name, build_command });
+        if (!common.hasInvalidPayloadChars(build_label_prefix) and
+            !common.hasInvalidPayloadChars(item.name) and
+            !common.hasInvalidPayloadChars(build_command))
+        {
+            try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ build_label_prefix, item.name, build_command });
+        }
 
         const run_command = try runCommandFn(io, allocator, root, item.name, run_path);
         defer allocator.free(run_command);
-        try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ run_label_prefix, item.name, run_command });
+        if (!common.hasInvalidPayloadChars(run_label_prefix) and
+            !common.hasInvalidPayloadChars(item.name) and
+            !common.hasInvalidPayloadChars(run_command))
+        {
+            try stdout.print("COMMAND\t{s}-{s}\t{s}\n", .{ run_label_prefix, item.name, run_command });
+        }
 
         if (run_path) |value| {
-            try stdout.print("RUN_PATH\t{s}\t{s}\n", .{ item.name, value });
+            try common.writeSafeStringRecord(stdout, "RUN_PATH", .{ item.name, value });
             if (primary_target) |target_name| {
                 if (primary_run_path == null and std.mem.eql(u8, item.name, target_name)) {
                     primary_run_path = try allocator.dupe(u8, value);
@@ -134,20 +159,20 @@ pub fn emitPrimaryBuildRunCommands(
 ) !void {
     const preferred_build = try buildCommandFn(allocator, root, null);
     defer allocator.free(preferred_build);
-    try stdout.print("COMMAND\t{s}\t{s}\n", .{ build_label, preferred_build });
-    try stdout.print("COMMAND\tbuild\t{s}\n", .{preferred_build});
-    try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ build_label, preferred_build });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "build", preferred_build });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "build", preferred_build });
 
-    try stdout.print("PRIMARY_TARGET\t{s}\n", .{primary_target});
+    try common.writeSafeStringRecord(stdout, "PRIMARY_TARGET", .{primary_target});
     if (primary_run_path) |value| {
-        try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
+        try common.writeSafeStringRecord(stdout, "PRIMARY_RUN_PATH", .{value});
     }
 
     const preferred_run = try runCommandFn(allocator, root, primary_target, primary_run_path);
     defer allocator.free(preferred_run);
-    try stdout.print("COMMAND\t{s}\t{s}\n", .{ run_label, preferred_run });
-    try stdout.print("COMMAND\trun\t{s}\n", .{preferred_run});
-    try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ run_label, preferred_run });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "run", preferred_run });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "run", preferred_run });
 }
 
 pub fn emitPrimaryBuildRunCommandsWithIO(
@@ -164,18 +189,18 @@ pub fn emitPrimaryBuildRunCommandsWithIO(
 ) !void {
     const preferred_build = try buildCommandFn(io, allocator, root, null);
     defer allocator.free(preferred_build);
-    try stdout.print("COMMAND\t{s}\t{s}\n", .{ build_label, preferred_build });
-    try stdout.print("COMMAND\tbuild\t{s}\n", .{preferred_build});
-    try stdout.print("PREFERRED\tbuild\t{s}\n", .{preferred_build});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ build_label, preferred_build });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "build", preferred_build });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "build", preferred_build });
 
-    try stdout.print("PRIMARY_TARGET\t{s}\n", .{primary_target});
+    try common.writeSafeStringRecord(stdout, "PRIMARY_TARGET", .{primary_target});
     if (primary_run_path) |value| {
-        try stdout.print("PRIMARY_RUN_PATH\t{s}\n", .{value});
+        try common.writeSafeStringRecord(stdout, "PRIMARY_RUN_PATH", .{value});
     }
 
     const preferred_run = try runCommandFn(io, allocator, root, primary_target, primary_run_path);
     defer allocator.free(preferred_run);
-    try stdout.print("COMMAND\t{s}\t{s}\n", .{ run_label, preferred_run });
-    try stdout.print("COMMAND\trun\t{s}\n", .{preferred_run});
-    try stdout.print("PREFERRED\trun\t{s}\n", .{preferred_run});
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ run_label, preferred_run });
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ "run", preferred_run });
+    try common.writeSafeStringRecord(stdout, "PREFERRED", .{ "run", preferred_run });
 }
