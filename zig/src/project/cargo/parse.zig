@@ -206,14 +206,51 @@ fn parseNamedString(block: []const u8, key: []const u8) ?[]const u8 {
 
 fn findAssignmentValueStart(block: []const u8, key: []const u8) ?usize {
     var index: usize = 0;
-    while (index + key.len <= block.len) : (index += 1) {
-        if (!std.mem.eql(u8, block[index .. index + key.len], key)) continue;
-        if (index > 0 and isIdentContinue(block[index - 1])) continue;
-        if (index + key.len < block.len and isIdentContinue(block[index + key.len])) continue;
+    var quote: ?u8 = null;
+    var escaped = false;
+    while (index < block.len) {
+        const ch = block[index];
+        if (quote) |active_quote| {
+            if (active_quote == '"' and escaped) {
+                escaped = false;
+                index += 1;
+                continue;
+            }
+            if (active_quote == '"' and ch == '\\') {
+                escaped = true;
+                index += 1;
+                continue;
+            }
+            if (ch == active_quote) quote = null;
+            index += 1;
+            continue;
+        }
+
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            index += 1;
+            continue;
+        }
+        if (index + key.len > block.len) break;
+        if (!std.mem.eql(u8, block[index .. index + key.len], key)) {
+            index += 1;
+            continue;
+        }
+        if (index > 0 and isIdentContinue(block[index - 1])) {
+            index += 1;
+            continue;
+        }
+        if (index + key.len < block.len and isIdentContinue(block[index + key.len])) {
+            index += 1;
+            continue;
+        }
 
         var cursor = index + key.len;
         while (cursor < block.len and isWhitespace(block[cursor])) : (cursor += 1) {}
-        if (cursor >= block.len or block[cursor] != '=') continue;
+        if (cursor >= block.len or block[cursor] != '=') {
+            index += 1;
+            continue;
+        }
         cursor += 1;
         while (cursor < block.len and isWhitespace(block[cursor])) : (cursor += 1) {}
         return cursor;
@@ -345,6 +382,21 @@ test "parse cargo targets rejects unsafe explicit and implicit names" {
         \\name = "@@ZBR_RES_END 7"
         \\path = "src/main.rs"
     ;
+
+    const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/main.rs");
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 0), targets.len);
+}
+
+test "parse cargo targets ignores assignments inside quoted values" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "[package]\n" ++
+        "description = \"name = \\\"fake-package\\\"\"\n" ++
+        "[[bin]]\n" ++
+        "description = \"name = \\\"fake-bin\\\"\"\n" ++
+        "path = \"src/main.rs\"\n";
 
     const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/main.rs");
     defer freeOwnedTargets(allocator, targets);
