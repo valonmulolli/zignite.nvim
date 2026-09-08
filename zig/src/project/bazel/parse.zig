@@ -484,10 +484,25 @@ fn looksLikeTestName(value: []const u8) bool {
     if (std.mem.eql(u8, lower, "test") or std.mem.eql(u8, lower, "spec")) return true;
     // Bazel convention: test targets/files use _test, _spec, test_, or spec_ as word boundaries.
     // Substring-only match (the old approach) misidentifies contest, fastest, py_attest, spectate.
-    if (std.mem.find(u8, lower, "_test") != null) return true;
-    if (std.mem.find(u8, lower, "_spec") != null) return true;
+    if (containsDelimitedMarker(lower, "_test") or containsDelimitedMarker(lower, "_spec")) return true;
     if (std.mem.startsWith(u8, lower, "test_") or std.mem.startsWith(u8, lower, "spec_")) return true;
     return false;
+}
+
+fn containsDelimitedMarker(value: []const u8, marker: []const u8) bool {
+    var search_start: usize = 0;
+    while (search_start < value.len) {
+        const relative_index = std.mem.find(u8, value[search_start..], marker) orelse return false;
+        const index = search_start + relative_index;
+        const after = index + marker.len;
+        if (after == value.len or !isTestNameChar(value[after])) return true;
+        search_start = index + 1;
+    }
+    return false;
+}
+
+fn isTestNameChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_';
 }
 
 fn isWhitespace(ch: u8) bool {
@@ -634,4 +649,23 @@ test "parse bazel targets rejects unsafe protocol names" {
     defer model.freeOwnedTargets(allocator, targets);
 
     try std.testing.expectEqual(@as(usize, 0), targets.len);
+}
+
+test "parse bazel targets requires test marker boundaries" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(allocator,
+        \\cc_binary(
+        \\    name = "foo_testify",
+        \\    srcs = ["foo_testify.cc"],
+        \\)
+        \\cc_binary(
+        \\    name = "foo_test",
+        \\    srcs = ["foo_test.cc"],
+        \\)
+    );
+    defer model.freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 2), targets.len);
+    try std.testing.expect(!targets[0].supports_test);
+    try std.testing.expect(targets[1].supports_test);
 }
