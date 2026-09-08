@@ -57,13 +57,18 @@ fn stripCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 
                 contents[input_index + 1] == quote and
                 contents[input_index + 2] == quote)
             {
-                source[output_index] = quote;
-                source[output_index + 1] = quote;
-                source[output_index + 2] = quote;
+                @memset(source[output_index .. output_index + 3], ' ');
                 output_index += 3;
                 input_index += 3;
                 quote = 0;
                 triple_quote = false;
+                continue;
+            }
+
+            if (triple_quote) {
+                source[output_index] = if (current == '\n') '\n' else ' ';
+                output_index += 1;
+                input_index += 1;
                 continue;
             }
 
@@ -109,14 +114,14 @@ fn stripCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 
             triple_quote = input_index + 2 < contents.len and
                 contents[input_index + 1] == current and
                 contents[input_index + 2] == current;
-            source[output_index] = current;
-            output_index += 1;
-            input_index += 1;
             if (triple_quote) {
+                @memset(source[output_index .. output_index + 3], ' ');
+                output_index += 3;
+                input_index += 3;
+            } else {
                 source[output_index] = current;
-                source[output_index + 1] = current;
-                output_index += 2;
-                input_index += 2;
+                output_index += 1;
+                input_index += 1;
             }
             continue;
         }
@@ -422,6 +427,24 @@ test "parse gradle tasks ignores task declarations inside strings" {
     try std.testing.expect(containsName(names.items, "realTask"));
     try std.testing.expect(!containsName(names.items, "fakeTask"));
     try std.testing.expect(!containsName(names.items, "fakeRawTask"));
+}
+
+test "parse gradle tasks ignores declarations inside multiline strings" {
+    const allocator = std.testing.allocator;
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTasks(allocator,
+        \\val raw = """
+        \\tasks.register("fakeTask")
+        \\id("application")
+        \\"""
+        \\tasks.register("realTask")
+    , &names);
+
+    try std.testing.expect(containsName(names.items, "realTask"));
+    try std.testing.expect(!containsName(names.items, "fakeTask"));
+    try std.testing.expect(!containsName(names.items, "run"));
 }
 
 test "parse gradle tasks ignores application blocks inside strings" {
