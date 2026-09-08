@@ -56,14 +56,17 @@ pub fn parseTargets(
         targets.deinit(allocator);
     }
 
-    const project_name = parseProjectName(contents);
+    const sanitized = try stripHashCommentsAlloc(allocator, contents);
+    defer allocator.free(sanitized);
+
+    const project_name = parseProjectName(sanitized);
     var variables: std.ArrayList(Variable) = .empty;
     defer deinitVariables(allocator, &variables);
-    try collectSetVariables(allocator, contents, &variables);
+    try collectSetVariables(allocator, sanitized, &variables);
 
     try parseExecutableBlocks(
         allocator,
-        contents,
+        sanitized,
         project_name,
         relative_match_path,
         basename,
@@ -71,7 +74,7 @@ pub fn parseTargets(
         &targets,
     );
 
-    try applyTargetSources(allocator, contents, project_name, relative_match_path, basename, variables.items, &targets);
+    try applyTargetSources(allocator, sanitized, project_name, relative_match_path, basename, variables.items, &targets);
 
     return try targets.toOwnedSlice(allocator);
 }
@@ -159,18 +162,15 @@ fn parseExecutableBlocks(
     variables: []const Variable,
     targets: *std.ArrayList(Target),
 ) !void {
-    const sanitized = try stripHashCommentsAlloc(allocator, contents);
-    defer allocator.free(sanitized);
-
     var cursor: usize = 0;
-    while (cursor < sanitized.len) {
-        const relative_start = indexOfAddExecutable(sanitized[cursor..]) orelse break;
+    while (cursor < contents.len) {
+        const relative_start = indexOfAddExecutable(contents[cursor..]) orelse break;
         const start = cursor + relative_start;
-        const relative_end = findMatchingParen(sanitized[start..]) orelse break;
+        const relative_end = findMatchingParen(contents[start..]) orelse break;
         const end = start + relative_end + 1;
         try commitBlock(
             allocator,
-            sanitized[start..end],
+            contents[start..end],
             project_name,
             relative_match_path,
             basename,
@@ -182,16 +182,101 @@ fn parseExecutableBlocks(
 }
 
 fn stripHashCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
-    var sanitized: std.ArrayList(u8) = .empty;
-    errdefer sanitized.deinit(allocator);
+    const sanitized = try allocator.alloc(u8, contents.len);
+    errdefer allocator.free(sanitized);
 
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw_line| {
-        try sanitized.appendSlice(allocator, stripHashComment(common.stripTrailingCR(raw_line)));
-        try sanitized.append(allocator, '\n');
+    var input_index: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var bracket_comment_equals: ?usize = null;
+
+    while (input_index < contents.len) {
+        const ch = contents[input_index];
+
+        if (bracket_comment_equals) |equals| {
+            if (bracketCommentCloseLen(contents, input_index, equals)) |close_len| {
+                @memset(sanitized[input_index .. input_index + close_len], ' ');
+                input_index += close_len;
+                bracket_comment_equals = null;
+            } else {
+                sanitized[input_index] = if (ch == '\n') '\n' else ' ';
+                input_index += 1;
+            }
+            continue;
+        }
+
+        if (line_comment) {
+            if (ch == '\n') {
+                sanitized[input_index] = '\n';
+                line_comment = false;
+            } else {
+                sanitized[input_index] = ' ';
+            }
+            input_index += 1;
+            continue;
+        }
+
+        if (quote != 0) {
+            sanitized[input_index] = ch;
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == quote) {
+                quote = 0;
+            }
+            input_index += 1;
+            continue;
+        }
+
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            sanitized[input_index] = ch;
+            input_index += 1;
+            continue;
+        }
+
+        if (ch == '#') {
+            if (input_index + 1 < contents.len) {
+                if (bracketCommentOpenEquals(contents, input_index + 1)) |equals| {
+                    const open_len = 1 + 2 + equals;
+                    @memset(sanitized[input_index .. input_index + open_len], ' ');
+                    input_index += open_len;
+                    bracket_comment_equals = equals;
+                    continue;
+                }
+            }
+            sanitized[input_index] = ' ';
+            input_index += 1;
+            line_comment = true;
+            continue;
+        }
+
+        sanitized[input_index] = ch;
+        input_index += 1;
     }
 
-    return try sanitized.toOwnedSlice(allocator);
+    return sanitized;
+}
+
+fn bracketCommentOpenEquals(text: []const u8, open_index: usize) ?usize {
+    if (open_index >= text.len or text[open_index] != '[') return null;
+
+    var index = open_index + 1;
+    while (index < text.len and text[index] == '=') : (index += 1) {}
+    if (index >= text.len or text[index] != '[') return null;
+    return index - open_index - 1;
+}
+
+fn bracketCommentCloseLen(text: []const u8, close_index: usize, equals: usize) ?usize {
+    if (close_index >= text.len or text[close_index] != ']') return null;
+    const end = close_index + 1 + equals;
+    if (end >= text.len or text[end] != ']') return null;
+    for (text[close_index + 1 .. end]) |ch| {
+        if (ch != '=') return null;
+    }
+    return equals + 2;
 }
 
 fn findMatchingParen(text: []const u8) ?usize {
@@ -658,13 +743,16 @@ pub fn collectAddSubdirectoriesAlloc(
     allocator: std.mem.Allocator,
     contents: []const u8,
 ) ![][]u8 {
+    const sanitized = try stripHashCommentsAlloc(allocator, contents);
+    defer allocator.free(sanitized);
+
     var subdirs: std.ArrayList([]u8) = .empty;
     errdefer common.deinitOwnedNameList(allocator, &subdirs);
     var capture: ?std.ArrayList(u8) = null;
     defer if (capture) |*list| list.deinit(allocator);
     var depth: isize = 0;
 
-    var lines = std.mem.splitScalar(u8, contents, '\n');
+    var lines = std.mem.splitScalar(u8, sanitized, '\n');
     while (lines.next()) |raw_line| {
         const line = stripHashComment(common.stripTrailingCR(raw_line));
         if (capture == null) {
@@ -931,6 +1019,29 @@ test "parse cmake targets keeps hash inside quoted string literals" {
     try std.testing.expect(targets[0].matched);
 }
 
+test "parse cmake ignores multiline bracket comments" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "#[=[\n" ++
+        "add_executable(fake src/main.cpp)\n" ++
+        "set(PROJECT_NAME fake)\n" ++
+        "]=]\n" ++
+        "project(real)\n" ++
+        "add_executable(real src/main.cpp)\n";
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
 test "parse cmake targets ignores parentheses inside quoted strings" {
     const allocator = std.testing.allocator;
     const contents =
@@ -1022,4 +1133,16 @@ test "collect cmake add_subdirectory entries" {
     try std.testing.expectEqual(@as(usize, 2), subdirs.len);
     try std.testing.expectEqualStrings("app", subdirs[0]);
     try std.testing.expectEqualStrings("tools/cli", subdirs[1]);
+}
+
+test "collect cmake add_subdirectory ignores multiline bracket comments" {
+    const allocator = std.testing.allocator;
+    const subdirs = try collectAddSubdirectoriesAlloc(allocator, "#[=[\n" ++
+        "add_subdirectory(fake)\n" ++
+        "]=]\n" ++
+        "add_subdirectory(real)\n");
+    defer common.freeOwnedNameList(allocator, subdirs);
+
+    try std.testing.expectEqual(@as(usize, 1), subdirs.len);
+    try std.testing.expectEqualStrings("real", subdirs[0]);
 }
