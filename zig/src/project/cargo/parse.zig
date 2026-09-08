@@ -54,10 +54,11 @@ fn parseExplicitBins(
     var capture: ?std.ArrayList(u8) = null;
     defer if (capture) |*list| list.deinit(allocator);
     var in_bin_block = false;
+    var multiline_quote: ?MultilineQuote = null;
 
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
+        const line = stripHashComment(common.stripTrailingCR(raw_line), &multiline_quote);
         const trimmed = common.trimSpaces(line);
         const is_section = trimmed.len >= 3 and trimmed[0] == '[';
         if (isArrayTableHeader(trimmed, "bin")) {
@@ -164,9 +165,10 @@ fn addOrMergeTarget(
 
 fn parsePackageName(contents: []const u8) ?[]const u8 {
     var in_package = false;
+    var multiline_quote: ?MultilineQuote = null;
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
+        const line = stripHashComment(common.stripTrailingCR(raw_line), &multiline_quote);
         const trimmed = common.trimSpaces(line);
         if (trimmed.len == 0) continue;
         if (trimmed[0] == '[') {
@@ -258,34 +260,80 @@ fn findAssignmentValueStart(block: []const u8, key: []const u8) ?usize {
     return null;
 }
 
-fn stripHashComment(line: []const u8) []const u8 {
+const MultilineQuote = enum { basic, literal };
+
+fn stripHashComment(line: []const u8, multiline_quote: *?MultilineQuote) []const u8 {
+    var index: usize = 0;
     var quote: ?u8 = null;
     var escaped = false;
+    var saw_multiline_quote = false;
 
-    for (line, 0..) |ch, index| {
-        if (quote) |active_quote| {
-            if (escaped) {
-                escaped = false;
+    while (index < line.len) {
+        const ch = line[index];
+
+        if (multiline_quote.*) |active_multiline| {
+            const delimiter: u8 = if (active_multiline == .basic) '"' else '\'';
+            if (hasTripleQuote(line, index, delimiter) and
+                (active_multiline == .literal or !isEscaped(line, index)))
+            {
+                multiline_quote.* = null;
+                saw_multiline_quote = true;
+                index += 3;
                 continue;
             }
-            if (ch == '\\') {
+            index += 1;
+            continue;
+        }
+
+        if (quote) |active_quote| {
+            if (active_quote == '"' and escaped) {
+                escaped = false;
+                index += 1;
+                continue;
+            }
+            if (active_quote == '"' and ch == '\\') {
                 escaped = true;
+                index += 1;
                 continue;
             }
             if (ch == active_quote) {
                 quote = null;
             }
+            index += 1;
             continue;
         }
 
+        if (hasTripleQuote(line, index, ch)) {
+            multiline_quote.* = if (ch == '"') .basic else .literal;
+            saw_multiline_quote = true;
+            index += 3;
+            continue;
+        }
         if (ch == '"' or ch == '\'') {
             quote = ch;
+            index += 1;
             continue;
         }
         if (ch == '#') return line[0..index];
+        index += 1;
     }
 
+    if (multiline_quote.* != null or saw_multiline_quote) return line[0..0];
     return line;
+}
+
+fn hasTripleQuote(line: []const u8, index: usize, quote: u8) bool {
+    return (quote == '"' or quote == '\'') and index + 3 <= line.len and
+        line[index] == quote and line[index + 1] == quote and line[index + 2] == quote;
+}
+
+fn isEscaped(line: []const u8, index: usize) bool {
+    var slash_count: usize = 0;
+    var cursor = index;
+    while (cursor > 0 and line[cursor - 1] == '\\') : (cursor -= 1) {
+        slash_count += 1;
+    }
+    return slash_count % 2 == 1;
 }
 
 fn isWhitespace(ch: u8) bool {
@@ -402,4 +450,25 @@ test "parse cargo targets ignores assignments inside quoted values" {
     defer freeOwnedTargets(allocator, targets);
 
     try std.testing.expectEqual(@as(usize, 0), targets.len);
+}
+
+test "parse cargo bins ignores headers inside multiline strings" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "[package]\n" ++
+        "name = \"demo\"\n" ++
+        "description = \"\"\"\n" ++
+        "[[bin]]\n" ++
+        "name = \"fake\"\n" ++
+        "\"\"\"\n" ++
+        "[[bin]]\n" ++
+        "name = \"real\"\n" ++
+        "path = \"src/real.rs\"\n";
+
+    const targets = try parseTargets(allocator, contents, "/tmp/rustproj/Cargo.toml", "/tmp/rustproj/src/real.rs");
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
 }
