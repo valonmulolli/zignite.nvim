@@ -97,7 +97,7 @@ pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
             try stdout.print("COMMAND\tinstall\tzig build install\n", .{});
             continue;
         }
-        try stdout.print("COMMAND\t{s}\tzig build {s}\n", .{ step.name, step.name });
+        try writeZigCommand(stdout, allocator, step.name);
     }
 
     const canonical_aliases = [_][]const u8{
@@ -119,7 +119,7 @@ pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
     for (canonical_aliases) |alias| {
         if (containsName(names, alias)) continue;
         const source_name = task_alias.findSourceName(names, alias) orelse continue;
-        try stdout.print("COMMAND\t{s}\tzig build {s}\n", .{ alias, source_name });
+        try writeZigCommandNamed(stdout, allocator, alias, source_name);
     }
 
     return true;
@@ -141,9 +141,17 @@ fn containsName(names: []const []u8, needle: []const u8) bool {
 }
 
 fn writeRootIfSafe(stdout: anytype, root: []const u8) !void {
-    if (!common.hasInvalidPayloadChars(root)) {
-        try stdout.print("ROOT\t{s}\n", .{root});
-    }
+    try common.writeSafeStringRecord(stdout, "ROOT", .{root});
+}
+
+fn writeZigCommand(stdout: anytype, allocator: std.mem.Allocator, name: []const u8) !void {
+    return writeZigCommandNamed(stdout, allocator, name, name);
+}
+
+fn writeZigCommandNamed(stdout: anytype, allocator: std.mem.Allocator, command_name: []const u8, step_name: []const u8) !void {
+    const command = try std.fmt.allocPrint(allocator, "zig build {s}", .{step_name});
+    defer allocator.free(command);
+    try common.writeSafeStringRecord(stdout, "COMMAND", .{ command_name, command });
 }
 
 pub fn writeCMakeAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {

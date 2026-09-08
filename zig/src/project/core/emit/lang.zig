@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../common.zig");
 const cargo_go = @import("lang/cargo_go.zig");
 const go = @import("../../go/api.zig");
 const jvm = @import("lang/jvm.zig");
@@ -58,7 +59,7 @@ pub fn writeLanguageOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem
             const maybe_name = try go.parseModuleName(allocator, contents);
             defer if (maybe_name) |name| allocator.free(name);
             if (maybe_name) |name| {
-                try stdout.print("MODULE\t{s}\n", .{name});
+                try common.writeSafeStringRecord(stdout, "MODULE", .{name});
             }
             return true;
         },
@@ -66,7 +67,9 @@ pub fn writeLanguageOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem
             const items = try go.parseUses(allocator, contents, options.path, options.match_path);
             defer go.freeOwnedUses(allocator, items);
             for (items) |item| {
-                try stdout.print("USE\t{s}\t{d}\n", .{ item.path, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+                if (!common.hasInvalidPayloadChars(item.path)) {
+                    try stdout.print("USE\t{s}\t{d}\n", .{ item.path, if (item.matched) @as(u8, 1) else @as(u8, 0) });
+                }
             }
             return true;
         },

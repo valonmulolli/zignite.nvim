@@ -42,23 +42,23 @@ pub fn writeCmakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
     defer allocator.free(cmake_test_command);
     const cmake_install_command = try std.fmt.allocPrint(allocator, "cmake --build {s} --target install", .{shell_build_dir});
     defer allocator.free(cmake_install_command);
-    try stdout.print("COMMAND\tcmake-config\t{s}\n", .{cmake_config_command});
-    try stdout.print("COMMAND\tcmake-clean\t{s}\n", .{cmake_clean_command});
-    try stdout.print("COMMAND\tcmake-debug\t{s}\n", .{cmake_debug_command});
-    try stdout.print("COMMAND\tcmake-release\t{s}\n", .{cmake_release_command});
-    try stdout.print("COMMAND\tcmake-test\t{s}\n", .{cmake_test_command});
-    try stdout.print("COMMAND\tinstall\t{s}\n", .{cmake_install_command});
-    try stdout.print("COMMAND\tconfig\t{s}\n", .{cmake_config_command});
-    try stdout.print("COMMAND\tclean\t{s}\n", .{cmake_clean_command});
-    try stdout.print("COMMAND\tdebug\t{s}\n", .{cmake_debug_command});
-    try stdout.print("COMMAND\trelease\t{s}\n", .{cmake_release_command});
-    try stdout.print("COMMAND\ttest\t{s}\n", .{cmake_test_command});
-    try stdout.print("PREFERRED\tconfig\t{s}\n", .{cmake_config_command});
-    try stdout.print("PREFERRED\tclean\t{s}\n", .{cmake_clean_command});
-    try stdout.print("PREFERRED\tdebug\t{s}\n", .{cmake_debug_command});
-    try stdout.print("PREFERRED\trelease\t{s}\n", .{cmake_release_command});
-    try stdout.print("PREFERRED\ttest\t{s}\n", .{cmake_test_command});
-    try stdout.print("PREFERRED\tinstall\t{s}\n", .{cmake_install_command});
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "cmake-config", cmake_config_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "cmake-clean", cmake_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "cmake-debug", cmake_debug_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "cmake-release", cmake_release_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "cmake-test", cmake_test_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "install", cmake_install_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "config", cmake_config_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "clean", cmake_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "debug", cmake_debug_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "release", cmake_release_command });
+    try project_common.writeSafeStringRecord(stdout, "COMMAND", .{ "test", cmake_test_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "config", cmake_config_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "clean", cmake_clean_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "debug", cmake_debug_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "release", cmake_release_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "test", cmake_test_command });
+    try project_common.writeSafeStringRecord(stdout, "PREFERRED", .{ "install", cmake_install_command });
     const primary_run_path = try shared.emitTargetBuildRunCommandsWithIO(
         io,
         stdout,
