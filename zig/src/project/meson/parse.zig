@@ -81,16 +81,86 @@ fn parseExecutableBlocks(
 }
 
 fn stripHashCommentsAlloc(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
-    var source: std.ArrayList(u8) = .empty;
-    errdefer source.deinit(allocator);
+    const source = try allocator.alloc(u8, contents.len);
+    errdefer allocator.free(source);
 
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw_line| {
-        try source.appendSlice(allocator, stripHashComment(common.stripTrailingCR(raw_line)));
-        try source.append(allocator, '\n');
+    var input_index: usize = 0;
+    var output_index: usize = 0;
+    var quote: u8 = 0;
+    var triple_quote = false;
+
+    while (input_index < contents.len) {
+        const current = contents[input_index];
+
+        if (quote != 0) {
+            if (triple_quote and input_index + 2 < contents.len and
+                contents[input_index] == quote and
+                contents[input_index + 1] == quote and
+                contents[input_index + 2] == quote)
+            {
+                @memset(source[output_index .. output_index + 3], ' ');
+                output_index += 3;
+                input_index += 3;
+                quote = 0;
+                triple_quote = false;
+                continue;
+            }
+
+            if (triple_quote) {
+                source[output_index] = if (current == '\n') '\n' else ' ';
+                output_index += 1;
+                input_index += 1;
+                continue;
+            }
+
+            source[output_index] = current;
+            output_index += 1;
+            input_index += 1;
+            if (current == '\\' and input_index < contents.len) {
+                source[output_index] = contents[input_index];
+                output_index += 1;
+                input_index += 1;
+            } else if (current == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+
+        if (current == '#') {
+            source[output_index] = ' ';
+            output_index += 1;
+            input_index += 1;
+            while (input_index < contents.len and contents[input_index] != '\n') {
+                source[output_index] = ' ';
+                output_index += 1;
+                input_index += 1;
+            }
+            continue;
+        }
+
+        if (current == '\'' or current == '"') {
+            quote = current;
+            triple_quote = input_index + 2 < contents.len and
+                contents[input_index + 1] == current and
+                contents[input_index + 2] == current;
+            if (triple_quote) {
+                @memset(source[output_index .. output_index + 3], ' ');
+                output_index += 3;
+                input_index += 3;
+            } else {
+                source[output_index] = current;
+                output_index += 1;
+                input_index += 1;
+            }
+            continue;
+        }
+
+        source[output_index] = current;
+        output_index += 1;
+        input_index += 1;
     }
 
-    return try source.toOwnedSlice(allocator);
+    return source;
 }
 
 fn findMatchingParen(text: []const u8) ?usize {
@@ -189,36 +259,6 @@ fn commitBlock(
         allocator.free(owned_name);
         return err;
     };
-}
-
-fn stripHashComment(line: []const u8) []const u8 {
-    var quote: ?u8 = null;
-    var escaped = false;
-
-    for (line, 0..) |ch, index| {
-        if (quote) |active_quote| {
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (ch == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (ch == active_quote) {
-                quote = null;
-            }
-            continue;
-        }
-
-        if (ch == '"' or ch == '\'') {
-            quote = ch;
-            continue;
-        }
-        if (ch == '#') return line[0..index];
-    }
-
-    return line;
 }
 
 fn indexOfExecutable(line: []const u8) ?usize {
@@ -341,6 +381,21 @@ test "parse meson ignores executable text inside strings and identifiers" {
     const targets = try parseTargets(
         allocator,
         "message('executable(fake, src.cpp)')\nmy_executable('wrong', 'src.cpp')\nexecutable('real', 'src/main.cpp')\n",
+        "/tmp/mesonproj/meson.build",
+        "/tmp/mesonproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse meson ignores executable text inside multiline strings" {
+    const allocator = std.testing.allocator;
+    const targets = try parseTargets(
+        allocator,
+        "message('''\nexecutable('fake', 'src/fake.cpp')\n''')\nexecutable('real', 'src/main.cpp')\n",
         "/tmp/mesonproj/meson.build",
         "/tmp/mesonproj/src/main.cpp",
     );
