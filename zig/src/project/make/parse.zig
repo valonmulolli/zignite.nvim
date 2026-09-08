@@ -229,8 +229,26 @@ fn collectIncludePathsAlloc(
         if (trimmed.len == 0) continue;
 
         const remainder = parseIncludeDirective(trimmed) orelse continue;
+        var include_remainder = remainder;
+        var logical_remainder: std.ArrayList(u8) = .empty;
+        defer logical_remainder.deinit(allocator);
+        var has_continuation = false;
+        while (findIncludeContinuationEnd(include_remainder)) |continuation_end| {
+            has_continuation = true;
+            try logical_remainder.appendSlice(allocator, common.trimSpaces(include_remainder[0..continuation_end]));
+            try logical_remainder.append(allocator, ' ');
+            include_remainder = if (lines.next()) |next_raw_line|
+                common.trimSpaces(stripHashComment(common.stripTrailingCR(next_raw_line)))
+            else
+                "";
+        }
+        if (has_continuation) {
+            try logical_remainder.appendSlice(allocator, include_remainder);
+            include_remainder = logical_remainder.items;
+        }
+
         var cursor: usize = 0;
-        while (try nextIncludePathAlloc(allocator, remainder, &cursor)) |value| {
+        while (try nextIncludePathAlloc(allocator, include_remainder, &cursor)) |value| {
             defer allocator.free(value);
             if (!isSupportedIncludePath(value)) continue;
 
@@ -291,6 +309,23 @@ fn nextIncludePathAlloc(
 
 fn isIncludeWhitespace(ch: u8) bool {
     return ch == ' ' or ch == '\t';
+}
+
+fn findIncludeContinuationEnd(text: []const u8) ?usize {
+    var end = text.len;
+    while (end > 0 and isIncludeWhitespace(text[end - 1])) : (end -= 1) {}
+    if (end == 0 or text[end - 1] != '\\') return null;
+
+    var slash_count: usize = 0;
+    var cursor = end;
+    while (cursor > 0 and text[cursor - 1] == '\\') : (cursor -= 1) {
+        slash_count += 1;
+    }
+    if (slash_count % 2 == 0) return null;
+
+    end -= 1;
+    while (end > 0 and isIncludeWhitespace(text[end - 1])) : (end -= 1) {}
+    return end;
 }
 
 fn stripHashComment(line: []const u8) []const u8 {
@@ -463,6 +498,30 @@ test "parse make targets follows local includes" {
     try std.testing.expectEqualStrings("all", names.items[0]);
     try std.testing.expectEqualStrings("serve", names.items[1]);
     try std.testing.expectEqualStrings("verify", names.items[2]);
+}
+
+test "make include traversal follows line continuations" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const makefile_contents = "include first.mk \\\n second.mk\nall:\n\t@echo all\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Makefile", .data = makefile_contents });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "first.mk", .data = "first:\n\t@echo first\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "second.mk", .data = "second:\n\t@echo second\n" });
+
+    const makefile_path = try tmp.dir.realPathFileAlloc(std.testing.io, "Makefile", allocator);
+    defer allocator.free(makefile_path);
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer common.deinitOwnedNameList(allocator, &names);
+
+    try parseTargetsFromFileAlloc(allocator, makefile_path, &names);
+
+    try std.testing.expectEqual(@as(usize, 3), names.items.len);
+    try std.testing.expectEqualStrings("all", names.items[0]);
+    try std.testing.expectEqualStrings("first", names.items[1]);
+    try std.testing.expectEqualStrings("second", names.items[2]);
 }
 
 test "parse make targets accepts tabbed and escaped-space includes" {
