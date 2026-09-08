@@ -189,6 +189,7 @@ fn hasUnsupportedShellSyntax(command: []const u8) bool {
     if (command.len == 0) return true;
 
     var quote: ?u8 = null;
+    var word_start = true;
     var index: usize = 0;
     while (index < command.len) : (index += 1) {
         const ch = command[index];
@@ -203,14 +204,25 @@ fn hasUnsupportedShellSyntax(command: []const u8) bool {
         } else {
             if (ch == '\'' or ch == '"') {
                 quote = ch;
+                word_start = false;
+            } else if (std.ascii.isWhitespace(ch)) {
+                word_start = true;
             } else if (ch == '`' or ch == '|' or ch == ';' or ch == '<' or ch == '>' or ch == '&' or
-                ch == '~' or ch == '\n')
+                ch == '~' or ch == '(' or ch == ')' or ch == '*' or ch == '?' or ch == '[' or
+                ch == '=' or ch == '\n')
             {
+                return true;
+            } else if (ch == '#' and word_start) {
                 return true;
             } else if (ch == '$' and index + 1 < command.len and command[index + 1] == '(') {
                 return true;
             } else if (ch == '\\' and index + 1 < command.len) {
                 index += 1;
+                word_start = false;
+            } else if (ch == '\\') {
+                return true;
+            } else {
+                word_start = false;
             }
         }
     }
@@ -428,4 +440,23 @@ test "tokenizeCommand preserves empty quoted arguments" {
     try std.testing.expectEqualStrings("printf", argv.items[0]);
     try std.testing.expectEqualStrings("%s", argv.items[1]);
     try std.testing.expectEqualStrings("", argv.items[2]);
+}
+
+test "tokenizeCommand falls back to shell for expansion and syntax" {
+    const allocator = std.testing.allocator;
+    const commands = .{
+        "gfortran *.f90 -o main",
+        "echo # comment",
+        "FOO=bar echo hi",
+        "echo (hi)",
+    };
+
+    inline for (commands) |command| {
+        var argv = try tokenizeCommand(allocator, command);
+        defer {
+            for (argv.items) |arg| allocator.free(arg);
+            argv.deinit(allocator);
+        }
+        try std.testing.expectEqual(@as(usize, 0), argv.items.len);
+    }
 }
