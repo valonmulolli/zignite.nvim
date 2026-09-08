@@ -284,10 +284,18 @@ fn findMatchingParen(text: []const u8) ?usize {
     var depth: usize = 0;
     var quote: ?u8 = null;
     var escaped = false;
+    var bracket_arg_equals: ?usize = null;
 
     var index = open_idx;
     while (index < text.len) : (index += 1) {
         const ch = text[index];
+        if (bracket_arg_equals) |equals| {
+            if (bracketCommentCloseLen(text, index, equals)) |close_len| {
+                index += close_len - 1;
+                bracket_arg_equals = null;
+            }
+            continue;
+        }
         if (escaped) {
             escaped = false;
             continue;
@@ -302,6 +310,11 @@ fn findMatchingParen(text: []const u8) ?usize {
         }
         if (ch == '"' or ch == '\'') {
             quote = ch;
+            continue;
+        }
+        if (bracketCommentOpenEquals(text, index)) |equals| {
+            index += equals + 1;
+            bracket_arg_equals = equals;
             continue;
         }
         if (ch == '(') {
@@ -329,8 +342,16 @@ fn indexOfAddSubdirectory(line: []const u8) ?usize {
 fn indexOfCommandCall(line: []const u8, name: []const u8) ?usize {
     var quote: ?u8 = null;
     var escaped = false;
+    var bracket_arg_equals: ?usize = null;
     var index: usize = 0;
     while (index < line.len) : (index += 1) {
+        if (bracket_arg_equals) |equals| {
+            if (bracketCommentCloseLen(line, index, equals)) |close_len| {
+                index += close_len - 1;
+                bracket_arg_equals = null;
+            }
+            continue;
+        }
         if (quote) |active_quote| {
             if (escaped) {
                 escaped = false;
@@ -346,6 +367,11 @@ fn indexOfCommandCall(line: []const u8, name: []const u8) ?usize {
 
         if (line[index] == '"' or line[index] == '\'') {
             quote = line[index];
+            continue;
+        }
+        if (bracketCommentOpenEquals(line, index)) |equals| {
+            index += equals + 1;
+            bracket_arg_equals = equals;
             continue;
         }
         if (std.ascii.toLower(line[index]) != std.ascii.toLower(name[0])) continue;
@@ -376,7 +402,17 @@ fn countParenDelta(text: []const u8) isize {
     var delta: isize = 0;
     var quote: ?u8 = null;
     var escaped = false;
-    for (text) |ch| {
+    var bracket_arg_equals: ?usize = null;
+    var index: usize = 0;
+    while (index < text.len) : (index += 1) {
+        const ch = text[index];
+        if (bracket_arg_equals) |equals| {
+            if (bracketCommentCloseLen(text, index, equals)) |close_len| {
+                index += close_len - 1;
+                bracket_arg_equals = null;
+            }
+            continue;
+        }
         if (escaped) {
             escaped = false;
             continue;
@@ -391,6 +427,11 @@ fn countParenDelta(text: []const u8) isize {
         }
         if (ch == '"' or ch == '\'') {
             quote = ch;
+            continue;
+        }
+        if (bracketCommentOpenEquals(text, index)) |equals| {
+            index += equals + 1;
+            bracket_arg_equals = equals;
             continue;
         }
         if (ch == '(') delta += 1;
@@ -1027,6 +1068,27 @@ test "parse cmake ignores multiline bracket comments" {
         "set(PROJECT_NAME fake)\n" ++
         "]=]\n" ++
         "project(real)\n" ++
+        "add_executable(real src/main.cpp)\n";
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("real", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+}
+
+test "parse cmake ignores commands inside bracket arguments" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "set(DOCUMENTATION [=[\n" ++
+        "add_executable(fake src/fake.cpp)\n" ++
+        "]=])\n" ++
         "add_executable(real src/main.cpp)\n";
 
     const targets = try parseTargets(
