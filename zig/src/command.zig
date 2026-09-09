@@ -201,12 +201,16 @@ test "termToExitCode clamps large unknown status to 255" {
 }
 
 test "termToExitCode encodes signals as 128 + signal number" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
     try std.testing.expectEqual(@as(u8, 130), termToExitCode(.{ .signal = .INT }));
     try std.testing.expectEqual(@as(u8, 143), termToExitCode(.{ .signal = .TERM }));
     try std.testing.expectEqual(@as(u8, 137), termToExitCode(.{ .signal = .KILL }));
 }
 
 test "termToExitCode encodes stopped as 128 + signal number" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
     try std.testing.expectEqual(@as(u8, 128 + @intFromEnum(std.posix.SIG.STOP)), termToExitCode(.{ .stopped = .STOP }));
 }
 
