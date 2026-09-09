@@ -11,7 +11,8 @@ const policy = @import("policy.zig");
 const types = @import("../types.zig");
 
 pub fn resolveDetectedOutput(allocator: std.mem.Allocator, options: types.Options) !types.ResolvedOutput {
-    var threaded: std.Io.Threaded = .init_single_threaded;
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
     return resolveDetectedOutputWithIO(threaded.io(), allocator, options);
 }
 

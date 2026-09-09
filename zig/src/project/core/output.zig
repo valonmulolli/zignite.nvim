@@ -7,7 +7,8 @@ const types = @import("types.zig");
 const Options = types.Options;
 
 pub fn writeOutput(stdout: anytype, allocator: std.mem.Allocator, options: Options, contents: []const u8) !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
     return writeOutputWithIO(threaded.io(), stdout, allocator, options, contents);
 }
 
