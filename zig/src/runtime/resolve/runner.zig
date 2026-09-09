@@ -28,6 +28,7 @@ pub fn resolveRunner(
     const execution_path = prepared.execution_path;
     const context_path = options.context_path orelse options.path;
     const has_project_context = context_path.len > 0;
+    const allow_project_runner = options.input_kind == .file;
 
     if (!has_project_context) {
         const resolved_filetype = options.filetype;
@@ -43,17 +44,22 @@ pub fn resolveRunner(
         return try minimalRunner(allocator, resolved_filetype, execution_path);
     }
 
-    if (try configuredProjectRunner(allocator, context_path, options.filetype)) |resolved_raw| {
-        var resolved = resolved_raw;
-        errdefer resolved.deinit(allocator);
-        try materialize.materializeRunner(allocator, &resolved, execution_path);
-        try attachExecutionPath(allocator, &resolved, execution_path);
-        return resolved;
+    // Inline selections and buffers execute the materialized scratch file.
+    // Project commands target the saved project graph and would silently
+    // ignore the user's unsaved source text.
+    if (allow_project_runner) {
+        if (try configuredProjectRunner(allocator, context_path, options.filetype)) |resolved_raw| {
+            var resolved = resolved_raw;
+            errdefer resolved.deinit(allocator);
+            try materialize.materializeRunner(allocator, &resolved, execution_path);
+            try attachExecutionPath(allocator, &resolved, execution_path);
+            return resolved;
+        }
     }
 
     // Avoid triggering Zig build-step discovery during RunFile when the source
     // already proves it must run via the project build graph.
-    if (std.mem.eql(u8, options.filetype, "zig")) {
+    if (allow_project_runner and std.mem.eql(u8, options.filetype, "zig")) {
         if (try zig_classifier.shouldPreferProjectRunnerWithIO(io, allocator, options.path, context_path, options.project_root)) {
             if (try buildZigProjectRunner(io, allocator, context_path, options.project_root)) |resolved_raw| {
                 var resolved = resolved_raw;
@@ -103,12 +109,14 @@ pub fn resolveRunner(
         return resolved;
     }
 
-    if (try buildProjectRunner(allocator, resolved_filetype, &build_output)) |resolved_raw| {
-        var resolved = resolved_raw;
-        errdefer resolved.deinit(allocator);
-        try materialize.materializeRunner(allocator, &resolved, execution_path);
-        try attachExecutionPath(allocator, &resolved, execution_path);
-        return resolved;
+    if (allow_project_runner) {
+        if (try buildProjectRunner(allocator, resolved_filetype, &build_output)) |resolved_raw| {
+            var resolved = resolved_raw;
+            errdefer resolved.deinit(allocator);
+            try materialize.materializeRunner(allocator, &resolved, execution_path);
+            try attachExecutionPath(allocator, &resolved, execution_path);
+            return resolved;
+        }
     }
 
     return try minimalRunner(allocator, resolved_filetype, execution_path);
@@ -300,4 +308,30 @@ test "resolveRunner uses the most specific configured project override" {
     try std.testing.expectEqualStrings("make service '/tmp/repo/service/src/main.go'", resolved.command.?);
     try std.testing.expectEqualStrings("/tmp/repo/service", resolved.cwd.?);
     try std.testing.expectEqualStrings("make clean", resolved.cleanup_command.?);
+}
+
+test "resolveRunner keeps inline Zig source on the scratch file inside a project" {
+    const allocator = std.testing.allocator;
+    const config_store = @import("../../config/store.zig");
+    defer config_store.reset();
+
+    try config_store.setSyncedConfigJson(
+        \\{"project":{"/tmp/repo/.*":{"name":"Project","command":"zig build run"}}}
+    , 15);
+
+    var resolved = try resolveRunner(std.testing.io, allocator, null, .{
+        .path = "/tmp/repo/src/main.zig",
+        .filetype = "zig",
+        .context_path = "/tmp/repo/src/main.zig",
+        .input_kind = .selection,
+        .selection_text = "const answer: u8 = 42;\n",
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("filetype", resolved.source);
+    try std.testing.expectEqualStrings("zig", resolved.filetype.?);
+    try std.testing.expect(std.mem.startsWith(u8, resolved.command.?, "zig run "));
+    try std.testing.expect(std.mem.indexOf(u8, resolved.command.?, "/tmp/repo/src/main.zig") == null);
+    try std.testing.expect(resolved.execution_path != null);
+    try std.testing.expect(!std.mem.eql(u8, resolved.execution_path.?, "/tmp/repo/src/main.zig"));
 }
