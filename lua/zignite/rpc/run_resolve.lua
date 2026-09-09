@@ -133,7 +133,7 @@ local function build_once_argv(params)
 	if has_inline_source then
 		return nil
 	end
-	return common_path_request.compose_once_argv(
+	local argv = common_path_request.compose_once_argv(
 		backend_client.ZIG_EXECUTABLE,
 		"--run-resolve",
 		filepath,
@@ -144,6 +144,21 @@ local function build_once_argv(params)
 		},
 		input_guard.is_invalid_payload_value
 	)
+	if not argv then
+		return nil
+	end
+	local _, revision = config_sync.one_shot_payload()
+	if not revision then
+		return nil
+	end
+	argv[#argv + 1] = "--config-stdin"
+	argv[#argv + 1] = "--config-revision=" .. tostring(revision)
+	return argv
+end
+
+local function one_shot_input()
+	local json = config_sync.one_shot_payload()
+	return json
 end
 
 local resolve_client = backend_client.new({
@@ -155,6 +170,7 @@ local resolve_client = backend_client.new({
 	reset_on_sync_timeout = false,
 	build_worker_payload = build_worker_payload,
 	build_once_argv = build_once_argv,
+	build_once_input = one_shot_input,
 })
 
 ---@param resolved table|nil
