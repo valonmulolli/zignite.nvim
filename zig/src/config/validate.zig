@@ -57,13 +57,64 @@ fn validateRoot(
     }
 
     if (root.get("project")) |project| {
-        if (project != .object) {
+        if (project == .object) {
+            try validateProjects(allocator, warnings, project.object);
+        } else {
             try pushWarning(allocator, warnings, "Invalid config project: expected object, got {s}", .{valueTypeName(project)});
         }
     }
 
     if (root.get("timeout")) |timeout| {
         try validateTimeout(allocator, warnings, timeout);
+    }
+}
+
+fn validateProjects(
+    allocator: std.mem.Allocator,
+    warnings: *std.ArrayList([]u8),
+    projects: std.json.ObjectMap,
+) !void {
+    var it = projects.iterator();
+    while (it.next()) |entry| {
+        const pattern = entry.key_ptr.*;
+        if (common.hasInvalidPayloadChars(pattern)) {
+            try pushWarning(allocator, warnings, "Invalid config project.{s}: pattern contains control characters or protocol markers", .{pattern});
+            continue;
+        }
+        if (entry.value_ptr.* != .object) {
+            try pushWarning(allocator, warnings, "Invalid config project.{s}: expected object, got {s}", .{ pattern, valueTypeName(entry.value_ptr.*) });
+            continue;
+        }
+
+        const project = entry.value_ptr.object;
+        const command = project.get("command") orelse {
+            try pushWarning(allocator, warnings, "Invalid config project.{s}: missing command field", .{pattern});
+            continue;
+        };
+        if (command != .string) {
+            try pushWarning(allocator, warnings, "Invalid config project.{s}.command: expected string, got {s}", .{ pattern, valueTypeName(command) });
+        } else if (command.string.len == 0 or common.hasInvalidPayloadChars(command.string)) {
+            try pushWarning(allocator, warnings, "Invalid config project.{s}.command: empty or unsafe command", .{pattern});
+        }
+
+        try validateProjectStringField(allocator, warnings, pattern, project, "name");
+        try validateProjectStringField(allocator, warnings, pattern, project, "cleanup_command");
+        try validateProjectStringField(allocator, warnings, pattern, project, "cwd");
+    }
+}
+
+fn validateProjectStringField(
+    allocator: std.mem.Allocator,
+    warnings: *std.ArrayList([]u8),
+    pattern: []const u8,
+    project: std.json.ObjectMap,
+    field: []const u8,
+) !void {
+    const value = project.get(field) orelse return;
+    if (value != .string) {
+        try pushWarning(allocator, warnings, "Invalid config project.{s}.{s}: expected string, got {s}", .{ pattern, field, valueTypeName(value) });
+    } else if (common.hasInvalidPayloadChars(value.string)) {
+        try pushWarning(allocator, warnings, "Invalid config project.{s}.{s}: contains control characters or protocol markers", .{ pattern, field });
     }
 }
 
@@ -359,6 +410,30 @@ test "collectWarnings accepts valid backend config entries" {
     defer freeWarnings(allocator, warnings);
 
     try std.testing.expectEqual(@as(usize, 0), warnings.len);
+}
+
+test "collectWarnings validates project override entries" {
+    const allocator = std.testing.allocator;
+    const warnings = try collectWarnings(allocator,
+        \\{
+        \\  "project": {
+        \\    "/tmp/repo/.*": { "name": "Repo", "command": "make run", "cwd": "/tmp/repo" },
+        \\    "/tmp/bad": { "command": 42 },
+        \\    "/tmp/missing": { "name": "Missing" }
+        \\  }
+        \\}
+    );
+    defer freeWarnings(allocator, warnings);
+
+    try std.testing.expectEqual(@as(usize, 2), warnings.len);
+    var joined: std.ArrayList(u8) = .empty;
+    defer joined.deinit(allocator);
+    for (warnings) |warning| {
+        try joined.appendSlice(allocator, warning);
+        try joined.append(allocator, '\n');
+    }
+    try std.testing.expect(std.mem.find(u8, joined.items, "project./tmp/bad.command") != null);
+    try std.testing.expect(std.mem.find(u8, joined.items, "project./tmp/missing: missing command") != null);
 }
 
 test "collectWarnings rejects cleanup_command and cwd with control characters" {

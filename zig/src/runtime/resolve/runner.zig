@@ -43,6 +43,14 @@ pub fn resolveRunner(
         return try minimalRunner(allocator, resolved_filetype, execution_path);
     }
 
+    if (try configuredProjectRunner(allocator, context_path, options.filetype)) |resolved_raw| {
+        var resolved = resolved_raw;
+        errdefer resolved.deinit(allocator);
+        try materialize.materializeRunner(allocator, &resolved, execution_path);
+        try attachExecutionPath(allocator, &resolved, execution_path);
+        return resolved;
+    }
+
     // Avoid triggering Zig build-step discovery during RunFile when the source
     // already proves it must run via the project build graph.
     if (std.mem.eql(u8, options.filetype, "zig")) {
@@ -104,6 +112,42 @@ pub fn resolveRunner(
     }
 
     return try minimalRunner(allocator, resolved_filetype, execution_path);
+}
+
+fn configuredProjectRunner(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    filetype: []const u8,
+) !?types.ResolvedRunner {
+    var project = (try config_view.loadProjectConfig(allocator, path)) orelse return null;
+    defer project.deinit(allocator);
+
+    var resolved = types.ResolvedRunner{
+        .source = "project",
+        .filetype = try allocator.dupe(u8, filetype),
+    };
+    errdefer resolved.deinit(allocator);
+
+    resolved.command = project.command orelse return error.InvalidProjectConfig;
+    project.command = null;
+    if (project.cleanup_command) |cleanup| {
+        resolved.cleanup_command = cleanup;
+        project.cleanup_command = null;
+    }
+    if (project.cwd) |cwd| {
+        resolved.cwd = cwd;
+        project.cwd = null;
+    } else {
+        resolved.cwd = project.root orelse return error.InvalidProjectConfig;
+        project.root = null;
+    }
+    if (project.name) |name| {
+        resolved.name = name;
+        project.name = null;
+    } else {
+        resolved.name = try formatProjectName(allocator, filetype);
+    }
+    return resolved;
 }
 
 fn minimalRunner(
@@ -231,4 +275,29 @@ test "formatProjectName capitalizes the filetype without leaking temp storage" {
     defer allocator.free(name);
 
     try std.testing.expectEqualStrings("Python Project", name);
+}
+
+test "resolveRunner uses the most specific configured project override" {
+    const allocator = std.testing.allocator;
+    const config_store = @import("../../config/store.zig");
+    defer config_store.reset();
+
+    try config_store.setSyncedConfigJson(
+        \\{"project":{
+        \\  "/tmp/repo/.*":{"name":"Root Project","command":"make run"},
+        \\  "/tmp/repo/service/.*":{"name":"Service Project","command":"make service $file","cleanup_command":"make clean"}
+        \\},"revision":14}
+    , 14);
+
+    var resolved = try resolveRunner(std.testing.io, allocator, null, .{
+        .path = "/tmp/repo/service/src/main.go",
+        .filetype = "go",
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("project", resolved.source);
+    try std.testing.expectEqualStrings("Service Project", resolved.name.?);
+    try std.testing.expectEqualStrings("make service '/tmp/repo/service/src/main.go'", resolved.command.?);
+    try std.testing.expectEqualStrings("/tmp/repo/service", resolved.cwd.?);
+    try std.testing.expectEqualStrings("make clean", resolved.cleanup_command.?);
 }
