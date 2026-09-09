@@ -559,21 +559,36 @@ local function test_config_sync_surfaces_backend_validation_warnings()
 end
 
 local function test_build_resolve_sync_falls_back_to_once_request()
-	config.setup({})
+	config.setup({
+		build_commands = {
+			zig = {
+				fetch = "zig fetch $zignite_args",
+			},
+		},
+	})
 
 	local resolve_client = get_upvalue_by_name(build_resolve.resolve_sync, "resolve_client")
 	assert(type(resolve_client) == "table", "expected build resolve client upvalue")
 
 	local original_sync_request = resolve_client.sync_request
-	local original_once_request = resolve_client.once_request
+	local original_systemlist = vim.fn.systemlist
+	local original_shell_error = vim.v.shell_error
+	local original_ensure_synced = config_sync.ensure_synced
+	local captured_argv
+	local captured_input
 	resolve_client.sync_request = function()
 		return nil
 	end
-	resolve_client.once_request = function()
+	config_sync.ensure_synced = function()
+		return false
+	end
+	vim.fn.systemlist = function(argv, input)
+		captured_argv = argv
+		captured_input = input
 		return {
 			"RESULT_JSON\t" .. encode_json({
 				ok = true,
-				commands = { build = "echo fallback-build" },
+				commands = { fetch = "zig fetch $zignite_args" },
 				command_meta = {},
 				preferred_commands = {},
 				preferred_names = {},
@@ -581,15 +596,26 @@ local function test_build_resolve_sync_falls_back_to_once_request()
 			}),
 		}
 	end
+	vim.v.shell_error = 0
 
 	local ok, resolved = pcall(build_resolve.resolve_sync, "/tmp/zignite-fallback/build.zig", "zig")
 
 	resolve_client.sync_request = original_sync_request
-	resolve_client.once_request = original_once_request
+	vim.fn.systemlist = original_systemlist
+	vim.v.shell_error = original_shell_error
+	config_sync.ensure_synced = original_ensure_synced
 
 	assert(ok, resolved)
 	assert(type(resolved) == "table", "expected fallback build resolve result")
-	assert(resolved.commands.build == "echo fallback-build", "build resolve should fall back to once_request in sync mode")
+	assert(resolved.commands.fetch == "zig fetch $zignite_args", "build resolve should fall back to once_request in sync mode")
+	assert(type(captured_argv) == "table", "one-shot fallback should invoke the backend executable")
+	assert(captured_argv[5] == "--config-stdin", "one-shot fallback should request config stdin")
+	assert(captured_argv[6] == "--config-revision=" .. tostring(config.revision),
+		"one-shot fallback should pass the current config revision")
+	assert(type(captured_input) == "string" and captured_input ~= "", "one-shot fallback should send config JSON")
+	local payload = (vim.json and vim.json.decode or vim.fn.json_decode)(captured_input)
+	assert(payload.build_commands.zig.fetch == "zig fetch $zignite_args",
+		"one-shot fallback should send configured build commands")
 
 	reset_job_results()
 	print("✓ Build resolve sync fallback test passed")

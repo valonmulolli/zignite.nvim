@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("../config.zig");
 const protocol_args = @import("../protocol/args.zig");
 const frame = @import("../protocol/frame.zig");
 const protocol_stdio = @import("../protocol/stdio.zig");
@@ -25,11 +26,15 @@ pub const BUILD_RESOLVE_RES_ERR = protocol.BUILD_RESOLVE_RES_ERR;
 
 pub fn parseArgs(args: []const []const u8) !Options {
     var common: protocol_args.CommonPathArgs = .{};
+    var config_args: protocol_args.ConfigArgs = .{};
     var command_name: ?[]const u8 = null;
     var command_args: ?[]const u8 = null;
 
     for (args) |arg| {
         if (try protocol_args.parseCommonPathArg(&common, arg, "--build-resolve")) {
+            continue;
+        }
+        if (try protocol_args.parseConfigArg(&config_args, arg)) {
             continue;
         }
         if (std.mem.startsWith(u8, arg, "--command-name=")) {
@@ -41,12 +46,16 @@ pub fn parseArgs(args: []const []const u8) !Options {
         }
     }
 
+    try protocol_args.validateConfigArgs(config_args);
+
     return .{
         .path = common.path orelse return error.MissingBuildResolvePath,
         .filetype = common.filetype orelse return error.MissingBuildResolveFiletype,
         .command_name = command_name,
         .command_args = command_args,
         .project_root = common.project_root,
+        .config_stdin = config_args.stdin,
+        .config_revision = config_args.revision,
     };
 }
 
@@ -60,6 +69,10 @@ pub fn runModeWithEnviron(
     environ_map: ?*const std.process.Environ.Map,
     options: Options,
 ) !void {
+    if (options.config_stdin) {
+        const revision = options.config_revision orelse return error.MissingConfigRevision;
+        try config.loadStdin(allocator, io, revision);
+    }
     var stdout_ctx: protocol_stdio.Stdout = .{};
     stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
@@ -186,10 +199,14 @@ test "parseArgs accepts command-name, command-args, and project-root" {
         "--command-name=build",
         "--command-args=--release",
         "--project-root=/tmp",
+        "--config-stdin",
+        "--config-revision=42",
     });
     try std.testing.expectEqualStrings("build", options.command_name.?);
     try std.testing.expectEqualStrings("--release", options.command_args.?);
     try std.testing.expectEqualStrings("/tmp", options.project_root.?);
+    try std.testing.expect(options.config_stdin);
+    try std.testing.expectEqual(@as(u64, 42), options.config_revision.?);
 }
 
 test "parseArgs rejects missing path and missing filetype" {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("../config.zig");
 const frame = @import("../protocol/frame.zig");
 const protocol_stdio = @import("../protocol/stdio.zig");
 const system_command = @import("../system_command.zig");
@@ -32,6 +33,10 @@ pub fn runModeWithEnviron(
     environ_map: ?*const std.process.Environ.Map,
     options: Options,
 ) !void {
+    if (options.config_stdin) {
+        const revision = options.config_revision orelse return error.MissingConfigRevision;
+        try config.loadStdin(allocator, io, revision);
+    }
     var stdout_ctx: protocol_stdio.Stdout = .{};
     stdout_ctx.init(io);
     const stdout = stdout_ctx.io();

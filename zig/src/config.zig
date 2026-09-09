@@ -59,6 +59,18 @@ pub fn runMode(allocator: std.mem.Allocator, io: std.Io, options: Options) !void
     try stdout.flush();
 }
 
+pub fn loadStdin(allocator: std.mem.Allocator, io: std.Io, revision: u64) !void {
+    var stdin_buffer: [protocol_stdio.buffer_size]u8 = undefined;
+    var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buffer);
+    const json_payload = try stdin_reader.interface.allocRemaining(allocator, .limited(1024 * 1024));
+    defer allocator.free(json_payload);
+
+    const warnings = try validate.collectWarnings(allocator, json_payload);
+    defer validate.freeWarnings(allocator, warnings);
+
+    try store.setSyncedConfigJson(json_payload, revision);
+}
+
 pub fn handleDaemonFrame(
     allocator: std.mem.Allocator,
     reader: anytype,

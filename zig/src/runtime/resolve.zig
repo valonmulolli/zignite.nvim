@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("../config.zig");
 const config_store = @import("../config/store.zig");
 const protocol_args = @import("../protocol/args.zig");
 const fixtures = @import("../test_support/fixtures.zig");
@@ -28,12 +29,16 @@ pub fn parseArgs(args: []const []const u8) !Options {
 
 fn parseArgsWithPayload(args: []const []const u8, selection_text: ?[]const u8) !Options {
     var common: protocol_args.CommonPathArgs = .{};
+    var config_args: protocol_args.ConfigArgs = .{};
     var context_path: ?[]const u8 = null;
     var buffer_id: ?u32 = null;
     var input_kind: ?source.InputKind = null;
 
     for (args) |arg| {
         if (try protocol_args.parseCommonPathArg(&common, arg, "--run-resolve")) {
+            continue;
+        }
+        if (try protocol_args.parseConfigArg(&config_args, arg)) {
             continue;
         }
         if (std.mem.startsWith(u8, arg, "--context-path=")) {
@@ -50,6 +55,8 @@ fn parseArgsWithPayload(args: []const []const u8, selection_text: ?[]const u8) !
             return error.InvalidRunResolveFlag;
         }
     }
+
+    try protocol_args.validateConfigArgs(config_args);
 
     const effective_input_kind = input_kind orelse blk: {
         if (selection_text != null) {
@@ -77,6 +84,8 @@ fn parseArgsWithPayload(args: []const []const u8, selection_text: ?[]const u8) !
         .buffer_id = buffer_id,
         .input_kind = effective_input_kind,
         .selection_text = selection_text,
+        .config_stdin = config_args.stdin,
+        .config_revision = config_args.revision,
     };
 }
 
@@ -86,6 +95,10 @@ pub fn runMode(
     environ_map: ?*const std.process.Environ.Map,
     options: Options,
 ) !void {
+    if (options.config_stdin) {
+        const revision = options.config_revision orelse return error.MissingConfigRevision;
+        try config.loadStdin(allocator, io, revision);
+    }
     var stdout_ctx: protocol_stdio.Stdout = .{};
     stdout_ctx.init(io);
     const stdout = stdout_ctx.io();
@@ -328,10 +341,14 @@ test "parseArgs accepts --input-kind file and --context-path and --buffer-id" {
         "--input-kind=file",
         "--context-path=/tmp/main.zig",
         "--buffer-id=42",
+        "--config-stdin",
+        "--config-revision=43",
     });
     try std.testing.expectEqual(source.InputKind.file, options.input_kind);
     try std.testing.expectEqualStrings("/tmp/main.zig", options.context_path.?);
     try std.testing.expectEqual(@as(u32, 42), options.buffer_id.?);
+    try std.testing.expect(options.config_stdin);
+    try std.testing.expectEqual(@as(u64, 43), options.config_revision.?);
 }
 
 test "parseArgs rejects missing path and missing filetype" {
