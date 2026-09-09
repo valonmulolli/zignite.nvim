@@ -508,7 +508,7 @@ function M.new(opts)
 
 	---@param params table
 	---@param require_jobstart boolean|nil
-	---@return string[]|nil
+	---@return string[]|nil, string|nil
 	local function build_once_request_argv(params, require_jobstart)
 		if not client.has_backend() then
 			return nil
@@ -523,7 +523,15 @@ function M.new(opts)
 		if type(argv) ~= "table" or #argv == 0 then
 			return nil
 		end
-		return argv
+		local input
+		if type(opts.build_once_input) == "function" then
+			local ok, value = pcall(opts.build_once_input, params)
+			if not ok or (value ~= nil and type(value) ~= "string") then
+				return nil
+			end
+			input = value
+		end
+		return argv, input
 	end
 
 	---@param params table
@@ -695,21 +703,42 @@ function M.new(opts)
 	---@param params table
 	---@return string[]|nil
 	function client.once_request(params)
-		local argv = build_once_request_argv(params, false)
+		local argv, input = build_once_request_argv(params, false)
 		if not argv then
 			return nil
 		end
 		local output_lines, shell_error
 		if type(vim.system) == "function" then
 			---@diagnostic disable-next-line: missing-fields
-			local system_result = vim.system(argv, { text = true, timeout = 5000 }):wait()
+			local process = vim.system(argv, {
+				text = true,
+				timeout = 5000,
+				stdin = input ~= nil,
+			})
+			if input ~= nil then
+				local ok = pcall(function()
+					process:write(input)
+					process:write(nil)
+				end)
+				if not ok then
+					pcall(function()
+						process:kill(9)
+					end)
+					return nil
+				end
+			end
+			local system_result = process:wait()
 			shell_error = system_result.code or 0
 			if system_result.timeout then
 				return nil
 			end
 			output_lines = vim.split(system_result.stdout or "", "\n", { plain = true })
 		else
-			output_lines = vim.fn.systemlist(argv)
+			if input ~= nil then
+				output_lines = vim.fn.systemlist(argv, input)
+			else
+				output_lines = vim.fn.systemlist(argv)
+			end
 			shell_error = (vim.v and tonumber(vim.v.shell_error)) or 0
 		end
 		if type(output_lines) ~= "table" or shell_error ~= 0 then
@@ -726,13 +755,14 @@ function M.new(opts)
 	---@param on_done fun(lines: string[]|nil):nil
 	---@return boolean
 	function client.once_request_async(params, on_done)
-		local argv = build_once_request_argv(params, true)
+		local argv, input = build_once_request_argv(params, true)
 		if not argv then
 			return false
 		end
 
 		---@type string[]
 		local output_lines = {}
+		local cancelled = false
 		local job_id = vim.fn.jobstart(argv, {
 			stdout_buffered = true,
 			stderr_buffered = true,
@@ -740,6 +770,9 @@ function M.new(opts)
 				append_non_empty_output_lines(output_lines, data)
 			end,
 			on_exit = function(_, exit_code, data)
+				if cancelled then
+					return
+				end
 				if exit_code ~= 0 then
 					on_done(nil)
 					return
@@ -755,7 +788,24 @@ function M.new(opts)
 				end
 			end,
 		})
-		return type(job_id) == "number" and job_id > 0
+		if type(job_id) ~= "number" or job_id <= 0 then
+			return false
+		end
+		if input ~= nil then
+			local sent_ok, sent = pcall(vim.fn.chansend, job_id, input)
+			if not sent_ok or sent == 0 then
+				cancelled = true
+				pcall(vim.fn.jobstop, job_id)
+				return false
+			end
+			local closed_ok, closed = pcall(vim.fn.chanclose, job_id, "stdin")
+			if not closed_ok or closed == 0 then
+				cancelled = true
+				pcall(vim.fn.jobstop, job_id)
+				return false
+			end
+		end
+		return true
 	end
 
 	---@return nil

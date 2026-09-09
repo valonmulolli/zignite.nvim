@@ -9,6 +9,8 @@ pub const Options = struct {
     buffer_id: ?u32 = null,
     input_kind: source.InputKind = .file,
     selection_text: ?[]const u8 = null,
+    config_stdin: bool = false,
+    config_revision: ?u64 = null,
 };
 
 pub const ResolvedRunner = struct {

@@ -283,6 +283,20 @@ function M.ensure_current()
 	return M.ensure_synced(config.options or {}, config.revision)
 end
 
+---@return string|nil, integer|nil
+function M.one_shot_payload()
+	local options = config.ensure()
+	local revision = tonumber(config.revision) or 0
+	if revision <= 0 then
+		return nil, nil
+	end
+	local request = build_sync_request(options, revision)
+	if type(request) ~= "table" then
+		return nil, nil
+	end
+	return request.json, request.revision
+end
+
 ---@return boolean
 function M.sync_current_async()
 	return sync_async(config.options or {}, config.revision)
