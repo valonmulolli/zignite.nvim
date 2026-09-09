@@ -144,9 +144,13 @@ pub fn handleDaemonFrame(
     }
 
     try stdout.print("{s} {d}\n", .{ RUN_RESOLVE_RES_BEGIN, header.request_id });
+    var body = frame.PayloadWriter(@TypeOf(stdout)){
+        .allocator = allocator,
+        .inner = stdout,
+    };
     const options = parseArgsWithPayload(request_args, request.selection_text);
     if (options) |parsed| {
-        writeResolvedOutput(stdout, allocator, io, environ_map, parsed) catch |err| {
+        writeResolvedOutput(&body, allocator, io, environ_map, parsed) catch |err| {
             try stdout.print("{s} {d} {s}\n", .{ RUN_RESOLVE_RES_ERR, header.request_id, @errorName(err) });
         };
     } else |err| {

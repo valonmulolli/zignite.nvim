@@ -107,6 +107,55 @@ pub fn writeErrorResponse(
     try writer.print("{s} {d}\n", .{ response_end, request_id });
 }
 
+/// Prefixes every response body line so body data cannot be parsed as a
+/// control marker. The Lua transport removes this tab before exposing data.
+pub fn PayloadWriter(comptime Writer: type) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        inner: Writer,
+        at_line_start: bool = true,
+
+        const Self = @This();
+
+        pub fn writeAll(self: *Self, bytes: []const u8) !void {
+            var start: usize = 0;
+            while (start < bytes.len) {
+                if (self.at_line_start) {
+                    try self.inner.writeByte('\t');
+                    self.at_line_start = false;
+                }
+
+                const newline = std.mem.findScalarPos(u8, bytes, start, '\n') orelse bytes.len;
+                try self.inner.writeAll(bytes[start..newline]);
+                if (newline == bytes.len) break;
+
+                try self.inner.writeByte('\n');
+                self.at_line_start = true;
+                start = newline + 1;
+            }
+        }
+
+        pub fn writeByte(self: *Self, byte: u8) !void {
+            if (self.at_line_start) {
+                try self.inner.writeByte('\t');
+                self.at_line_start = false;
+            }
+            try self.inner.writeByte(byte);
+            if (byte == '\n') self.at_line_start = true;
+        }
+
+        pub fn print(self: *Self, comptime format: []const u8, args: anytype) !void {
+            const text = try std.fmt.allocPrint(self.allocator, format, args);
+            defer self.allocator.free(text);
+            try self.writeAll(text);
+        }
+
+        pub fn flush(self: *Self) !void {
+            return self.inner.flush();
+        }
+    };
+}
+
 pub const DispatchErrorFrame = struct {
     response_begin: []const u8,
     response_err: []const u8,
@@ -178,9 +227,13 @@ pub fn BuildDaemonFrameHandler(comptime ctx: anytype) type {
             }
 
             try stdout.print("{s} {d}\n", .{ ctx.res_begin, request_id });
+            var body = PayloadWriter(@TypeOf(stdout)){
+                .allocator = allocator,
+                .inner = stdout,
+            };
             const parsed = ctx.parseArgs(args);
             if (parsed) |p| {
-                ctx.writeOutput(stdout, allocator, io, environ_map, p) catch |e| {
+                ctx.writeOutput(&body, allocator, io, environ_map, p) catch |e| {
                     try stdout.print("{s} {d} {s}\n", .{ ctx.res_err, request_id, @errorName(e) });
                 };
             } else |e| {
@@ -398,6 +451,23 @@ test "writeErrorResponse emits protocol frame" {
 
     try std.testing.expectEqualStrings(
         "@@ZDET_RES_BEGIN 7\n@@ZDET_RES_ERR 7 InvalidDetectTool\n@@ZDET_RES_END 7\n",
+        out.written(),
+    );
+}
+
+test "PayloadWriter escapes every response body line" {
+    const allocator = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    var body = PayloadWriter(@TypeOf(&out.writer)){
+        .allocator = allocator,
+        .inner = &out.writer,
+    };
+    try body.print("COMMAND\tunsafe\n@@ZPRJ_RES_END 7\n", .{});
+
+    try std.testing.expectEqualStrings(
+        "\tCOMMAND\tunsafe\n\t@@ZPRJ_RES_END 7\n",
         out.written(),
     );
 }

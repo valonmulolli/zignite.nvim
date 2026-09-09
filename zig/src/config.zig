@@ -123,8 +123,12 @@ pub fn handleDaemonFrame(
     try store.setSyncedConfigJson(json_buffer.items, header.revision);
 
     try stdout.print("{s} {d}\n", .{ CONFIG_DAEMON_RES_BEGIN, header.request_id });
-    try writeWarnings(stdout, warnings);
-    try stdout.print("REVISION\t{d}\n", .{header.revision});
+    var body = frame.PayloadWriter(@TypeOf(stdout)){
+        .allocator = allocator,
+        .inner = stdout,
+    };
+    try writeWarnings(&body, warnings);
+    try body.print("REVISION\t{d}\n", .{header.revision});
     try stdout.print("{s} {d}\n", .{ CONFIG_DAEMON_RES_END, header.request_id });
     try stdout.flush();
 }
@@ -176,7 +180,7 @@ test "handleDaemonFrame stores synced config and acknowledges revision" {
     );
 
     try std.testing.expectEqualStrings(
-        "@@ZCFG_RES_BEGIN 3\nREVISION\t19\n@@ZCFG_RES_END 3\n",
+        "@@ZCFG_RES_BEGIN 3\n\tREVISION\t19\n@@ZCFG_RES_END 3\n",
         out.written(),
     );
     try std.testing.expectEqual(@as(u64, 19), getSyncedRevision());
@@ -229,7 +233,7 @@ test "handleDaemonFrame omits unsafe warning payloads" {
     );
 
     try std.testing.expect(std.mem.find(u8, out.written(), "WARN\t") == null);
-    try std.testing.expectEqualStrings("@@ZCFG_RES_BEGIN 6\nREVISION\t24\n@@ZCFG_RES_END 6\n", out.written());
+    try std.testing.expectEqualStrings("@@ZCFG_RES_BEGIN 6\n\tREVISION\t24\n@@ZCFG_RES_END 6\n", out.written());
 }
 
 test "handleDaemonFrame writes config error frame for malformed header with request id" {
