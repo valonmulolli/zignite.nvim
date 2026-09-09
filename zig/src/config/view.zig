@@ -20,6 +20,22 @@ pub const RunnerConfig = struct {
     }
 };
 
+pub const ProjectConfig = struct {
+    name: ?[]u8 = null,
+    command: ?[]u8 = null,
+    cleanup_command: ?[]u8 = null,
+    cwd: ?[]u8 = null,
+    root: ?[]u8 = null,
+
+    pub fn deinit(self: *ProjectConfig, allocator: std.mem.Allocator) void {
+        if (self.name) |name| allocator.free(name);
+        if (self.command) |command| allocator.free(command);
+        if (self.cleanup_command) |cleanup| allocator.free(cleanup);
+        if (self.cwd) |cwd| allocator.free(cwd);
+        if (self.root) |root| allocator.free(root);
+    }
+};
+
 const ParsedCache = struct {
     generation: ?u64 = null,
     arena: ?std.heap.ArenaAllocator = null,
@@ -205,6 +221,88 @@ pub fn loadRunnerConfig(allocator: std.mem.Allocator, filetype: []const u8) !?Ru
     };
 }
 
+pub fn loadProjectConfig(allocator: std.mem.Allocator, path: []const u8) !?ProjectConfig {
+    const root = rootObject() orelse return null;
+    const projects = objectField(root, "project") orelse return null;
+
+    var best_pattern: ?[]const u8 = null;
+    var best_root: ?[]const u8 = null;
+    var best_length: usize = 0;
+
+    var it = projects.iterator();
+    while (it.next()) |entry| {
+        if (common.hasInvalidPayloadChars(entry.key_ptr.*) or entry.value_ptr.* != .object) continue;
+        const project_root = projectRoot(entry.key_ptr.*);
+        if (project_root.len == 0 or !projectPatternMatches(path, project_root)) continue;
+
+        const command = entry.value_ptr.object.get("command") orelse continue;
+        if (command != .string or command.string.len == 0 or common.hasInvalidPayloadChars(command.string)) continue;
+
+        if (project_root.len > best_length or
+            (project_root.len == best_length and
+                (best_pattern == null or std.mem.order(u8, entry.key_ptr.*, best_pattern.?) == .lt)))
+        {
+            best_pattern = entry.key_ptr.*;
+            best_root = project_root;
+            best_length = project_root.len;
+        }
+    }
+
+    const pattern = best_pattern orelse return null;
+    const matched_root = best_root orelse return null;
+    const project = projects.get(pattern) orelse return null;
+
+    var resolved: ProjectConfig = .{};
+    errdefer resolved.deinit(allocator);
+
+    resolved.command = try allocator.dupe(u8, project.object.get("command").?.string);
+    resolved.root = try allocator.dupe(u8, matched_root);
+
+    if (project.object.get("name")) |name| {
+        if (name == .string and name.string.len > 0 and !common.hasInvalidPayloadChars(name.string)) {
+            resolved.name = try allocator.dupe(u8, name.string);
+        }
+    }
+    if (project.object.get("cleanup_command")) |cleanup| {
+        if (cleanup == .string and cleanup.string.len > 0 and !common.hasInvalidPayloadChars(cleanup.string)) {
+            resolved.cleanup_command = try allocator.dupe(u8, cleanup.string);
+        }
+    }
+    if (project.object.get("cwd")) |cwd| {
+        if (cwd == .string and cwd.string.len > 0 and !common.hasInvalidPayloadChars(cwd.string)) {
+            resolved.cwd = try allocator.dupe(u8, cwd.string);
+        }
+    }
+
+    return resolved;
+}
+
+fn projectRoot(pattern: []const u8) []const u8 {
+    var root = pattern;
+    for ([_][]const u8{ "/.*", "/.-", "/*", "/?", ".*", ".-", "*", "?" }) |suffix| {
+        if (std.mem.endsWith(u8, root, suffix)) {
+            root = root[0 .. root.len - suffix.len];
+            break;
+        }
+    }
+    while (root.len > 1 and root[root.len - 1] == '/') root = root[0 .. root.len - 1];
+    return root;
+}
+
+fn projectPatternMatches(path: []const u8, root: []const u8) bool {
+    const normalized_path = trimRelativePrefix(path);
+    const normalized_root = trimRelativePrefix(root);
+    if (std.mem.eql(u8, normalized_path, normalized_root)) return true;
+    if (!std.mem.startsWith(u8, normalized_path, normalized_root)) return false;
+    return normalized_root.len > 0 and normalized_path.len > normalized_root.len and
+        normalized_path[normalized_root.len] == '/';
+}
+
+fn trimRelativePrefix(path: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, path, "./")) return path[2..];
+    return path;
+}
+
 fn parseRunnerCommand(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
     return switch (value) {
         .string => |command| if (command.len == 0 or common.hasInvalidPayloadChars(command)) null else @as(?[]u8, try allocator.dupe(u8, command)),
@@ -327,6 +425,42 @@ test "view rejects runner arrays with non-string entries" {
 
     try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "python")) == null);
     try std.testing.expect((try loadRunnerConfig(std.testing.allocator, "go")) == null);
+}
+
+test "view resolves the most specific matching project" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"project":{
+        \\  "/tmp/repo/.*":{"name":"Root Project","command":"make run"},
+        \\  "/tmp/repo/service/.*":{"name":"Service Project","command":"make service"}
+        \\},"revision":12}
+    , 12);
+
+    var project = (try loadProjectConfig(std.testing.allocator, "/tmp/repo/service/src/main.go")).?;
+    defer project.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("Service Project", project.name.?);
+    try std.testing.expectEqualStrings("make service", project.command.?);
+    try std.testing.expectEqualStrings("/tmp/repo/service", project.root.?);
+
+    try std.testing.expect((try loadProjectConfig(std.testing.allocator, "/tmp/repo-other/main.go")) == null);
+}
+
+test "view resolves project cleanup and cwd overrides" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"project":{
+        \\  "/tmp/repo/.*":{"command":"make run","cleanup_command":"make clean","cwd":"/tmp/repo/build"}
+        \\},"revision":13}
+    , 13);
+
+    var project = (try loadProjectConfig(std.testing.allocator, "/tmp/repo/src/main.go")).?;
+    defer project.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("make clean", project.cleanup_command.?);
+    try std.testing.expectEqualStrings("/tmp/repo/build", project.cwd.?);
 }
 
 test "view ignores fractional and overflowing timeout values" {
