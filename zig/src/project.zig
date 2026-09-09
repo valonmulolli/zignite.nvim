@@ -155,12 +155,16 @@ pub fn handleDaemonFrame(
     }
 
     try stdout.print("{s} {d}\n", .{ PROJECT_DAEMON_RES_BEGIN, header.request_id });
+    var body = frame.PayloadWriter(@TypeOf(stdout)){
+        .allocator = allocator,
+        .inner = stdout,
+    };
     const options = parseArgs(request_args);
     if (options) |parsed| {
         const contents = readProjectFileWithIO(io, allocator, parsed.kind, parsed.path);
         if (contents) |payload| {
             defer allocator.free(payload);
-            writeOutputWithIO(io, stdout, allocator, parsed, payload) catch |err| {
+            writeOutputWithIO(io, &body, allocator, parsed, payload) catch |err| {
                 try stdout.print("{s} {d} {s}\n", .{ PROJECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });
             };
         } else |err| {

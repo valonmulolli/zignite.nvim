@@ -111,13 +111,16 @@ pub fn handleDaemonFrame(
     if (!completed) return error.UnexpectedEof;
 
     try stdout.print("{s} {d}\n", .{ DETECT_DAEMON_RES_BEGIN, header.request_id });
+    var body = frame.PayloadWriter(@TypeOf(stdout)){
+        .allocator = allocator,
+        .inner = stdout,
+    };
     const detect_result = detectToolCommandsWithIO(io, allocator, header.tool);
     if (detect_result) |commands| {
         defer freeOwnedCommandList(allocator, commands);
         for (commands) |command| {
-            try stdout.writeByte('\t');
-            try stdout.writeAll(command);
-            try stdout.writeByte('\n');
+            try body.writeAll(command);
+            try body.writeByte('\n');
         }
     } else |err| {
         try stdout.print("{s} {d} {s}\n", .{ DETECT_DAEMON_RES_ERR, header.request_id, @errorName(err) });

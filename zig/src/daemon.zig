@@ -178,7 +178,7 @@ test "runWithIO syncs config and resolves build commands through daemon" {
 
     try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
 
-    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZCFG_RES_BEGIN 1\nREVISION\t11\n@@ZCFG_RES_END 1\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "@@ZCFG_RES_BEGIN 1\n\tREVISION\t11\n@@ZCFG_RES_END 1\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "@@ZBR_RES_BEGIN 2\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "CONFIG_REVISION\t11\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tcustom\tmake custom\n") != null);
