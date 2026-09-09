@@ -7,7 +7,8 @@ const policy = @import("detected/policy.zig");
 const types = @import("types.zig");
 
 pub fn resolveOutput(allocator: std.mem.Allocator, options: types.Options) !types.ResolvedOutput {
-    var threaded: std.Io.Threaded = .init_single_threaded;
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
     return resolveOutputWithIO(threaded.io(), allocator, options);
 }
 
