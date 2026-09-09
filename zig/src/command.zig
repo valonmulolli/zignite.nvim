@@ -1,20 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const TimeoutState = enum(u8) {
-    active,
-    timed_out,
-    stopped,
-    force_termination,
-};
-
-const TimeoutContext = struct {
-    child_id: std.process.Child.Id,
-    duration: u64,
-    state: *std.atomic.Value(TimeoutState),
-};
-
 const timeout_grace_ms: u64 = 100;
+
+const ProcessWaitResult = union(enum) {
+    child: std.process.Child.WaitError!std.process.Child.Term,
+    timeout: std.Io.Cancelable!void,
+    grace: std.Io.Cancelable!void,
+};
 
 pub fn run(io: std.Io, args: []const []const u8) !void {
     var timeout_ms: ?u64 = null;
@@ -73,44 +66,108 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         });
     };
 
-    var timeout_state = std.atomic.Value(TimeoutState).init(.active);
-    var timeout_future: ?std.Io.Future(void) = null;
-    var context: TimeoutContext = undefined;
-    if (timeout_ms) |ms| {
-        context = .{
-            .child_id = child.id.?,
-            .duration = ms,
-            .state = &timeout_state,
-        };
-        timeout_future = io.async(timeoutWatcher, .{ io, &context });
-    }
-
-    // On any error path, stop the timeout watcher (if running)
-    // and prevent orphaned children.
-    errdefer stopTimeoutWatcher(io, &timeout_state, &timeout_future);
-
-    const term = child.wait(io) catch |err| {
+    const term = waitForChildWithTimeout(io, &child, timeout_ms) catch |err| {
         // wait() failed (e.g. platform error). The child may still be alive;
         // kill it best-effort before propagating the error.
-        stopTimeoutWatcher(io, &timeout_state, &timeout_future);
-        requestChildTermination(child.id.?);
-        child.kill(io);
+        if (child.id) |child_id| {
+            requestChildTermination(child_id);
+            child.kill(io);
+        }
         return err;
     };
 
-    // Child finished normally — stop the timeout watcher,
-    // run cleanup, then exit with the child's exit code.
-    stopTimeoutWatcher(io, &timeout_state, &timeout_future);
+    // Child finished normally or was terminated by the timeout coordinator.
     runCleanup(io, cleanup_command);
     std.process.exit(termToExitCode(term));
 }
 
-fn stopTimeoutWatcher(io: std.Io, state: *std.atomic.Value(TimeoutState), timeout_future: *?std.Io.Future(void)) void {
-    state.store(.stopped, .release);
-    if (timeout_future.*) |*future| {
-        _ = future.cancel(io);
-        timeout_future.* = null;
+fn waitForChild(io: std.Io, child: *std.process.Child) std.process.Child.WaitError!std.process.Child.Term {
+    return child.wait(io);
+}
+
+fn sleepFor(io: std.Io, duration_ms: u64) std.Io.Cancelable!void {
+    const duration = std.math.cast(i64, duration_ms) orelse std.math.maxInt(i64);
+    return std.Io.sleep(io, std.Io.Duration.fromMilliseconds(duration), .awake);
+}
+
+fn waitForChildWithTimeout(
+    io: std.Io,
+    child: *std.process.Child,
+    timeout_ms: ?u64,
+) !std.process.Child.Term {
+    if (timeout_ms == null) return child.wait(io);
+
+    var select_buffer: [3]ProcessWaitResult = undefined;
+    var select = std.Io.Select(ProcessWaitResult).init(io, &select_buffer);
+    select.async(.child, waitForChild, .{ io, child });
+    select.async(.timeout, sleepFor, .{ io, timeout_ms.? });
+
+    const child_id = child.id.?;
+    const first = select.await() catch |err| {
+        requestChildForceTermination(child_id);
+        select.cancelDiscard();
+        return err;
+    };
+
+    switch (first) {
+        .child => |result| {
+            select.cancelDiscard();
+            return result;
+        },
+        .timeout => |result| {
+            _ = result catch |err| {
+                requestChildForceTermination(child_id);
+                select.cancelDiscard();
+                return err;
+            };
+        },
+        .grace => unreachable,
     }
+
+    requestChildTermination(child_id);
+    writeTimeoutMessage(io, timeout_ms.?);
+
+    select.async(.grace, sleepFor, .{ io, timeout_grace_ms });
+    const second = select.await() catch |err| {
+        requestChildForceTermination(child_id);
+        select.cancelDiscard();
+        return err;
+    };
+
+    switch (second) {
+        .child => |result| {
+            select.cancelDiscard();
+            return result;
+        },
+        .grace => |result| {
+            _ = result catch |err| {
+                requestChildForceTermination(child_id);
+                select.cancelDiscard();
+                return err;
+            };
+            requestChildForceTermination(child_id);
+            const final = select.await() catch |err| {
+                select.cancelDiscard();
+                return err;
+            };
+            switch (final) {
+                .child => |child_result| return child_result,
+                .timeout, .grace => unreachable,
+            }
+        },
+        .timeout => unreachable,
+    }
+}
+
+fn writeTimeoutMessage(io: std.Io, duration_ms: u64) void {
+    var stderr_buffer: [128]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
+    stderr_writer.interface.print("\n[Zignite] Process timed out after {d}ms\n", .{duration_ms}) catch |err| {
+        std.log.err("Failed to print timeout message: {}", .{err});
+    };
+    stderr_writer.interface.flush() catch |err| {
+        std.log.err("Failed to flush timeout message: {}", .{err});
+    };
 }
 
 fn termToExitCode(term: std.process.Child.Term) u8 {
@@ -156,35 +213,6 @@ test "termToExitCode encodes stopped as 128 + signal number" {
 test "termToExitCode treats unknown as raw status" {
     try std.testing.expectEqual(@as(u8, 42), termToExitCode(.{ .unknown = 42 }));
     try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
-}
-
-fn timeoutWatcher(io: std.Io, ctx: *TimeoutContext) void {
-    const duration_ms = std.math.cast(i64, ctx.duration) orelse std.math.maxInt(i64);
-    if (std.Io.sleep(io, std.Io.Duration.fromMilliseconds(duration_ms), .awake)) |_| {} else |err| switch (err) {
-        error.Canceled => return,
-    }
-    if (ctx.state.cmpxchgWeak(.active, .timed_out, .acq_rel, .acquire) != null) {
-        return;
-    }
-
-    requestChildTermination(ctx.child_id);
-
-    var stderr_buffer: [128]u8 = undefined;
-    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
-    stderr_writer.interface.print("\n[Zignite] Process timed out after {d}ms\n", .{ctx.duration}) catch |w_err| {
-        std.log.err("Failed to print timeout message: {}", .{w_err});
-    };
-    stderr_writer.interface.flush() catch |f_err| {
-        std.log.err("Failed to flush timeout message: {}", .{f_err});
-    };
-
-    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(timeout_grace_ms)), .awake) catch |err| switch (err) {
-        error.Canceled => return,
-    };
-    if (ctx.state.cmpxchgWeak(.timed_out, .force_termination, .acq_rel, .acquire) != null) {
-        return;
-    }
-    requestChildForceTermination(ctx.child_id);
 }
 
 fn requestChildForceTermination(child_id: std.process.Child.Id) void {
@@ -237,22 +265,12 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
         return;
     };
 
-    var timeout_state = std.atomic.Value(TimeoutState).init(.active);
-    var context = TimeoutContext{
-        .child_id = child.id.?,
-        .duration = 30000,
-        .state = &timeout_state,
-    };
-    var timeout_future = io.async(timeoutWatcher, .{ io, &context });
-    defer {
-        timeout_state.store(.stopped, .release);
-        _ = timeout_future.cancel(io);
-    }
-
-    _ = child.wait(io) catch |err| {
+    _ = waitForChildWithTimeout(io, &child, 30000) catch |err| {
         std.log.warn("Failed to wait for cleanup command: {}", .{err});
-        requestChildTermination(child.id.?);
-        child.kill(io);
+        if (child.id) |child_id| {
+            requestChildTermination(child_id);
+            child.kill(io);
+        }
     };
 }
 
@@ -289,7 +307,7 @@ test "timeout termination includes descendant processes" {
     }
 }
 
-test "timeout watcher force-kills processes that ignore term" {
+test "timeout coordinator force-kills processes that ignore term" {
     if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
 
     const shell_args = [_][]const u8{ "/bin/sh", "-c", "trap '' TERM; sleep 5" };
@@ -300,15 +318,7 @@ test "timeout watcher force-kills processes that ignore term" {
         .stdout = .ignore,
         .stderr = .ignore,
     });
-    var timeout_state = std.atomic.Value(TimeoutState).init(.active);
-    var context = TimeoutContext{
-        .child_id = child.id.?,
-        .duration = 50,
-        .state = &timeout_state,
-    };
-
-    timeoutWatcher(std.testing.io, &context);
-    const term = try child.wait(std.testing.io);
+    const term = try waitForChildWithTimeout(std.testing.io, &child, 50);
     switch (term) {
         .signal => |sig| try std.testing.expectEqual(std.posix.SIG.KILL, sig),
         else => return error.ProcessWasNotForceKilled,
