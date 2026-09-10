@@ -113,7 +113,8 @@ pub fn handleDaemonFrame(
 
     var json_buffer: std.ArrayList(u8) = .empty;
     defer json_buffer.deinit(allocator);
-    for (json_lines) |line| {
+    for (json_lines, 0..) |line, index| {
+        if (index > 0) try json_buffer.append(allocator, '\n');
         try json_buffer.appendSlice(allocator, line);
     }
 
@@ -188,6 +189,35 @@ test "handleDaemonFrame stores synced config and acknowledges revision" {
         "{\"build_commands\":{\"zig\":{\"build\":\"zig build\"}}}",
         getSyncedConfigJson().?,
     );
+}
+
+test "handleDaemonFrame preserves multiline config JSON" {
+    const allocator = std.testing.allocator;
+    defer store.reset();
+
+    var reader = TestReader{ .lines = &.{
+        "\t{",
+        "\t  \"build_commands\": {",
+        "\t    \"zig\": {\"build\": \"zig build\"}",
+        "\t  }",
+        "\t}",
+        "@@ZCFG_REQ_END 12",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try handleDaemonFrame(
+        allocator,
+        &reader,
+        &out.writer,
+        "@@ZCFG_REQ_BEGIN 12 31",
+    );
+
+    try std.testing.expectEqualStrings(
+        "{\n  \"build_commands\": {\n    \"zig\": {\"build\": \"zig build\"}\n  }\n}",
+        getSyncedConfigJson().?,
+    );
+    try std.testing.expectEqual(@as(u64, 31), getSyncedRevision());
 }
 
 test "handleDaemonFrame includes backend config warnings before revision" {
