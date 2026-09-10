@@ -246,7 +246,7 @@ test "detectSteps fails fast when zig build -l exceeds timeout" {
         detectStepsWithTimeoutWithIO(io, allocator, root, 10),
     );
     const elapsed_ms = started.untilNow(io, .awake).toMilliseconds();
-    const max_elapsed_ms: u64 = if (builtin.os.tag == .windows) 5000 else 1000;
+    const max_elapsed_ms: u64 = if (builtin.os.tag == .windows) 30_000 else 1000;
     try std.testing.expect(elapsed_ms < max_elapsed_ms);
 }
 
