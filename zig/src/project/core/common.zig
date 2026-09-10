@@ -37,6 +37,7 @@ const protocol_delimiter_prefixes = [_][]const u8{
     "@@ZCFG_",
     "@@ZBA_",
     "@@ZRUN_",
+    "@@ZHLT_",
 };
 
 /// Returns true if `value` contains a protocol delimiter prefix that could
@@ -324,6 +325,7 @@ test "hasProtocolMarkers detects all known zignite protocol prefixes" {
     try std.testing.expect(hasProtocolMarkers("@@ZCFG_SYNC"));
     try std.testing.expect(hasProtocolMarkers("path/@@ZBA_RESULT/data"));
     try std.testing.expect(hasProtocolMarkers("@@ZRUN_REQ_END 42"));
+    try std.testing.expect(hasProtocolMarkers("@@ZHLT_RES_END 42"));
 }
 
 test "hasProtocolMarkers false for similar but non-matching strings" {
