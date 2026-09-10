@@ -601,35 +601,11 @@ fn collectSetVariables(
     contents: []const u8,
     variables: *std.ArrayList(Variable),
 ) !void {
-    var capture: ?std.ArrayList(u8) = null;
-    defer if (capture) |*list| list.deinit(allocator);
-    var depth: isize = 0;
-
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture == null) {
-            const start_idx = indexOfSet(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line[start_idx..]);
-            depth = countParenDelta(line[start_idx..]);
-            if (depth <= 0) {
-                try commitSetBlock(allocator, list.items, variables);
-                list.deinit(allocator);
-            } else {
-                capture = list;
-            }
-        } else {
-            try capture.?.append(allocator, ' ');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
-                try commitSetBlock(allocator, capture.?.items, variables);
-                capture.?.deinit(allocator);
-                capture = null;
-            }
-        }
+    var cursor: usize = 0;
+    while (cursor < contents.len) {
+        const block = nextCommandBlock(contents, cursor, "set") orelse break;
+        try commitSetBlock(allocator, contents[block.start..block.end], variables);
+        cursor = block.end;
     }
 }
 
@@ -715,35 +691,19 @@ fn applyTargetSources(
     variables: []const Variable,
     targets: *std.ArrayList(Target),
 ) !void {
-    var capture: ?std.ArrayList(u8) = null;
-    defer if (capture) |*list| list.deinit(allocator);
-    var depth: isize = 0;
-
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture == null) {
-            const start_idx = indexOfTargetSources(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line[start_idx..]);
-            depth = countParenDelta(line[start_idx..]);
-            if (depth <= 0) {
-                try commitTargetSourcesBlock(allocator, list.items, project_name, relative_match_path, basename, variables, targets);
-                list.deinit(allocator);
-            } else {
-                capture = list;
-            }
-        } else {
-            try capture.?.append(allocator, ' ');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
-                try commitTargetSourcesBlock(allocator, capture.?.items, project_name, relative_match_path, basename, variables, targets);
-                capture.?.deinit(allocator);
-                capture = null;
-            }
-        }
+    var cursor: usize = 0;
+    while (cursor < contents.len) {
+        const block = nextCommandBlock(contents, cursor, "target_sources") orelse break;
+        try commitTargetSourcesBlock(
+            allocator,
+            contents[block.start..block.end],
+            project_name,
+            relative_match_path,
+            basename,
+            variables,
+            targets,
+        );
+        cursor = block.end;
     }
 }
 
@@ -789,38 +749,26 @@ pub fn collectAddSubdirectoriesAlloc(
 
     var subdirs: std.ArrayList([]u8) = .empty;
     errdefer common.deinitOwnedNameList(allocator, &subdirs);
-    var capture: ?std.ArrayList(u8) = null;
-    defer if (capture) |*list| list.deinit(allocator);
-    var depth: isize = 0;
-
-    var lines = std.mem.splitScalar(u8, sanitized, '\n');
-    while (lines.next()) |raw_line| {
-        const line = stripHashComment(common.stripTrailingCR(raw_line));
-        if (capture == null) {
-            const start_idx = indexOfAddSubdirectory(line) orelse continue;
-            var list: std.ArrayList(u8) = .empty;
-            errdefer list.deinit(allocator);
-            try list.appendSlice(allocator, line[start_idx..]);
-            depth = countParenDelta(line[start_idx..]);
-            if (depth <= 0) {
-                try commitAddSubdirectoryBlock(allocator, list.items, &subdirs);
-                list.deinit(allocator);
-            } else {
-                capture = list;
-            }
-        } else {
-            try capture.?.append(allocator, ' ');
-            try capture.?.appendSlice(allocator, line);
-            depth += countParenDelta(line);
-            if (depth <= 0) {
-                try commitAddSubdirectoryBlock(allocator, capture.?.items, &subdirs);
-                capture.?.deinit(allocator);
-                capture = null;
-            }
-        }
+    var cursor: usize = 0;
+    while (cursor < sanitized.len) {
+        const block = nextCommandBlock(sanitized, cursor, "add_subdirectory") orelse break;
+        try commitAddSubdirectoryBlock(allocator, sanitized[block.start..block.end], &subdirs);
+        cursor = block.end;
     }
 
     return try subdirs.toOwnedSlice(allocator);
+}
+
+const CommandBlock = struct {
+    start: usize,
+    end: usize,
+};
+
+fn nextCommandBlock(source: []const u8, cursor: usize, command_name: []const u8) ?CommandBlock {
+    const relative_start = indexOfCommandCall(source[cursor..], command_name) orelse return null;
+    const start = cursor + relative_start;
+    const relative_end = findMatchingParen(source[start..]) orelse return null;
+    return .{ .start = start, .end = start + relative_end + 1 };
 }
 
 fn commitAddSubdirectoryBlock(
@@ -1171,6 +1119,27 @@ test "parse cmake targets marks target_sources matches" {
     try std.testing.expect(targets[0].matched);
 }
 
+test "parse cmake auxiliary commands finds multiple calls on one line" {
+    const allocator = std.testing.allocator;
+    const contents =
+        "set(APP_SOURCES src/other.cpp) set(MAIN_SOURCES src/main.cpp)\n" ++
+        "add_executable(app ${MAIN_SOURCES})\n" ++
+        "target_sources(app PRIVATE src/other.cpp) target_sources(app PRIVATE src/main.cpp)\n";
+
+    const targets = try parseTargets(
+        allocator,
+        contents,
+        "/tmp/cmakeproj/CMakeLists.txt",
+        "/tmp/cmakeproj/src/main.cpp",
+    );
+    defer freeOwnedTargets(allocator, targets);
+
+    try std.testing.expectEqual(@as(usize, 1), targets.len);
+    try std.testing.expectEqualStrings("app", targets[0].name);
+    try std.testing.expect(targets[0].matched);
+    try std.testing.expect(targets[0].exact_match);
+}
+
 test "parse cmake targets rejects unsafe protocol names" {
     const allocator = std.testing.allocator;
     const targets = try parseTargets(
@@ -1195,6 +1164,19 @@ test "collect cmake add_subdirectory entries" {
     try std.testing.expectEqual(@as(usize, 2), subdirs.len);
     try std.testing.expectEqualStrings("app", subdirs[0]);
     try std.testing.expectEqualStrings("tools/cli", subdirs[1]);
+}
+
+test "collect cmake add_subdirectory entries finds multiple calls on one line" {
+    const allocator = std.testing.allocator;
+    const subdirs = try collectAddSubdirectoriesAlloc(
+        allocator,
+        "add_subdirectory(app) add_subdirectory(tools)\n",
+    );
+    defer common.freeOwnedNameList(allocator, subdirs);
+
+    try std.testing.expectEqual(@as(usize, 2), subdirs.len);
+    try std.testing.expectEqualStrings("app", subdirs[0]);
+    try std.testing.expectEqualStrings("tools", subdirs[1]);
 }
 
 test "collect cmake add_subdirectory ignores multiline bracket comments" {
