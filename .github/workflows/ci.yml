@@ -43,7 +43,9 @@ jobs:
       - name: Install Lua 5.4
         run: |
           sudo apt-get update
-          sudo apt-get install --yes lua5.4
+          sudo apt-get install --yes lua5.4 lua-dkjson
 
       - name: Run Lua and integration tests
+        env:
+          ZIGNITE_LUA: lua5.4
         run: lua5.4 zig/test/runner.lua .
