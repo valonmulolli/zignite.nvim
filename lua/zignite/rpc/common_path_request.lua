@@ -68,12 +68,27 @@ end
 ---@param optional_flags ZigniteOptionalFlag[]|nil
 ---@param is_invalid fun(value: any): boolean
 ---@return string|nil
-function M.compose_worker_payload(begin_marker, end_marker, request_id, mode_flag, filepath, filetype, optional_flags, is_invalid)
+function M.compose_worker_payload(
+	begin_marker,
+	end_marker,
+	request_id,
+	mode_flag,
+	filepath,
+	filetype,
+	optional_flags,
+	is_invalid
+)
 	if is_invalid(filepath) or is_invalid(filetype) then
 		return nil
 	end
 
-	local lines = M.begin_worker_lines(begin_marker, request_id, mode_flag, filepath, filetype)
+	local lines = M.begin_worker_lines(
+		begin_marker,
+		request_id,
+		mode_flag,
+		filepath,
+		filetype
+	)
 	for _, flag in ipairs(optional_flags or {}) do
 		if type(flag.value) == "string" and flag.value ~= "" then
 			if is_invalid(flag.value) then

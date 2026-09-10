@@ -83,7 +83,9 @@ local function build_worker_payload(request_id, params)
 	local selection_text = type(params) == "table" and params.selection_text or nil
 	local has_inline_source = type(selection_text) == "string" and selection_text ~= ""
 	local allow_empty_path = has_inline_source
-	if input_guard.contains_control_characters(filepath, allow_empty_path) or input_guard.contains_control_characters(filetype) then
+	if input_guard.contains_control_characters(filepath, allow_empty_path)
+		or input_guard.contains_control_characters(filetype)
+	then
 		return nil
 	end
 	if type(context_path) == "string" and context_path ~= "" and input_guard.contains_control_characters(context_path) then
@@ -206,7 +208,11 @@ function M.resolve_sync_request(params)
 	local selection_text = type(params) == "table" and params.selection_text or nil
 	local has_inline_source = type(selection_text) == "string" and selection_text ~= ""
 	if filetype == nil or filetype == "" then
-		return failed_resolution(filetype or "", "Cannot resolve runner: unknown filetype. Save the buffer to a file first.", "unknown_filetype")
+		return failed_resolution(
+			filetype or "",
+			"Cannot resolve runner: unknown filetype. Save the buffer to a file first.",
+			"unknown_filetype"
+		)
 	end
 	if not can_use_backend_run_resolve(filepath, has_inline_source) then
 		return failed_resolution(
@@ -229,15 +235,24 @@ function M.resolve_sync_request(params)
 	end
 	if type(lines) ~= "table" then
 		local fail_msg = has_inline_source
-			and "Failed to resolve runner for inline source. Backend unavailable and fallback path does not support inline source."
-			or string.format("Failed to resolve runner for filetype: %s. Backend unavailable or timed out.", tostring(filetype or ""))
+			and (
+				"Failed to resolve runner for inline source. Backend unavailable "
+					.. "and fallback path does not support inline source."
+			)
+			or string.format(
+				"Failed to resolve runner for filetype: %s. Backend unavailable or timed out.",
+				tostring(filetype or "")
+			)
 		return failed_resolution(filetype, fail_msg, "backend_unavailable")
 	end
 	local resolved = normalize_resolved_output(json_result.decode(lines), filetype)
 	if type(resolved) == "table" then
 		return resolved
 	end
-	return failed_resolution(filetype, string.format("Failed to resolve runner for filetype: %s", tostring(filetype or "")))
+	return failed_resolution(
+		filetype,
+		string.format("Failed to resolve runner for filetype: %s", tostring(filetype or ""))
+	)
 end
 
 ---@param filepath string

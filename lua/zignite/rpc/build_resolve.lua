@@ -178,7 +178,10 @@ function M.resolve_sync(filepath, filetype)
 	if type(lines) ~= "table" then
 		return normalize_resolved_output(failed_build_resolution(
 			filetype,
-			string.format("Failed to resolve build commands for %s. Backend unavailable or timed out.", tostring(filetype or "")),
+			string.format(
+				"Failed to resolve build commands for %s. Backend unavailable or timed out.",
+				tostring(filetype or "")
+			),
 			"backend_unavailable"
 		))
 	end
