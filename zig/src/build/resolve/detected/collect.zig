@@ -9,6 +9,7 @@ const materialize = @import("../../../runtime/resolve/materialize.zig");
 const output = @import("output.zig");
 const policy = @import("policy.zig");
 const types = @import("../types.zig");
+const test_paths = @import("../../../test_support/paths.zig");
 
 pub fn resolveDetectedOutput(allocator: std.mem.Allocator, options: types.Options) !types.ResolvedOutput {
     var threaded: std.Io.Threaded = .init(allocator, .{});
@@ -170,7 +171,7 @@ test "resolveDetectedOutput tolerates malformed package json auto output" {
     }
 
     try std.testing.expectEqualStrings("typescript", resolved.filetype.?);
-    try std.testing.expectEqualStrings(root, resolved.root.?);
+    try test_paths.expectEqualPath(root, resolved.root.?);
     try std.testing.expectEqualStrings("node", resolved.system.?);
     try std.testing.expect(output.findCommand(resolved.commands.items, "install") != null);
 }

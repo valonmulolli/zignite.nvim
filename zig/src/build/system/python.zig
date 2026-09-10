@@ -4,6 +4,7 @@ const project_common = @import("../../project/core/common.zig");
 const pyproject = @import("../../project/pyproject/api.zig");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 const Result = types.Result;
 const CommandEntry = types.CommandEntry;
@@ -266,7 +267,7 @@ test "detect returns uv commands for uv lock without pyproject" {
     const result = try detect(allocator, filepath, root);
     defer types.freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("uv run -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("uv sync", findCommand(result.commands, "install").?);

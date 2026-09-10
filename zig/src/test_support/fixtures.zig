@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("../project/core/common.zig");
 
 const cmake_cmakelists = @embedFile("../../test_fixtures/cmake/CMakeLists.txt");
 const cmake_main = @embedFile("../../test_fixtures/cmake/src/main.cpp");
@@ -63,7 +64,9 @@ pub fn writeCmakeProject(dir: std.Io.Dir) !void {
 
 pub fn writeCmakeFileApiProject(dir: std.Io.Dir) !void {
     const allocator = std.heap.page_allocator;
-    const root = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    const raw_root = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(raw_root);
+    const root = try common.normalizePathAlloc(allocator, raw_root);
     defer allocator.free(root);
 
     try writeFileTree(dir, "CMakeLists.txt",
@@ -144,7 +147,9 @@ pub fn writeMesonProject(dir: std.Io.Dir) !void {
 
 pub fn writeMesonIntroProject(dir: std.Io.Dir) !void {
     const allocator = std.heap.page_allocator;
-    const root = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    const raw_root = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(raw_root);
+    const root = try common.normalizePathAlloc(allocator, raw_root);
     defer allocator.free(root);
 
     try writeFileTree(dir, "meson.build",

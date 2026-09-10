@@ -2,6 +2,7 @@ const std = @import("std");
 const cache = @import("system/cache.zig");
 const fixtures = @import("../test_support/fixtures.zig");
 const types = @import("system/types.zig");
+const test_paths = @import("../test_support/paths.zig");
 
 pub const Query = types.Query;
 pub const CommandEntry = types.CommandEntry;
@@ -53,7 +54,7 @@ test "detect c family system and build readiness" {
     defer freeOwnedResult(allocator, result);
 
     try std.testing.expect(result.root != null);
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
     try std.testing.expect(result.build_ready.?);
     try std.testing.expect(result.commands.len > 0);
@@ -82,7 +83,7 @@ test "detect python root emits uv commands" {
     const result = try detect(allocator, .python_root, filepath, root);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("uv run -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("uv run pytest", findCommand(result.commands, "test").?);
@@ -104,7 +105,7 @@ test "detect python root emits uv commands from fixture project" {
     const result = try detect(allocator, .python_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("uv run -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("uv run pytest", findCommand(result.commands, "test").?);
@@ -126,7 +127,7 @@ test "detect python root emits conda commands from fixture project" {
     const result = try detect(allocator, .python_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("conda run -n demo-conda python -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("conda run -n demo-conda pytest", findCommand(result.commands, "test").?);
@@ -148,7 +149,7 @@ test "detect python root emits conda commands from environment.yaml fixture proj
     const result = try detect(allocator, .python_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("conda run -n demo-conda-yaml python -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("conda run -n demo-conda-yaml pytest", findCommand(result.commands, "test").?);
@@ -179,7 +180,7 @@ test "detect python root emits unnamed conda commands without environment name" 
     const result = try detect(allocator, .python_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("conda run python -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("conda run pytest", findCommand(result.commands, "test").?);
@@ -201,7 +202,7 @@ test "detect python root emits requirements commands from fixture project" {
     const result = try detect(allocator, .python_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("python", result.system.?);
     try std.testing.expectEqualStrings("python -m main", findCommand(result.commands, "run").?);
     try std.testing.expectEqualStrings("pytest", findCommand(result.commands, "test").?);
@@ -225,7 +226,7 @@ test "detect c family by walking parent markers" {
     defer freeOwnedResult(allocator, result);
 
     try std.testing.expect(result.root != null);
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
 }
 
@@ -401,7 +402,7 @@ test "detect bazel root emits baseline commands" {
     const result = try detect(allocator, .bazel_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("bazel", result.system.?);
     try std.testing.expectEqualStrings("bazel build //...", findCommand(result.commands, "build").?);
 }
@@ -422,7 +423,7 @@ test "detect c family in bazel workspace emits bazel baseline commands" {
     const result = try detect(allocator, .c_family, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("bazel", result.system.?);
     try std.testing.expectEqualStrings("bazel build //...", findCommand(result.commands, "build").?);
     try std.testing.expectEqualStrings("bazel test //...", findCommand(result.commands, "test").?);
@@ -453,7 +454,7 @@ test "detect c family prefers nested cmake project over outer bazel workspace" {
     const result = try detect(allocator, .c_family, filepath, workspace_root);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(nested_root, result.root.?);
+    try test_paths.expectEqualPath(nested_root, result.root.?);
     try std.testing.expectEqualStrings("cmake", result.system.?);
     try std.testing.expectEqualStrings("cmake --build build", findCommand(result.commands, "build").?);
 }
@@ -520,7 +521,7 @@ test "detect node root emits bun baseline commands from fixture project" {
     const result = try detect(allocator, .node_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("node", result.system.?);
     try std.testing.expectEqualStrings("bun run build", findCommand(result.commands, "build").?);
     try std.testing.expectEqualStrings("bun install", findCommand(result.commands, "install").?);
@@ -541,7 +542,7 @@ test "detect node root emits yarn baseline commands from fixture project" {
     const result = try detect(allocator, .node_root, filepath, null);
     defer freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("node", result.system.?);
     try std.testing.expectEqualStrings("yarn build", findCommand(result.commands, "build").?);
     try std.testing.expectEqualStrings("yarn install", findCommand(result.commands, "install").?);
@@ -565,7 +566,7 @@ test "detect bazel root by walking parents" {
     defer freeOwnedResult(allocator, result);
 
     try std.testing.expect(result.root != null);
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("bazel", result.system.?);
 }
 
@@ -587,6 +588,6 @@ test "detect jvm root and kind" {
     defer freeOwnedResult(allocator, result);
 
     try std.testing.expect(result.root != null);
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("gradle", result.system.?);
 }

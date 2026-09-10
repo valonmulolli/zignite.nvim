@@ -10,6 +10,7 @@ const selected = @import("resolve/selected.zig");
 const serialize = @import("resolve/serialize.zig");
 const types = @import("resolve/types.zig");
 const action_state = @import("action/state.zig");
+const test_paths = @import("../test_support/paths.zig");
 
 pub const Options = types.Options;
 pub const ResolvedOutput = types.ResolvedOutput;
@@ -293,7 +294,7 @@ test "resolveOutput falls back to system commands when project auto output is un
     });
     defer output.deinit(allocator);
 
-    try std.testing.expectEqualStrings(root, output.root.?);
+    try test_paths.expectEqualPath(root, output.root.?);
     try std.testing.expectEqualStrings("python", output.system.?);
     try std.testing.expectEqualStrings("uv run -m main", detected.findCommand(output.commands.items, "run").?);
     try std.testing.expectEqualStrings("uv sync", detected.findCommand(output.commands.items, "install").?);
@@ -370,7 +371,7 @@ test "resolveOutput prefers Makefile commands for go projects" {
     });
     defer output.deinit(allocator);
 
-    try std.testing.expectEqualStrings(root, output.root.?);
+    try test_paths.expectEqualPath(root, output.root.?);
     try std.testing.expectEqualStrings("make", output.system.?);
     try std.testing.expectEqualStrings("make build", detected.findCommand(output.commands.items, "build").?);
     try std.testing.expectEqualStrings("make run", detected.findCommand(output.commands.items, "run").?);
@@ -578,7 +579,7 @@ test "resolveOutput prefers nested cmake project over outer bazel workspace" {
     });
     defer output.deinit(allocator);
 
-    try std.testing.expectEqualStrings(nested_root, output.root.?);
+    try test_paths.expectEqualPath(nested_root, output.root.?);
     try std.testing.expectEqualStrings("cmake", output.system.?);
     try std.testing.expectEqualStrings("cmake --build build", detected.findCommand(output.commands.items, "build").?);
     try std.testing.expect(detected.findCommand(output.commands.items, "bazel-build-all") == null);
