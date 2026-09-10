@@ -7,7 +7,9 @@ pub const Step = struct {
     is_default: bool,
 };
 
-const detect_steps_timeout_ms: u64 = 5000;
+// Build-step discovery compiles and evaluates build.zig. Keep enough headroom
+// for cold toolchains on slower macOS and Windows runners.
+const detect_steps_timeout_ms: u64 = 15000;
 
 pub fn freeOwnedSteps(allocator: std.mem.Allocator, steps: []Step) void {
     for (steps) |step| {

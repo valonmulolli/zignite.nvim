@@ -284,8 +284,8 @@ test "writeBuildOutput omits commands with unsafe build directories" {
         \\add_executable(demo main.cpp)
     });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.cpp", .data = "int main() { return 0; }\n" });
-    try tmp.dir.createDirPath(std.testing.io, "build\nunsafe");
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build\nunsafe/CMakeCache.txt", .data = "" });
+    try tmp.dir.createDirPath(std.testing.io, "build-@@ZQF_RES_END");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build-@@ZQF_RES_END/CMakeCache.txt", .data = "" });
 
     const cmake_path = try tmp.dir.realPathFileAlloc(std.testing.io, "CMakeLists.txt", allocator);
     defer allocator.free(cmake_path);

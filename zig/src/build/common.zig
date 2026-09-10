@@ -245,7 +245,9 @@ pub fn discoverBuildRunPathAllocWithIO(
             continue;
         }
 
-        return try std.fmt.allocPrint(allocator, "./{s}/{s}", .{ build_dir, entry.path });
+        const normalized_entry_path = try project_common.normalizePathAlloc(allocator, entry.path);
+        defer allocator.free(normalized_entry_path);
+        return try std.fmt.allocPrint(allocator, "./{s}/{s}", .{ build_dir, normalized_entry_path });
     }
 
     return null;
@@ -383,15 +385,17 @@ fn discoverBuildDirForMarkerAllocWithIO(
                 break :blk std.fs.path.dirname(file_dir) orelse ".";
             },
         };
+        const normalized_build_dir = try project_common.normalizePathAlloc(allocator, build_dir);
+        defer allocator.free(normalized_build_dir);
 
         if (best) |current| {
-            if (!isBetterBuildDir(build_dir, current)) continue;
-            const replacement = try allocator.dupe(u8, build_dir);
+            if (!isBetterBuildDir(normalized_build_dir, current)) continue;
+            const replacement = try allocator.dupe(u8, normalized_build_dir);
             allocator.free(current);
             best = replacement;
             continue;
         }
-        best = try allocator.dupe(u8, build_dir);
+        best = try allocator.dupe(u8, normalized_build_dir);
     }
 
     if (best) |value| {

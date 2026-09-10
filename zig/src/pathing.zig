@@ -1,4 +1,5 @@
 const std = @import("std");
+const project_common = @import("project/core/common.zig");
 
 pub fn dirOrDot(path: []const u8) []const u8 {
     return std.fs.path.dirname(path) orelse ".";
@@ -28,7 +29,16 @@ pub fn walkUpwardsAllocWithIO(
     context: anytype,
     comptime predicate: fn (io: std.Io, allocator: std.mem.Allocator, context: @TypeOf(context), dir: []const u8) anyerror!bool,
 ) !?[]u8 {
-    var current = try allocator.dupe(u8, dirOrDot(start_path));
+    const normalized_start_path = try project_common.normalizePathAlloc(allocator, start_path);
+    defer allocator.free(normalized_start_path);
+
+    var normalized_boundary: ?[]u8 = null;
+    defer if (normalized_boundary) |root| allocator.free(root);
+    if (boundary) |root| {
+        normalized_boundary = try project_common.normalizePathAlloc(allocator, root);
+    }
+
+    var current = try allocator.dupe(u8, dirOrDot(normalized_start_path));
     defer allocator.free(current);
 
     var steps: usize = 0;
@@ -36,7 +46,7 @@ pub fn walkUpwardsAllocWithIO(
         if (try predicate(io, allocator, context, current)) {
             return try allocator.dupe(u8, current);
         }
-        if (boundary) |root| {
+        if (normalized_boundary) |root| {
             if (std.mem.eql(u8, current, root)) break;
         }
         const next = try parentDirAlloc(allocator, current) orelse break;

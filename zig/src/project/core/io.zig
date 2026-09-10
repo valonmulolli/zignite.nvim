@@ -94,7 +94,9 @@ pub fn findParentFileAllocWithIO(
 ) !?[]u8 {
     const dir = try pathing.walkUpwardsAllocWithIO(io, allocator, start_path, max_up, null, name, existsFile) orelse return null;
     defer allocator.free(dir);
-    return try std.fs.path.join(allocator, &.{ dir, name });
+    const joined = try std.fs.path.join(allocator, &.{ dir, name });
+    defer allocator.free(joined);
+    return try common.normalizePathAlloc(allocator, joined);
 }
 
 /// Walks up parent directories looking for any of a list of files.
@@ -110,7 +112,10 @@ pub fn findParentFileAnyAllocWithIO(
     defer allocator.free(dir);
     for (names) |name| {
         const candidate = try std.fs.path.join(allocator, &.{ dir, name });
-        if (common.isRegularFileWithIO(io, candidate)) return candidate;
+        if (common.isRegularFileWithIO(io, candidate)) {
+            defer allocator.free(candidate);
+            return try common.normalizePathAlloc(allocator, candidate);
+        }
         allocator.free(candidate);
     }
     return null;
