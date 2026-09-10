@@ -186,6 +186,7 @@ fn parseOptions(
 
     if (args.len >= 2) {
         iterations = try std.fmt.parseInt(usize, args[1], 10);
+        if (iterations == 0) return error.InvalidBenchmarkIterations;
     }
     if (args.len >= 3) {
         warmup = try std.fmt.parseInt(usize, args[2], 10);
