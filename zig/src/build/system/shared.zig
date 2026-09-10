@@ -2,6 +2,7 @@ const std = @import("std");
 const pathing = @import("../../pathing.zig");
 const project_common = @import("../../project/core/common.zig");
 const types = @import("types.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 pub fn freeOwnedCommands(allocator: std.mem.Allocator, commands: []const types.CommandEntry) void {
     for (commands) |entry| {
@@ -285,7 +286,7 @@ test "detectWithMarkers uses project root before upward scan" {
     const result = try detectWithMarkers(allocator, filepath, root, &.{"package.json"}, testBuildNodeResult);
     defer types.freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("node", result.system.?);
 }
 

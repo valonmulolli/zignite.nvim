@@ -1,6 +1,7 @@
 const std = @import("std");
 const common = @import("../core/common.zig");
 const project_io = @import("../core/io.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 const MAX_INCLUDE_DEPTH: usize = 64;
 const MAX_INCLUDED_FILES: usize = 256;
@@ -595,8 +596,8 @@ test "collectReferencedFilesFromFileAlloc includes local includes" {
     defer common.freeOwnedNameList(allocator, files);
 
     try std.testing.expectEqual(@as(usize, 2), files.len);
-    try std.testing.expectEqualStrings(makefile_path, files[0]);
-    try std.testing.expectEqualStrings(included_path, files[1]);
+    try test_paths.expectEqualPath(makefile_path, files[0]);
+    try test_paths.expectEqualPath(included_path, files[1]);
 }
 
 test "make include traversal is bounded" {

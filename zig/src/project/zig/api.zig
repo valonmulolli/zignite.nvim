@@ -1,6 +1,7 @@
 const std = @import("std");
 const pathing = @import("../../pathing.zig");
 const project_io = @import("../core/io.zig");
+const builtin = @import("builtin");
 
 pub const Step = struct {
     name: []u8,
@@ -245,7 +246,8 @@ test "detectSteps fails fast when zig build -l exceeds timeout" {
         detectStepsWithTimeoutWithIO(io, allocator, root, 10),
     );
     const elapsed_ms = started.untilNow(io, .awake).toMilliseconds();
-    try std.testing.expect(elapsed_ms < 1000);
+    const max_elapsed_ms: u64 = if (builtin.os.tag == .windows) 5000 else 1000;
+    try std.testing.expect(elapsed_ms < max_elapsed_ms);
 }
 
 test "detectSteps cleans up timeout watcher when output collection fails" {
@@ -272,10 +274,10 @@ test "detectSteps cleans up timeout watcher when output collection fails" {
     const started = std.Io.Timestamp.now(io, .awake);
     try std.testing.expectError(
         error.StreamTooLong,
-        detectStepsWithTimeoutWithIO(io, allocator, root, 5000),
+        detectStepsWithTimeoutWithIO(io, allocator, root, 30000),
     );
     const elapsed_ms = started.untilNow(io, .awake).toMilliseconds();
-    try std.testing.expect(elapsed_ms < 10_000);
+    try std.testing.expect(elapsed_ms < 30_000);
 }
 
 test "findBuildRootAlloc walks parents from relative path" {

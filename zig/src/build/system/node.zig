@@ -3,6 +3,7 @@ const common = @import("../common.zig");
 const package_json = @import("../../project/package_json/api.zig");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 const Result = types.Result;
 const CommandEntry = types.CommandEntry;
@@ -105,7 +106,7 @@ test "detect tolerates malformed package json and keeps install command" {
     const result = try detect(allocator, filepath, root);
     defer types.freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(root, result.root.?);
+    try test_paths.expectEqualPath(root, result.root.?);
     try std.testing.expectEqualStrings("node", result.system.?);
     try std.testing.expectEqual(@as(usize, 1), result.commands.len);
     try std.testing.expectEqualStrings("install", result.commands[0].name);

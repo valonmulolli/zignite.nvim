@@ -4,6 +4,7 @@ const detected = @import("detected.zig");
 const pathing = @import("../../pathing.zig");
 const runtime_materialize = @import("../../runtime/resolve/materialize.zig");
 const types = @import("types.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 pub const ResolvedCommandExecution = struct {
     filetype: []u8,
@@ -117,7 +118,7 @@ test "resolveCommandExecution materializes selected command" {
     defer resolved.deinit(allocator);
 
     try std.testing.expectEqualStrings("zig", resolved.filetype);
-    try std.testing.expectEqualStrings(root, resolved.cwd);
+    try test_paths.expectEqualPath(root, resolved.cwd);
     try std.testing.expectEqualStrings("fetch", resolved.command_name);
     try std.testing.expectEqualStrings("zig fetch --save git+https://github.com/owner/repo", resolved.exec_command);
     try std.testing.expectEqualStrings("zig", resolved.exec_argv.items[0]);

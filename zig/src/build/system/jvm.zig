@@ -1,6 +1,7 @@
 const std = @import("std");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
+const test_paths = @import("../../test_support/paths.zig");
 
 const Result = types.Result;
 const CommandEntry = types.CommandEntry;
@@ -116,7 +117,7 @@ test "detect prefers nested JVM module inside explicit project root" {
     const result = try detect(allocator, filepath, repo_root);
     defer types.freeOwnedResult(allocator, result);
 
-    try std.testing.expectEqualStrings(service_root, result.root.?);
+    try test_paths.expectEqualPath(service_root, result.root.?);
     try std.testing.expectEqualStrings("maven", result.system.?);
 }
 
