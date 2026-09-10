@@ -3,6 +3,72 @@ const builtin = @import("builtin");
 
 const timeout_grace_ms: u64 = 100;
 
+extern "kernel32" fn CreateJobObjectW(
+    attributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
+    name: ?std.os.windows.LPCWSTR,
+) callconv(.winapi) ?std.os.windows.HANDLE;
+
+extern "kernel32" fn AssignProcessToJobObject(
+    job: std.os.windows.HANDLE,
+    process: std.os.windows.HANDLE,
+) callconv(.winapi) std.os.windows.BOOL;
+
+extern "kernel32" fn TerminateJobObject(
+    job: std.os.windows.HANDLE,
+    exit_code: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.BOOL;
+
+const ChildControl = struct {
+    job: if (builtin.os.tag == .windows) ?std.os.windows.HANDLE else void,
+
+    fn init(child_id: std.process.Child.Id) @This() {
+        if (comptime builtin.os.tag == .windows) {
+            const job = CreateJobObjectW(null, null) orelse return .{ .job = null };
+            if (!AssignProcessToJobObject(job, child_id).toBool()) {
+                std.os.windows.CloseHandle(job);
+                return .{ .job = null };
+            }
+            return .{ .job = job };
+        }
+        return .{ .job = {} };
+    }
+
+    fn deinit(self: *@This()) void {
+        if (comptime builtin.os.tag == .windows) {
+            if (self.job) |job| {
+                std.os.windows.CloseHandle(job);
+                self.job = null;
+            }
+        }
+    }
+};
+
+const SpawnedChild = struct {
+    child: std.process.Child,
+    control: ChildControl,
+
+    fn spawn(io: std.Io, options: std.process.SpawnOptions) !@This() {
+        var spawn_options = options;
+        if (comptime builtin.os.tag == .windows) {
+            spawn_options.start_suspended = true;
+        }
+
+        var child = try std.process.spawn(io, spawn_options);
+        var control = ChildControl.init(child.id.?);
+        errdefer {
+            child.kill(io);
+            control.deinit();
+        }
+
+        if (comptime builtin.os.tag == .windows) {
+            const status = std.os.windows.ntdll.NtResumeThread(child.thread_handle, null);
+            if (status != .SUCCESS) return error.Unexpected;
+        }
+
+        return .{ .child = child, .control = control };
+    }
+};
+
 const ProcessWaitResult = union(enum) {
     child: std.process.Child.WaitError!std.process.Child.Term,
     timeout: std.Io.Cancelable!void,
@@ -40,13 +106,13 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
     const is_windows = builtin.os.tag == .windows;
     const shell = if (is_windows) "cmd.exe" else "/bin/sh";
 
-    var child = if (use_argv) blk: {
+    var spawned = if (use_argv) blk: {
         const child_args = args[command_idx..];
         if (child_args.len == 0) {
             std.log.err("Error: No argv payload provided after --argv", .{});
             std.process.exit(1);
         }
-        break :blk try std.process.spawn(io, .{
+        break :blk try SpawnedChild.spawn(io, .{
             .argv = child_args,
             .pgid = childProcessGroupId(),
             .stdin = .inherit,
@@ -57,7 +123,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
         const full_command = args[command_idx];
         const shell_flag = if (is_windows) "/C" else "-c";
         const shell_args = [_][]const u8{ shell, shell_flag, full_command };
-        break :blk try std.process.spawn(io, .{
+        break :blk try SpawnedChild.spawn(io, .{
             .argv = &shell_args,
             .pgid = childProcessGroupId(),
             .stdin = .inherit,
@@ -65,13 +131,14 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
             .stderr = .inherit,
         });
     };
+    defer spawned.control.deinit();
 
-    const term = waitForChildWithTimeout(io, &child, timeout_ms) catch |err| {
+    const term = waitForChildWithTimeout(io, &spawned.child, &spawned.control, timeout_ms) catch |err| {
         // wait() failed (e.g. platform error). The child may still be alive;
         // kill it best-effort before propagating the error.
-        if (child.id) |child_id| {
-            requestChildTermination(child_id);
-            child.kill(io);
+        if (spawned.child.id) |child_id| {
+            requestChildTermination(child_id, &spawned.control);
+            spawned.child.kill(io);
         }
         return err;
     };
@@ -93,6 +160,7 @@ fn sleepFor(io: std.Io, duration_ms: u64) std.Io.Cancelable!void {
 fn waitForChildWithTimeout(
     io: std.Io,
     child: *std.process.Child,
+    control: *const ChildControl,
     timeout_ms: ?u64,
 ) !std.process.Child.Term {
     if (timeout_ms == null) return child.wait(io);
@@ -104,7 +172,7 @@ fn waitForChildWithTimeout(
 
     const child_id = child.id.?;
     const first = select.await() catch |err| {
-        requestChildForceTermination(child_id);
+        requestChildForceTermination(child_id, control);
         select.cancelDiscard();
         return err;
     };
@@ -116,7 +184,7 @@ fn waitForChildWithTimeout(
         },
         .timeout => |result| {
             _ = result catch |err| {
-                requestChildForceTermination(child_id);
+                requestChildForceTermination(child_id, control);
                 select.cancelDiscard();
                 return err;
             };
@@ -124,12 +192,12 @@ fn waitForChildWithTimeout(
         .grace => unreachable,
     }
 
-    requestChildTermination(child_id);
+    requestChildTermination(child_id, control);
     writeTimeoutMessage(io, timeout_ms.?);
 
     select.async(.grace, sleepFor, .{ io, timeout_grace_ms });
     const second = select.await() catch |err| {
-        requestChildForceTermination(child_id);
+        requestChildForceTermination(child_id, control);
         select.cancelDiscard();
         return err;
     };
@@ -141,11 +209,11 @@ fn waitForChildWithTimeout(
         },
         .grace => |result| {
             _ = result catch |err| {
-                requestChildForceTermination(child_id);
+                requestChildForceTermination(child_id, control);
                 select.cancelDiscard();
                 return err;
             };
-            requestChildForceTermination(child_id);
+            requestChildForceTermination(child_id, control);
             const final = select.await() catch |err| {
                 select.cancelDiscard();
                 return err;
@@ -219,9 +287,12 @@ test "termToExitCode treats unknown as raw status" {
     try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
 }
 
-fn requestChildForceTermination(child_id: std.process.Child.Id) void {
+fn requestChildForceTermination(child_id: std.process.Child.Id, control: *const ChildControl) void {
     switch (builtin.os.tag) {
         .windows => {
+            if (control.job) |job| {
+                if (TerminateJobObject(job, 1).toBool()) return;
+            }
             _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
         },
         .wasi => {},
@@ -233,9 +304,13 @@ fn requestChildForceTermination(child_id: std.process.Child.Id) void {
     }
 }
 
-fn requestChildTermination(child_id: std.process.Child.Id) void {
+fn requestChildTermination(child_id: std.process.Child.Id, control: *const ChildControl) void {
+    _ = control;
     switch (builtin.os.tag) {
         .windows => {
+            // Windows has no portable graceful process-tree signal. Terminate
+            // the leader during the grace window and use the Job Object for
+            // the forceful descendant cleanup if the grace period expires.
             _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
         },
         .wasi => {},
@@ -258,7 +333,7 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
     const shell_flag = if (is_windows) "/C" else "-c";
     const shell_args = [_][]const u8{ shell, shell_flag, cleanup };
 
-    var child = std.process.spawn(io, .{
+    var spawned = SpawnedChild.spawn(io, .{
         .argv = &shell_args,
         .pgid = childProcessGroupId(),
         .stdin = .ignore,
@@ -268,12 +343,13 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
         std.log.warn("Failed to spawn cleanup command: {}", .{err});
         return;
     };
+    defer spawned.control.deinit();
 
-    _ = waitForChildWithTimeout(io, &child, 30000) catch |err| {
+    _ = waitForChildWithTimeout(io, &spawned.child, &spawned.control, 30000) catch |err| {
         std.log.warn("Failed to wait for cleanup command: {}", .{err});
-        if (child.id) |child_id| {
-            requestChildTermination(child_id);
-            child.kill(io);
+        if (spawned.child.id) |child_id| {
+            requestChildTermination(child_id, &spawned.control);
+            spawned.child.kill(io);
         }
     };
 }
@@ -293,15 +369,16 @@ test "timeout termination includes descendant processes" {
     defer allocator.free(script);
     const shell_args = [_][]const u8{ "/bin/sh", "-c", script };
 
-    var child = try std.process.spawn(std.testing.io, .{
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
         .argv = &shell_args,
         .pgid = childProcessGroupId(),
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
     });
-    requestChildTermination(child.id.?);
-    _ = try child.wait(std.testing.io);
+    defer spawned.control.deinit();
+    requestChildTermination(spawned.child.id.?, &spawned.control);
+    _ = try spawned.child.wait(std.testing.io);
 
     std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(350), .awake) catch unreachable;
     if (tmp.dir.access(std.testing.io, "marker", .{})) |_| {
@@ -315,14 +392,15 @@ test "timeout coordinator force-kills processes that ignore term" {
     if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
 
     const shell_args = [_][]const u8{ "/bin/sh", "-c", "trap '' TERM; sleep 5" };
-    var child = try std.process.spawn(std.testing.io, .{
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
         .argv = &shell_args,
         .pgid = childProcessGroupId(),
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
     });
-    const term = try waitForChildWithTimeout(std.testing.io, &child, 50);
+    defer spawned.control.deinit();
+    const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
     switch (term) {
         .signal => |sig| try std.testing.expectEqual(std.posix.SIG.KILL, sig),
         else => return error.ProcessWasNotForceKilled,
