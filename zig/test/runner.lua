@@ -40,7 +40,8 @@ function M.run_tests()
 
     -- Run integration tests in a separate Lua process to avoid mock/module
     -- leakage between unit and integration suites.
-    local integration_cmd = string.format('lua "%s/zig/test/integration.lua" "%s"', project_root, project_root)
+    local lua_command = os.getenv("ZIGNITE_LUA") or "lua"
+    local integration_cmd = string.format('%s "%s/zig/test/integration.lua" "%s"', lua_command, project_root, project_root)
     local integration_ok = os.execute(integration_cmd)
     if integration_ok == true or integration_ok == 0 then
         print("✓ integration passed")
