@@ -78,14 +78,21 @@ pub fn handleDaemonFrame(
     begin_line: []const u8,
 ) !void {
     const header = parseConfigDaemonBegin(begin_line) catch |err| {
-        if (frame.parseRequestId(begin_line, CONFIG_DAEMON_REQ_BEGIN)) |request_id| {
-            _ = try frame.discardUntilEnd(allocator, reader, CONFIG_DAEMON_MAX_LINE, CONFIG_DAEMON_REQ_END, request_id);
+        const request_id = frame.parseRequestId(begin_line, CONFIG_DAEMON_REQ_BEGIN);
+        _ = try frame.discardAfterHeaderError(
+            allocator,
+            reader,
+            CONFIG_DAEMON_MAX_LINE,
+            CONFIG_DAEMON_REQ_END,
+            request_id,
+        );
+        if (request_id) |id| {
             try frame.writeErrorResponse(
                 stdout,
                 CONFIG_DAEMON_RES_BEGIN,
                 CONFIG_DAEMON_RES_ERR,
                 CONFIG_DAEMON_RES_END,
-                request_id,
+                id,
                 @errorName(err),
             );
             try stdout.flush();

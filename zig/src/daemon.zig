@@ -138,6 +138,29 @@ test "runWithIO writes config error frame for malformed header with request id" 
     );
 }
 
+test "runWithIO drains malformed header without request id" {
+    const allocator = std.testing.allocator;
+    defer @import("config/store.zig").reset();
+
+    var reader = TestReader{ .lines = &.{
+        "@@ZCFG_REQ_BEGIN nope",
+        "\tgarbage body",
+        "@@ZCFG_REQ_END 999",
+        "@@ZCFG_REQ_BEGIN 4 12",
+        "\t{}",
+        "@@ZCFG_REQ_END 4",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expectEqualStrings(
+        "@@ZCFG_RES_BEGIN 4\n\tREVISION\t12\n@@ZCFG_RES_END 4\n",
+        out.written(),
+    );
+}
+
 test "runWithIO syncs config and resolves build commands through daemon" {
     const allocator = std.testing.allocator;
     defer @import("config/store.zig").reset();

@@ -86,6 +86,15 @@ pub fn isFrameEndLine(line: []const u8, marker_name: []const u8, request_id: u64
     return parsed == request_id;
 }
 
+pub fn isFrameEndMarker(line: []const u8, marker_name: []const u8) bool {
+    var it = std.mem.tokenizeScalar(u8, line, ' ');
+    const marker = it.next() orelse return false;
+    if (!std.mem.eql(u8, marker, marker_name)) return false;
+    const raw_id = it.next() orelse return false;
+    _ = std.fmt.parseInt(u64, raw_id, 10) catch return false;
+    return it.next() == null;
+}
+
 pub fn parseRequestId(line: []const u8, begin_marker: []const u8) ?u64 {
     var it = std.mem.tokenizeScalar(u8, line, ' ');
     const marker = it.next() orelse return null;
@@ -204,8 +213,15 @@ pub fn BuildDaemonFrameHandler(comptime ctx: anytype) type {
             const headers_match = std.mem.startsWith(u8, begin_line, ctx.req_begin);
             const request_id: u64 = ctx.parseHeader(begin_line, ctx.req_begin) catch |err| {
                 if (headers_match) {
-                    if (parseRequestId(begin_line, ctx.req_begin)) |id| {
-                        _ = try discardUntilEnd(allocator, reader, ctx.max_line, ctx.req_end, id);
+                    const request_id = parseRequestId(begin_line, ctx.req_begin);
+                    _ = try discardAfterHeaderError(
+                        allocator,
+                        reader,
+                        ctx.max_line,
+                        ctx.req_end,
+                        request_id,
+                    );
+                    if (request_id) |id| {
                         try writeErrorResponse(stdout, ctx.res_begin, ctx.res_err, ctx.res_end, id, @errorName(err));
                         try stdout.flush();
                     }
@@ -399,6 +415,40 @@ pub fn discardUntilEnd(
     return skipUntilEnd(allocator, reader, max_line, end_marker, request_id);
 }
 
+/// Drains a malformed frame when its request id cannot be parsed. The end
+/// marker still carries a validated numeric id, so this keeps the stream
+/// aligned without inventing an id for the error response.
+pub fn discardUntilEndMarker(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    max_line: usize,
+    end_marker: []const u8,
+) !bool {
+    while (true) {
+        const maybe_line = readLineAlloc(allocator, reader, max_line) catch |err| {
+            if (err == error.StreamTooLong and comptime readerSupportsMethod(@TypeOf(reader), "discardDelimiterInclusive")) {
+                continue;
+            }
+            return err;
+        };
+        if (maybe_line == null) return false;
+        const line_owned = maybe_line.?;
+        defer allocator.free(line_owned);
+        if (isFrameEndMarker(stripTrailingCR(line_owned), end_marker)) return true;
+    }
+}
+
+pub fn discardAfterHeaderError(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    max_line: usize,
+    end_marker: []const u8,
+    request_id: ?u64,
+) !bool {
+    if (request_id) |id| return discardUntilEnd(allocator, reader, max_line, end_marker, id);
+    return discardUntilEndMarker(allocator, reader, max_line, end_marker);
+}
+
 pub const TestReader = struct {
     lines: []const []const u8 = &.{},
     index: usize = 0,
@@ -427,6 +477,12 @@ test "isFrameEndLine validates marker and request id" {
     try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 18", "@@ZPRJ_REQ_END", 19));
     try std.testing.expect(!isFrameEndLine("@@ZDET_REQ_END 19", "@@ZPRJ_REQ_END", 19));
     try std.testing.expect(!isFrameEndLine("@@ZPRJ_REQ_END 19 extra", "@@ZPRJ_REQ_END", 19));
+}
+
+test "isFrameEndMarker validates any numeric request id" {
+    try std.testing.expect(isFrameEndMarker("@@ZPRJ_REQ_END 19", "@@ZPRJ_REQ_END"));
+    try std.testing.expect(!isFrameEndMarker("@@ZPRJ_REQ_END nope", "@@ZPRJ_REQ_END"));
+    try std.testing.expect(!isFrameEndMarker("@@ZPRJ_REQ_END 19 extra", "@@ZPRJ_REQ_END"));
 }
 
 test "parseRequestId extracts request id from begin frame" {
@@ -592,6 +648,25 @@ test "skipUntilEnd returns false on eof before matching end" {
     );
 
     try std.testing.expect(!completed);
+    try std.testing.expectEqual(@as(usize, 2), reader.index);
+}
+
+test "discardUntilEndMarker drains a frame without a parseable request id" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "payload",
+        "@@ZPRJ_REQ_END 19",
+        "next-request",
+    } };
+
+    const completed = try discardUntilEndMarker(
+        allocator,
+        &reader,
+        64,
+        "@@ZPRJ_REQ_END",
+    );
+
+    try std.testing.expect(completed);
     try std.testing.expectEqual(@as(usize, 2), reader.index);
 }
 

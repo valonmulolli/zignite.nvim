@@ -115,14 +115,21 @@ pub fn handleDaemonFrame(
     begin_line: []const u8,
 ) !void {
     const header = protocol.parseResolveDaemonBegin(begin_line) catch |err| {
-        if (frame.parseRequestId(begin_line, RUN_RESOLVE_REQ_BEGIN)) |request_id| {
-            _ = try frame.discardUntilEnd(allocator, reader, protocol.RUN_RESOLVE_MAX_LINE, protocol.RUN_RESOLVE_REQ_END, request_id);
+        const request_id = frame.parseRequestId(begin_line, RUN_RESOLVE_REQ_BEGIN);
+        _ = try frame.discardAfterHeaderError(
+            allocator,
+            reader,
+            protocol.RUN_RESOLVE_MAX_LINE,
+            protocol.RUN_RESOLVE_REQ_END,
+            request_id,
+        );
+        if (request_id) |id| {
             try frame.writeErrorResponse(
                 stdout,
                 RUN_RESOLVE_RES_BEGIN,
                 RUN_RESOLVE_RES_ERR,
                 RUN_RESOLVE_RES_END,
-                request_id,
+                id,
                 @errorName(err),
             );
             try stdout.flush();
