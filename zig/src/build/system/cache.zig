@@ -17,15 +17,6 @@ const Result = types.Result;
 const page_allocator = std.heap.page_allocator;
 const max_cache_entries = 256;
 
-/// Negative results (no project markers found) are cached with a
-/// detection-count-based refresh interval. Within this window of
-/// `detectWithIO` calls, repeated lookups return the cached empty result
-/// without walking the filesystem. After the window, the cache is
-/// invalidated and a fresh detection runs automatically.
-const NEGATIVE_CACHE_REFRESH_INTERVAL = 50;
-
-var detection_count: u64 = 0;
-
 const CacheEntry = struct {
     signature: []u8,
     result: Result,
@@ -57,7 +48,6 @@ pub fn detectWithIO(
     path: []const u8,
     project_root: ?[]const u8,
 ) !Result {
-    detection_count +%= 1;
     ensureCacheInit();
 
     const cache_key = try std.fmt.allocPrint(allocator, "{s}\x1f{s}\x1f{s}", .{
@@ -68,7 +58,7 @@ pub fn detectWithIO(
     defer allocator.free(cache_key);
 
     if (cache_map.getPtr(cache_key)) |entry| {
-        const current_signature = try buildSignatureAlloc(io, allocator, query, entry.result);
+        const current_signature = try buildSignatureAlloc(io, allocator, query, path, project_root, entry.result);
         defer if (current_signature) |current_sig| allocator.free(current_sig);
 
         if (current_signature) |current_sig| {
@@ -81,7 +71,7 @@ pub fn detectWithIO(
     const fresh = try detectUncachedWithIO(io, allocator, query, path, project_root);
     errdefer types.freeOwnedResult(allocator, fresh);
 
-    if (try buildSignatureAlloc(io, allocator, query, fresh)) |fresh_signature| {
+    if (try buildSignatureAlloc(io, allocator, query, path, project_root, fresh)) |fresh_signature| {
         defer allocator.free(fresh_signature);
         try storeFreshResult(cache_key, fresh_signature, fresh);
     }
@@ -177,27 +167,41 @@ fn cloneResult(allocator: std.mem.Allocator, result: Result) !Result {
     return cloned;
 }
 
-/// Returns a counter-based signature for negative (no-system) results.
-/// The signature advances every NEGATIVE_CACHE_REFRESH_INTERVAL calls
-/// to detectWithIO across all queries, causing an automatic cache miss
-/// that triggers a fresh detection.
-fn negativeSignatureAlloc(allocator: std.mem.Allocator) !?[]u8 {
-    const slot = detection_count / NEGATIVE_CACHE_REFRESH_INTERVAL;
-    const sig = try std.fmt.allocPrint(allocator, "negative_{d}", .{slot});
-    return @as(?[]u8, sig);
+fn negativeMarkersForQuery(query: Query) []const []const u8 {
+    return switch (query) {
+        .c_family => &.{
+            "MODULE.bazel",
+            "WORKSPACE.bazel",
+            "WORKSPACE",
+            "meson.build",
+            "CMakeLists.txt",
+            "Makefile",
+            "makefile",
+            "GNUmakefile",
+        },
+        .bazel_root => bazel_markers,
+        .jvm_root => jvm_markers,
+        .node_root => node_markers,
+        .python_root => python_markers,
+    };
 }
 
 fn buildSignatureAlloc(
     io: std.Io,
     allocator: std.mem.Allocator,
     query: Query,
+    path: []const u8,
+    project_root: ?[]const u8,
     result: Result,
 ) !?[]u8 {
-    const root = result.root orelse return try negativeSignatureAlloc(allocator);
+    // Check candidate marker metadata for negative results too. This avoids
+    // stale detection after a project file is created without repeating the
+    // full ancestor walk on every request.
+    if (result.system == null) {
+        return try negativeSignatureAlloc(io, allocator, query, path, project_root);
+    }
 
-    // c_family may return a non-null root with a null system when no
-    // project markers are found. Cache this negative result too.
-    if (result.system == null) return try negativeSignatureAlloc(allocator);
+    const root = result.root orelse return null;
 
     return switch (query) {
         .c_family => blk: {
@@ -221,6 +225,56 @@ fn buildSignatureAlloc(
         .node_root => try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, node_markers),
         .python_root => try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, python_markers),
     };
+}
+
+fn negativeSignatureAlloc(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    query: Query,
+    path: []const u8,
+    project_root: ?[]const u8,
+) ![]u8 {
+    var signature: std.ArrayList(u8) = .empty;
+    errdefer signature.deinit(allocator);
+
+    var current = try project_common.normalizePathAlloc(allocator, std.fs.path.dirname(path) orelse ".");
+    defer allocator.free(current);
+
+    var boundary: ?[]u8 = null;
+    defer if (boundary) |root| allocator.free(root);
+    if (project_root) |root| {
+        if (root.len > 0) boundary = try project_common.normalizePathAlloc(allocator, root);
+    }
+
+    var steps: usize = 0;
+    while (steps < 12) : (steps += 1) {
+        if (steps > 0) try signature.append(allocator, '|');
+        try signature.appendSlice(allocator, current);
+        try signature.append(allocator, ':');
+
+        {
+            const marker_signature = try build_signature.buildMarkerSignatureAllocWithIO(
+                io,
+                allocator,
+                current,
+                negativeMarkersForQuery(query),
+            );
+            defer allocator.free(marker_signature);
+            try signature.appendSlice(allocator, marker_signature);
+        }
+
+        if (boundary) |root| {
+            if (std.mem.eql(u8, current, root)) break;
+        }
+
+        const parent = std.fs.path.dirname(current) orelse break;
+        if (std.mem.eql(u8, parent, current)) break;
+        const next = try allocator.dupe(u8, parent);
+        allocator.free(current);
+        current = next;
+    }
+
+    return try signature.toOwnedSlice(allocator);
 }
 
 fn buildMakeSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !?[]u8 {
@@ -296,7 +350,7 @@ fn buildMesonSignatureAlloc(io: std.Io, allocator: std.mem.Allocator, root: []co
     return try signature.toOwnedSlice(allocator);
 }
 
-test "negative detection result is cached within TTL window" {
+test "negative detection result refreshes when a marker appears" {
     const allocator = std.testing.allocator;
     resetForTests();
 
@@ -321,23 +375,12 @@ test "negative detection result is cached within TTL window" {
     // Create a marker file within the refresh interval
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty_project/Makefile", .data = "run:\n\t@echo run\n" });
 
-    // Second detection: should return the STALE cached negative result
-    // because the refresh interval has not elapsed. This is a known
-    // trade-off: newly created project markers are detected only after
-    // the next cache refresh.
+    // The marker signature changes immediately, so the cached negative
+    // result must be invalidated without waiting for another request.
     const second = try detect(allocator, .c_family, filepath, root);
     defer types.freeOwnedResult(allocator, second);
     try std.testing.expect(second.root != null);
-    try std.testing.expect(second.system == null);
-    try std.testing.expectEqual(@as(usize, 0), second.commands.len);
-
-    // After resetting the cache, re-detection MUST find the marker
-    resetForTests();
-    const third = try detect(allocator, .c_family, filepath, root);
-    defer types.freeOwnedResult(allocator, third);
-    try std.testing.expect(third.root != null);
-    try std.testing.expect(third.system != null);
-    try std.testing.expectEqualStrings("make", third.system.?);
+    try std.testing.expectEqualStrings("make", second.system.?);
 }
 
 test "cached system detection refreshes when the marker signature changes" {
@@ -435,5 +478,4 @@ fn resetCache() void {
     cache_map.deinit();
     cache_map = std.StringHashMap(CacheEntry).init(page_allocator);
     cache_initialized = true;
-    detection_count = 0;
 }
