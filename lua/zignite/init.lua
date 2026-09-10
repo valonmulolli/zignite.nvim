@@ -12,7 +12,7 @@ local ERRORS = {
 	VISUAL_EMPTY = "Error: Visual selection is empty.",
 }
 
-local table_unpack = table.unpack
+local table_unpack = rawget(table, "unpack") or rawget(_G, "unpack")
 
 ---@param requested_filetype string|nil
 ---@return string, string
