@@ -6,6 +6,32 @@ local shared_workers = {}
 ---@type table<string, integer>
 local worker_generations = {}
 
+---@return boolean
+local function is_windows()
+	if vim.fn and type(vim.fn.has) == "function" then
+		return vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+	end
+	return type(package.config) == "string" and package.config:sub(1, 1) == "\\"
+end
+
+---@param left string
+---@param right string
+---@return string
+local function join_path(left, right)
+	if vim.fs and type(vim.fs.joinpath) == "function" then
+		return vim.fs.joinpath(left, right)
+	end
+	return left:gsub("[/\\]+$", "") .. "/" .. right:gsub("^[/\\]+", "")
+end
+
+---@param path string
+---@return boolean
+local function is_absolute_path(path)
+	return path:sub(1, 1) == "/"
+		or path:sub(1, 2) == "\\\\"
+		or path:match("^%a:[/\\]") ~= nil
+end
+
 ---@return string
 local function get_plugin_path()
 	local function path_exists(path)
@@ -23,11 +49,11 @@ local function get_plugin_path()
 		if type(vim.fs) == "table" and type(vim.fs.dirname) == "function" then
 			return vim.fs.dirname(path)
 		end
-		return (path:gsub("/[^/]+$", ""))
+		return path:match("^(.*)[/\\][^/\\]*$") or "."
 	end
 
 	local function has_plugin_markers(path)
-		return path_exists(path .. "/plugin/zignite.lua") and path_exists(path .. "/lua/zignite/init.lua")
+		return path_exists(join_path(path, "plugin/zignite.lua")) and path_exists(join_path(path, "lua/zignite/init.lua"))
 	end
 
 	local source = debug.getinfo(1, "S").source
@@ -36,18 +62,16 @@ local function get_plugin_path()
 	end
 
 	local normalize = vim.fs and vim.fs.normalize
-	if source:sub(1, 1) ~= "/" then
+	if not is_absolute_path(source) then
 		local cwd
 		if vim.uv and type(vim.uv.cwd) == "function" then
-			cwd = vim.uv.cwd()
-		elseif vim.uv and type(vim.uv.cwd) == "function" then
 			cwd = vim.uv.cwd()
 		elseif vim.fn and type(vim.fn.getcwd) == "function" then
 			cwd = vim.fn.getcwd()
 		else
 			cwd = os.getenv("PWD") or "."
 		end
-		source = cwd .. "/" .. source
+		source = join_path(cwd, source)
 	end
 	if normalize then
 		source = normalize(source)
@@ -74,7 +98,11 @@ local function get_plugin_path()
 	return source
 end
 
-M.ZIG_EXECUTABLE = get_plugin_path() .. "/zig/zig-out/bin/zignite"
+M.IS_WINDOWS = is_windows()
+M.ZIG_EXECUTABLE = join_path(
+	join_path(join_path(join_path(get_plugin_path(), "zig"), "zig-out"), "bin"),
+	"zignite" .. (M.IS_WINDOWS and ".exe" or "")
+)
 M.MARKER_HEALTH = "@@ZHLT_"
 
 ---@param executable string
