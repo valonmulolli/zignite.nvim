@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const shared = @import("shared.zig");
 const types = @import("types.zig");
 const test_paths = @import("../../test_support/paths.zig");
@@ -6,8 +7,14 @@ const test_paths = @import("../../test_support/paths.zig");
 const Result = types.Result;
 const CommandEntry = types.CommandEntry;
 pub const maven_markers = &.{"pom.xml"};
-pub const gradle_markers = &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" };
-pub const markers = &.{ "pom.xml", "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" };
+pub const gradle_markers = if (builtin.os.tag == .windows)
+    &.{ "gradlew.bat", "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" }
+else
+    &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" };
+pub const markers = if (builtin.os.tag == .windows)
+    &.{ "pom.xml", "gradlew.bat", "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" }
+else
+    &.{ "pom.xml", "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" };
 
 pub fn detect(
     allocator: std.mem.Allocator,
@@ -151,7 +158,17 @@ fn buildGradleCommandsAllocWithIO(io: std.Io, allocator: std.mem.Allocator, root
 
     const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
     defer allocator.free(wrapper_path);
-    const prefix: []const u8 = if (shared.pathIsFileWithIO(io, wrapper_path)) "./gradlew" else "gradle";
+    const windows_wrapper_path: ?[]u8 = if (comptime builtin.os.tag == .windows)
+        try std.fs.path.join(allocator, &.{ root, "gradlew.bat" })
+    else
+        null;
+    defer if (windows_wrapper_path) |path| allocator.free(path);
+    const prefix: []const u8 = if (windows_wrapper_path) |path|
+        if (shared.pathIsFileWithIO(io, path)) "gradlew.bat" else if (shared.pathIsFileWithIO(io, wrapper_path)) "./gradlew" else "gradle"
+    else if (shared.pathIsFileWithIO(io, wrapper_path))
+        "./gradlew"
+    else
+        "gradle";
 
     try shared.appendOwnedCommandWithAliases(&commands, allocator, "gradle-build", try std.fmt.allocPrint(allocator, "{s} build", .{prefix}), &.{"build"});
     try shared.appendOwnedCommandWithAliases(&commands, allocator, "gradle-test", try std.fmt.allocPrint(allocator, "{s} test", .{prefix}), &.{"test"});

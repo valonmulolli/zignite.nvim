@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const project_common = @import("../project/core/common.zig");
 
 pub fn readFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -279,6 +280,10 @@ fn buildDiscoveredRunSuffixAlloc(
         return project_common.quoteShellArgIfNeededAlloc(allocator, value);
     }
 
+    if (comptime builtin.os.tag == .windows) {
+        return buildWindowsDiscoveredRunSuffixAlloc(allocator, build_dir, target);
+    }
+
     const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
     defer allocator.free(target_exe);
 
@@ -351,6 +356,61 @@ fn buildDiscoveredRunSuffixAlloc(
             quoted_default_path,
         },
     );
+}
+
+fn buildWindowsDiscoveredRunSuffixAlloc(
+    allocator: std.mem.Allocator,
+    build_dir: []const u8,
+    target: []const u8,
+) ![]u8 {
+    const target_exe = try std.fmt.allocPrint(allocator, "{s}.exe", .{target});
+    defer allocator.free(target_exe);
+
+    var candidate_paths: std.ArrayList([]u8) = .empty;
+    defer {
+        for (candidate_paths.items) |candidate| allocator.free(candidate);
+        candidate_paths.deinit(allocator);
+    }
+
+    const subdirs = [_][]const u8{
+        "",
+        "bin\\",
+        "Debug\\",
+        "Release\\",
+        "RelWithDebInfo\\",
+        "MinSizeRel\\",
+        "bin\\Debug\\",
+        "bin\\Release\\",
+        "bin\\RelWithDebInfo\\",
+        "bin\\MinSizeRel\\",
+    };
+    for (subdirs) |subdir| {
+        const target_candidate = try std.fmt.allocPrint(allocator, ".\\{s}\\{s}{s}", .{ build_dir, subdir, target });
+        candidate_paths.append(allocator, target_candidate) catch |err| {
+            allocator.free(target_candidate);
+            return err;
+        };
+
+        const executable_candidate = try std.fmt.allocPrint(allocator, ".\\{s}\\{s}{s}", .{ build_dir, subdir, target_exe });
+        candidate_paths.append(allocator, executable_candidate) catch |err| {
+            allocator.free(executable_candidate);
+            return err;
+        };
+    }
+
+    var command: std.ArrayList(u8) = .empty;
+    errdefer command.deinit(allocator);
+    for (candidate_paths.items, 0..) |candidate, index| {
+        const quoted_candidate = try project_common.quoteShellArgAlloc(allocator, candidate);
+        defer allocator.free(quoted_candidate);
+        if (index > 0) try command.appendSlice(allocator, " else ");
+        try command.print(allocator, "if exist {s} {s}", .{ quoted_candidate, quoted_candidate });
+    }
+
+    const fallback = try project_common.quoteShellArgAlloc(allocator, candidate_paths.items[1]);
+    defer allocator.free(fallback);
+    try command.print(allocator, " else {s}", .{fallback});
+    return command.toOwnedSlice(allocator);
 }
 
 const BuildDirMode = enum {
@@ -598,8 +658,13 @@ test "buildDiscoveredRunSuffix fallback searches discovered build directory" {
     const command = try buildDiscoveredRunSuffixAlloc(allocator, "build debug", "demo app", null);
     defer allocator.free(command);
 
-    try std.testing.expect(std.mem.find(u8, command, "find 'build debug' -type f") != null);
-    try std.testing.expect(std.mem.find(u8, command, "-name 'demo app'") != null);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expect(std.mem.find(u8, command, "if exist \".\\build debug\\demo app.exe\"") != null);
+        try std.testing.expect(std.mem.find(u8, command, "find ") == null);
+    } else {
+        try std.testing.expect(std.mem.find(u8, command, "find 'build debug' -type f") != null);
+        try std.testing.expect(std.mem.find(u8, command, "-name 'demo app'") != null);
+    }
 }
 
 test "buildDiscoveredRunSuffix quotes a metadata artifact path" {

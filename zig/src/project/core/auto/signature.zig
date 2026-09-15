@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_common = @import("../../../build/common.zig");
 const build_signature = @import("../../../build/signature.zig");
 const cmake_parse = @import("../../cmake/parse.zig");
@@ -20,11 +21,15 @@ pub fn buildJVMAutoSignatureAllocWithIO(io: std.Io, allocator: std.mem.Allocator
         return try build_signature.buildMarkerSignatureAllocWithIO(io, allocator, root, &.{"pom.xml"});
     }
     if (std.mem.eql(u8, system, "gradle")) {
+        const markers = if (comptime builtin.os.tag == .windows)
+            &.{ "gradlew.bat", "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" }
+        else
+            &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" };
         return try build_signature.buildMarkerSignatureAllocWithIO(
             io,
             allocator,
             root,
-            &.{ "gradlew", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle" },
+            markers,
         );
     }
 

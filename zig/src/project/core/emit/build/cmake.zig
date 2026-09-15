@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_common = @import("../../../../build/common.zig");
 const cmake = @import("../../../cmake/api.zig");
 const pathing = @import("../../../../pathing.zig");
@@ -23,6 +24,8 @@ pub fn writeCmakeOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Al
     defer allocator.free(cmake_config_command);
     const cmake_clean_command = if (build_common.hasCmakeBuildTreeWithIO(io, root))
         try std.fmt.allocPrint(allocator, "cmake --build {s} --target clean", .{shell_build_dir})
+    else if (comptime builtin.os.tag == .windows)
+        try std.fmt.allocPrint(allocator, "if exist {s} rmdir /S /Q {s}", .{ shell_build_dir, shell_build_dir })
     else
         try std.fmt.allocPrint(allocator, "python -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- {s}", .{shell_build_dir});
     defer allocator.free(cmake_clean_command);
