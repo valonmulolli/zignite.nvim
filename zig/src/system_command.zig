@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config_view = @import("config/view.zig");
 const config_store = @import("config/store.zig");
 
@@ -27,7 +28,7 @@ pub fn buildSystemArgvWithIO(
     errdefer deinitOwnedArgv(allocator, &system_argv);
 
     const timeout_ms = config_view.executionTimeoutMs();
-    if (timeout_ms == null and cleanup_command == null and argv.len > 0) {
+    if (builtin.os.tag != .windows and timeout_ms == null and cleanup_command == null and argv.len > 0) {
         try system_argv.ensureTotalCapacity(allocator, argv.len);
         for (argv) |arg| {
             system_argv.appendAssumeCapacity(try allocator.dupe(u8, arg));
@@ -55,7 +56,7 @@ pub fn buildSystemArgvWithIO(
     if (cleanup_command) |cleanup| {
         system_argv.appendAssumeCapacity(try std.fmt.allocPrint(allocator, "--cleanup={s}", .{cleanup}));
     }
-    if (argv.len > 0) {
+    if (argv.len > 0 and builtin.os.tag != .windows) {
         system_argv.appendAssumeCapacity(try allocator.dupe(u8, "--argv"));
         for (argv) |arg| {
             system_argv.appendAssumeCapacity(try allocator.dupe(u8, arg));
@@ -85,10 +86,15 @@ test "buildSystemArgv returns direct argv when no timeout is configured" {
     var system_argv = try buildSystemArgv(allocator, "zig build run", &.{ "zig", "build", "run" }, null);
     defer deinitOwnedArgv(allocator, &system_argv);
 
-    try std.testing.expectEqual(@as(usize, 3), system_argv.items.len);
-    try std.testing.expectEqualStrings("zig", system_argv.items[0]);
-    try std.testing.expectEqualStrings("build", system_argv.items[1]);
-    try std.testing.expectEqualStrings("run", system_argv.items[2]);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(usize, 2), system_argv.items.len);
+        try std.testing.expectEqualStrings("zig build run", system_argv.items[1]);
+    } else {
+        try std.testing.expectEqual(@as(usize, 3), system_argv.items.len);
+        try std.testing.expectEqualStrings("zig", system_argv.items[0]);
+        try std.testing.expectEqualStrings("build", system_argv.items[1]);
+        try std.testing.expectEqualStrings("run", system_argv.items[2]);
+    }
 }
 
 test "buildSystemArgv wraps argv payload when timeout is configured" {
@@ -101,12 +107,17 @@ test "buildSystemArgv wraps argv payload when timeout is configured" {
     var system_argv = try buildSystemArgv(allocator, "zig build run", &.{ "zig", "build", "run" }, null);
     defer deinitOwnedArgv(allocator, &system_argv);
 
-    try std.testing.expect(system_argv.items.len >= 6);
     try std.testing.expectEqualStrings("--timeout=1500", system_argv.items[1]);
-    try std.testing.expectEqualStrings("--argv", system_argv.items[2]);
-    try std.testing.expectEqualStrings("zig", system_argv.items[3]);
-    try std.testing.expectEqualStrings("build", system_argv.items[4]);
-    try std.testing.expectEqualStrings("run", system_argv.items[5]);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(usize, 3), system_argv.items.len);
+        try std.testing.expectEqualStrings("zig build run", system_argv.items[2]);
+    } else {
+        try std.testing.expect(system_argv.items.len >= 6);
+        try std.testing.expectEqualStrings("--argv", system_argv.items[2]);
+        try std.testing.expectEqualStrings("zig", system_argv.items[3]);
+        try std.testing.expectEqualStrings("build", system_argv.items[4]);
+        try std.testing.expectEqualStrings("run", system_argv.items[5]);
+    }
 }
 
 test "buildSystemArgv includes synced timeout" {
@@ -136,9 +147,27 @@ test "buildSystemArgv wraps argv payload when cleanup is configured" {
     );
     defer deinitOwnedArgv(allocator, &system_argv);
 
-    try std.testing.expect(system_argv.items.len >= 5);
     try std.testing.expectEqualStrings("--cleanup=rm -f Demo.class", system_argv.items[1]);
-    try std.testing.expectEqualStrings("--argv", system_argv.items[2]);
-    try std.testing.expectEqualStrings("javac", system_argv.items[3]);
-    try std.testing.expectEqualStrings("Demo.java", system_argv.items[4]);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(usize, 3), system_argv.items.len);
+        try std.testing.expectEqualStrings("javac Demo.java && java Demo", system_argv.items[2]);
+    } else {
+        try std.testing.expect(system_argv.items.len >= 5);
+        try std.testing.expectEqualStrings("--argv", system_argv.items[2]);
+        try std.testing.expectEqualStrings("javac", system_argv.items[3]);
+        try std.testing.expectEqualStrings("Demo.java", system_argv.items[4]);
+    }
+}
+
+test "buildSystemArgv uses cmd shell mode for Windows commands" {
+    if (comptime builtin.os.tag != .windows) return;
+
+    const allocator = std.testing.allocator;
+    defer config_store.reset();
+
+    var system_argv = try buildSystemArgv(allocator, "npm run build", &.{ "npm", "run", "build" }, null);
+    defer deinitOwnedArgv(allocator, &system_argv);
+
+    try std.testing.expectEqual(@as(usize, 2), system_argv.items.len);
+    try std.testing.expectEqualStrings("npm run build", system_argv.items[1]);
 }
