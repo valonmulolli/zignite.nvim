@@ -15,10 +15,11 @@ function M.check()
 	do
 		local is_linux = vim.fn.has("linux") == 1
 		local is_macos = vim.fn.has("mac") == 1 or vim.fn.has("macunix") == 1
-		if is_linux or is_macos then
-			vim.health.ok(("Platform: %s"):format(is_linux and "Linux" or "macOS"))
+		local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+		if is_linux or is_macos or is_windows then
+			vim.health.ok(("Platform: %s"):format(is_linux and "Linux" or is_macos and "macOS" or "Windows"))
 		else
-			vim.health.warn("Windows is not officially supported")
+			vim.health.warn("This platform is not officially supported")
 		end
 	end
 

@@ -41,7 +41,7 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 - **Interactive Command Picker**: Choose between `run`, `test`, `build`, `clean`, and detected project commands.
 - **Project Detection**: Detects project roots so project-aware commands run from the correct working directory.
 - **Smart Language Detection**: Uses Neovim filetype first, then falls back to file extension/shebang for mixed-language folders.
-- **Platform**: Linux and macOS only.
+- **Platform**: Linux, macOS, and Windows.
 
 ## Requirements
 
