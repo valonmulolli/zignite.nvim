@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const pathing = @import("../../pathing.zig");
 const types = @import("types.zig");
 
@@ -85,7 +86,9 @@ fn substituteVariablesImpl(
     var quote: ?u8 = null;
     var index: usize = 0;
     while (index < template.len) {
-        if (shell_escape and template[index] == '\\' and index + 1 < template.len and quote != '\'') {
+        if (shell_escape and template[index] == '\\' and index + 1 < template.len and quote != '\'' and
+            (builtin.os.tag != .windows or template[index + 1] == '$'))
+        {
             try out.appendSlice(allocator, template[index .. index + 2]);
             index += 2;
             continue;
@@ -153,6 +156,10 @@ fn appendResolvedVariable(
     value: []const u8,
     quote: ?u8,
 ) !void {
+    if (comptime builtin.os.tag == .windows) {
+        return appendWindowsResolvedVariable(allocator, out, value, quote);
+    }
+
     if (quote == null) {
         try out.append(allocator, '\'');
         for (value) |ch| {
@@ -183,6 +190,26 @@ fn appendResolvedVariable(
         }
         try out.append(allocator, ch);
     }
+}
+
+fn appendWindowsResolvedVariable(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    value: []const u8,
+    quote: ?u8,
+) !void {
+    if (quote == '"') {
+        for (value) |ch| {
+            if (ch == '"') try out.appendSlice(allocator, "^\"") else if (ch == '\\') try out.append(allocator, '/') else try out.append(allocator, ch);
+        }
+        return;
+    }
+
+    try out.append(allocator, '"');
+    for (value) |ch| {
+        if (ch == '"') try out.appendSlice(allocator, "^\"") else if (ch == '\\') try out.append(allocator, '/') else try out.append(allocator, ch);
+    }
+    try out.append(allocator, '"');
 }
 
 fn hasUnsupportedShellSyntax(command: []const u8) bool {
@@ -216,11 +243,12 @@ fn hasUnsupportedShellSyntax(command: []const u8) bool {
                 return true;
             } else if (ch == '$' and index + 1 < command.len and command[index + 1] == '(') {
                 return true;
-            } else if (ch == '\\' and index + 1 < command.len) {
+            } else if (ch == '\\' and builtin.os.tag != .windows and index + 1 < command.len) {
                 index += 1;
                 word_start = false;
             } else if (ch == '\\') {
-                return true;
+                if (builtin.os.tag != .windows) return true;
+                word_start = false;
             } else {
                 word_start = false;
             }
@@ -238,7 +266,9 @@ fn hasUnresolvedPlaceholders(command: []const u8) bool {
         if (quote) |current_quote| {
             if (ch == current_quote) {
                 quote = null;
-            } else if (ch == '\\' and current_quote == '"' and index + 1 < command.len) {
+            } else if (ch == '\\' and index + 1 < command.len and command[index + 1] == '$') {
+                index += 1;
+            } else if (ch == '\\' and builtin.os.tag != .windows and current_quote == '"' and index + 1 < command.len) {
                 index += 1;
             } else if (current_quote == '"' and ch == '$' and index + 1 < command.len) {
                 const next = command[index + 1];
@@ -247,7 +277,9 @@ fn hasUnresolvedPlaceholders(command: []const u8) bool {
         } else {
             if (ch == '\'' or ch == '"') {
                 quote = ch;
-            } else if (ch == '\\' and index + 1 < command.len) {
+            } else if (ch == '\\' and index + 1 < command.len and command[index + 1] == '$') {
+                index += 1;
+            } else if (ch == '\\' and builtin.os.tag != .windows and index + 1 < command.len) {
                 index += 1;
             } else if (ch == '$' and index + 1 < command.len) {
                 const next = command[index + 1];
@@ -279,7 +311,10 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
         if (quote) |current_quote| {
             if (ch == current_quote) {
                 quote = null;
-            } else if (ch == '\\' and current_quote == '"' and index + 1 < command.len) {
+            } else if (ch == '\\' and index + 1 < command.len and command[index + 1] == '$') {
+                index += 1;
+                try current.append(allocator, '$');
+            } else if (ch == '\\' and current_quote == '"' and builtin.os.tag != .windows and index + 1 < command.len) {
                 index += 1;
                 try current.append(allocator, command[index]);
             } else {
@@ -294,9 +329,16 @@ pub fn tokenizeCommand(allocator: std.mem.Allocator, command: []const u8) !std.A
                     try appendCurrentToken(allocator, &tokens, &current);
                     token_started = false;
                 }
-            } else if (ch == '\\' and index + 1 < command.len) {
+            } else if (ch == '\\' and index + 1 < command.len and command[index + 1] == '$') {
+                index += 1;
+                try current.append(allocator, '$');
+                token_started = true;
+            } else if (ch == '\\' and builtin.os.tag != .windows and index + 1 < command.len) {
                 index += 1;
                 try current.append(allocator, command[index]);
+                token_started = true;
+            } else if (ch == '\\' and builtin.os.tag == .windows) {
+                try current.append(allocator, ch);
                 token_started = true;
             } else {
                 try current.append(allocator, ch);
@@ -355,7 +397,11 @@ test "materializeRunner uses dot cwd for bare relative project path" {
     defer runner.deinit(allocator);
 
     try std.testing.expectEqualStrings(".", runner.cwd.?);
-    try std.testing.expectEqualStrings("python3 -u 'main.py'", runner.command.?);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("python3 -u \"main.py\"", runner.command.?);
+    } else {
+        try std.testing.expectEqualStrings("python3 -u 'main.py'", runner.command.?);
+    }
     try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
     try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
     try std.testing.expectEqualStrings("main.py", runner.argv.items[2]);
@@ -373,7 +419,11 @@ test "materializeRunner keeps file paths with spaces as one argv argument" {
     try materializeRunner(allocator, &runner, "/tmp/example dir/main.py");
     defer runner.deinit(allocator);
 
-    try std.testing.expectEqualStrings("python3 -u '/tmp/example dir/main.py'", runner.command.?);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("python3 -u \"/tmp/example dir/main.py\"", runner.command.?);
+    } else {
+        try std.testing.expectEqualStrings("python3 -u '/tmp/example dir/main.py'", runner.command.?);
+    }
     try std.testing.expectEqual(@as(usize, 3), runner.argv.items.len);
     try std.testing.expectEqualStrings("python3", runner.argv.items[0]);
     try std.testing.expectEqualStrings("-u", runner.argv.items[1]);
@@ -403,7 +453,11 @@ test "substituteVariablesShell preserves double-quoted variable context" {
     const resolved = try substituteVariablesShell(allocator, "python3 \"$file\"", "/tmp/example dir/main.py", null);
     defer allocator.free(resolved);
 
-    try std.testing.expectEqualStrings("python3 \"/tmp/example dir/main.py\"", resolved);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("python3 \"/tmp/example dir/main.py\"", resolved);
+    } else {
+        try std.testing.expectEqualStrings("python3 \"/tmp/example dir/main.py\"", resolved);
+    }
 
     var argv = try tokenizeCommand(allocator, resolved);
     defer {
@@ -426,6 +480,20 @@ test "substituteVariablesShell does not expand escaped placeholders" {
         argv.deinit(allocator);
     }
     try std.testing.expectEqualStrings("$file", argv.items[1]);
+}
+
+test "tokenizeCommand preserves Windows path separators" {
+    if (comptime builtin.os.tag != .windows) return;
+
+    const allocator = std.testing.allocator;
+    var argv = try tokenizeCommand(allocator, "tool C:\\work\\main.zig");
+    defer {
+        for (argv.items) |arg| allocator.free(arg);
+        argv.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), argv.items.len);
+    try std.testing.expectEqualStrings("C:\\work\\main.zig", argv.items[1]);
 }
 
 test "tokenizeCommand preserves empty quoted arguments" {

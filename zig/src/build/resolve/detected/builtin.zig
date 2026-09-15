@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_types = @import("../../system/types.zig");
 pub fn listBuildCommands(
     allocator: std.mem.Allocator,
@@ -84,8 +85,8 @@ const odin_builtin_commands = [_]BuiltinCommand{
 
 const fortran_builtin_commands = [_]BuiltinCommand{
     .{ .name = "build", .command = "gfortran *.f90 -o main" },
-    .{ .name = "run", .command = "./main" },
-    .{ .name = "clean", .command = "rm -f main" },
+    .{ .name = "run", .command = if (builtin.os.tag == .windows) "main.exe" else "./main" },
+    .{ .name = "clean", .command = if (builtin.os.tag == .windows) "del /Q main.exe" else "rm -f main" },
 };
 
 const lua_builtin_commands = [_]BuiltinCommand{

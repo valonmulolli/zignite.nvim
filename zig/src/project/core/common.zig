@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn readFileAllocWithIO(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const max_bytes = 4 * 1024 * 1024;
@@ -210,6 +211,10 @@ pub fn makeRelativeToRootAlloc(allocator: std.mem.Allocator, root: []const u8, f
 }
 
 pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return quoteWindowsShellArgAlloc(allocator, value);
+    }
+
     var quoted: std.ArrayList(u8) = .empty;
     errdefer quoted.deinit(allocator);
 
@@ -229,6 +234,20 @@ pub fn quoteShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8
     if (run_start < value.len) quoted.appendSliceAssumeCapacity(value[run_start..]);
     quoted.appendAssumeCapacity('\'');
 
+    return try quoted.toOwnedSlice(allocator);
+}
+
+fn quoteWindowsShellArgAlloc(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    var quoted: std.ArrayList(u8) = .empty;
+    errdefer quoted.deinit(allocator);
+
+    try quoted.ensureTotalCapacity(allocator, value.len + 2);
+    quoted.appendAssumeCapacity('"');
+    for (value) |ch| {
+        if (ch == '"' or ch == '^') quoted.appendAssumeCapacity('^');
+        quoted.appendAssumeCapacity(ch);
+    }
+    quoted.appendAssumeCapacity('"');
     return try quoted.toOwnedSlice(allocator);
 }
 
@@ -279,7 +298,11 @@ test "quoteShellArgIfNeededAlloc preserves safe args and quotes spaces" {
 
     const spaced = try quoteShellArgIfNeededAlloc(allocator, "build debug");
     defer allocator.free(spaced);
-    try std.testing.expectEqualStrings("'build debug'", spaced);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("\"build debug\"", spaced);
+    } else {
+        try std.testing.expectEqualStrings("'build debug'", spaced);
+    }
 }
 
 test "normalizePathAlloc collapses separators and trims trailing slash" {

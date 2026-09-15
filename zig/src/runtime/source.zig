@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const scratch_max_entries: usize = 128;
 const scratch_prune_interval: usize = 32;
 var scratch_prune_counter: std.atomic.Value(usize) = .init(0);
@@ -207,6 +208,14 @@ fn scratchRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.proce
         if (isSafePathComponent(root)) return root;
         allocator.free(root);
     }
+    if (comptime builtin.os.tag == .windows) {
+        if (try getEnvVarOwnedOrNull(allocator, environ_map, "LOCALAPPDATA")) |local_app_data| {
+            defer allocator.free(local_app_data);
+            if (isSafePathComponent(local_app_data)) {
+                return std.fs.path.join(allocator, &.{ local_app_data, "zignite", "run" });
+            }
+        }
+    }
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "XDG_CACHE_HOME")) |xdg_cache_home| {
         defer allocator.free(xdg_cache_home);
         if (isSafePathComponent(xdg_cache_home)) {
@@ -224,6 +233,17 @@ fn scratchRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.proce
         if (isSafePathComponent(tmpdir)) {
             return std.fs.path.join(allocator, &.{ tmpdir, "zignite-run" });
         }
+    }
+    if (comptime builtin.os.tag == .windows) {
+        if (try getEnvVarOwnedOrNull(allocator, environ_map, "TEMP")) |temp| {
+            defer allocator.free(temp);
+            if (isSafePathComponent(temp)) return std.fs.path.join(allocator, &.{ temp, "zignite-run" });
+        }
+        if (try getEnvVarOwnedOrNull(allocator, environ_map, "TMP")) |tmp| {
+            defer allocator.free(tmp);
+            if (isSafePathComponent(tmp)) return std.fs.path.join(allocator, &.{ tmp, "zignite-run" });
+        }
+        return allocator.dupe(u8, ".zignite-run");
     }
     return allocator.dupe(u8, "/tmp/zignite-run");
 }
