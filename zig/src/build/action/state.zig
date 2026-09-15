@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const state_allocator = std.heap.page_allocator;
 
 const Entry = struct {
@@ -195,6 +196,17 @@ fn persistLocked(io: std.Io, allocator: std.mem.Allocator, environ_map: ?*const 
 fn stateRootAlloc(allocator: std.mem.Allocator, environ_map: ?*const std.process.Environ.Map) ![]u8 {
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "ZIGNITE_STATE_DIR")) |root| {
         return root;
+    }
+    if (comptime builtin.os.tag == .windows) {
+        if (try getEnvVarOwnedOrNull(allocator, environ_map, "LOCALAPPDATA")) |local_app_data| {
+            defer allocator.free(local_app_data);
+            return std.fs.path.join(allocator, &.{ local_app_data, "zignite", "state" });
+        }
+        if (try getEnvVarOwnedOrNull(allocator, environ_map, "APPDATA")) |app_data| {
+            defer allocator.free(app_data);
+            return std.fs.path.join(allocator, &.{ app_data, "zignite", "state" });
+        }
+        return allocator.dupe(u8, ".zignite-state");
     }
     if (try getEnvVarOwnedOrNull(allocator, environ_map, "XDG_CACHE_HOME")) |xdg_cache_home| {
         defer allocator.free(xdg_cache_home);

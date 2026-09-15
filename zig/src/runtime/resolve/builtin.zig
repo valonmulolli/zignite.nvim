@@ -15,15 +15,26 @@ const RunnerSpec = struct {
     cwd: ?[]const u8 = null,
 };
 
-const temp_binary_cleanup = "rm /tmp/$fileNameWithoutExt";
+fn tempBinaryPath(comptime quoted: bool) []const u8 {
+    return if (comptime builtin.os.tag == .windows)
+        if (quoted) "\"%TEMP%/zignite-$fileNameWithoutExt.exe\"" else "%TEMP%/zignite-$fileNameWithoutExt.exe"
+    else
+        "/tmp/$fileNameWithoutExt";
+}
+
+const temp_binary_cleanup = if (builtin.os.tag == .windows)
+    "if exist \"%TEMP%/zignite-$fileNameWithoutExt.exe\" del /Q \"%TEMP%/zignite-$fileNameWithoutExt.exe\""
+else
+    "rm -f /tmp/$fileNameWithoutExt";
 
 fn tempBinarySpec(comptime filetype: []const u8, comptime compiler_prefix: []const u8) RunnerSpec {
     return .{
         .filetype = filetype,
-        .command = std.fmt.comptimePrint(
-            "{s} $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt",
-            .{compiler_prefix},
-        ),
+        .command = std.fmt.comptimePrint("{s} $file -o {s} && {s}", .{
+            compiler_prefix,
+            tempBinaryPath(true),
+            tempBinaryPath(true),
+        }),
         .cleanup_command = temp_binary_cleanup,
     };
 }
@@ -37,14 +48,23 @@ const builtin_specs = [_]RunnerSpec{
     .{
         .filetype = "java",
         .command = "javac $file && java -cp $dir $fileNameWithoutExt",
-        .cleanup_command = "rm -f $dir/$fileNameWithoutExt.class",
+        .cleanup_command = if (builtin.os.tag == .windows)
+            "del /Q $dir/$fileNameWithoutExt.class"
+        else
+            "rm -f $dir/$fileNameWithoutExt.class",
     },
     .{
         .filetype = "kotlin",
-        .command = "kotlinc $file -include-runtime -d /tmp/$fileNameWithoutExt.jar && java -jar /tmp/$fileNameWithoutExt.jar",
-        .cleanup_command = "rm /tmp/$fileNameWithoutExt.jar",
+        .command = if (builtin.os.tag == .windows)
+            "kotlinc $file -include-runtime -d \"%TEMP%/zignite-$fileNameWithoutExt.jar\" && java -jar \"%TEMP%/zignite-$fileNameWithoutExt.jar\""
+        else
+            "kotlinc $file -include-runtime -d /tmp/$fileNameWithoutExt.jar && java -jar /tmp/$fileNameWithoutExt.jar",
+        .cleanup_command = if (builtin.os.tag == .windows)
+            "if exist \"%TEMP%/zignite-$fileNameWithoutExt.jar\" del /Q \"%TEMP%/zignite-$fileNameWithoutExt.jar\""
+        else
+            "rm -f /tmp/$fileNameWithoutExt.jar",
     },
-    .{ .filetype = "python", .command = "python3 -u $file" },
+    .{ .filetype = "python", .command = if (builtin.os.tag == .windows) "python -u $file" else "python3 -u $file" },
     .{ .filetype = "javascript", .command = "node $file" },
     .{ .filetype = "typescript", .command = "bun $file" },
     .{ .filetype = "lua", .command = "lua $file" },
@@ -53,7 +73,7 @@ const builtin_specs = [_]RunnerSpec{
     .{ .filetype = "perl", .command = "perl $file" },
     .{ .filetype = "r", .command = "Rscript $file" },
     .{ .filetype = "julia", .command = "julia $file" },
-    .{ .filetype = "sh", .command = "bash $file" },
+    .{ .filetype = "sh", .command = if (builtin.os.tag == .windows) "sh $file" else "bash $file" },
     .{ .filetype = "zsh", .command = "zsh $file" },
     .{ .filetype = "html", .command = open_file_command },
     .{ .filetype = "dart", .command = "dart run $file" },
@@ -61,7 +81,7 @@ const builtin_specs = [_]RunnerSpec{
     .{ .filetype = "elixir", .command = "elixir $file" },
     .{
         .filetype = "haskell",
-        .command = "ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt",
+        .command = std.fmt.comptimePrint("ghc -o {s} $file && {s}", .{ tempBinaryPath(true), tempBinaryPath(true) }),
         .cleanup_command = temp_binary_cleanup,
     },
     .{ .filetype = "odin", .command = "odin run $file -file" },
@@ -109,8 +129,13 @@ test "loadRunnerConfig returns builtin cleanup command when present" {
     var runner = (try loadRunnerConfig(std.testing.allocator, "cpp")).?;
     defer runner.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("c++ -pipe $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt", runner.command.?);
-    try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("c++ -pipe $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"", runner.command.?);
+        try std.testing.expectEqualStrings(temp_binary_cleanup, runner.cleanup_command.?);
+    } else {
+        try std.testing.expectEqualStrings("c++ -pipe $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt", runner.command.?);
+        try std.testing.expectEqualStrings(temp_binary_cleanup, runner.cleanup_command.?);
+    }
 }
 
 test "loadRunnerConfig returns null for unknown filetype" {
@@ -126,8 +151,12 @@ test "loadRunnerConfig returns zig and rust builtin commands" {
     {
         var runner = (try loadRunnerConfig(std.testing.allocator, "rust")).?;
         defer runner.deinit(std.testing.allocator);
-        try std.testing.expectEqualStrings("rustc $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt", runner.command.?);
-        try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+        if (comptime builtin.os.tag == .windows) {
+            try std.testing.expectEqualStrings("rustc $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"", runner.command.?);
+        } else {
+            try std.testing.expectEqualStrings("rustc $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt", runner.command.?);
+        }
+        try std.testing.expectEqualStrings(temp_binary_cleanup, runner.cleanup_command.?);
     }
 }
 
@@ -135,14 +164,22 @@ test "loadRunnerConfig returns java cleanup with $dir placeholder" {
     var runner = (try loadRunnerConfig(std.testing.allocator, "java")).?;
     defer runner.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("javac $file && java -cp $dir $fileNameWithoutExt", runner.command.?);
-    try std.testing.expectEqualStrings("rm -f $dir/$fileNameWithoutExt.class", runner.cleanup_command.?);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("del /Q $dir/$fileNameWithoutExt.class", runner.cleanup_command.?);
+    } else {
+        try std.testing.expectEqualStrings("rm -f $dir/$fileNameWithoutExt.class", runner.cleanup_command.?);
+    }
 }
 
 test "loadRunnerConfig returns haskell with /tmp binary cleanup" {
     var runner = (try loadRunnerConfig(std.testing.allocator, "haskell")).?;
     defer runner.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt", runner.command.?);
-    try std.testing.expectEqualStrings("rm /tmp/$fileNameWithoutExt", runner.cleanup_command.?);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("ghc -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" $file && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"", runner.command.?);
+    } else {
+        try std.testing.expectEqualStrings("ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt", runner.command.?);
+    }
+    try std.testing.expectEqualStrings(temp_binary_cleanup, runner.cleanup_command.?);
 }
 
 test "loadRunnerConfig returns html browser open runner" {
