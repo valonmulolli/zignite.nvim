@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const gradle = @import("../../../gradle/api.zig");
 const maven = @import("../../../maven/api.zig");
 const common = @import("../../common.zig");
@@ -73,7 +74,17 @@ pub fn writeGradleOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.A
     const root = pathing.dirOrDot(build_file_path);
     const wrapper_path = try std.fs.path.join(allocator, &.{ root, "gradlew" });
     defer allocator.free(wrapper_path);
-    const prefix: []const u8 = if (common.isRegularFileWithIO(io, wrapper_path)) "./gradlew" else "gradle";
+    const windows_wrapper_path: ?[]u8 = if (comptime builtin.os.tag == .windows)
+        try std.fs.path.join(allocator, &.{ root, "gradlew.bat" })
+    else
+        null;
+    defer if (windows_wrapper_path) |path| allocator.free(path);
+    const prefix: []const u8 = if (windows_wrapper_path) |path|
+        if (common.isRegularFileWithIO(io, path)) "gradlew.bat" else if (common.isRegularFileWithIO(io, wrapper_path)) "./gradlew" else "gradle"
+    else if (common.isRegularFileWithIO(io, wrapper_path))
+        "./gradlew"
+    else
+        "gradle";
 
     const build_command = try std.fmt.allocPrint(allocator, "{s} build", .{prefix});
     defer allocator.free(build_command);
