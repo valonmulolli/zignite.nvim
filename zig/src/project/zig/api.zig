@@ -76,7 +76,7 @@ fn detectStepsWithTimeoutWithIO(
     const process_allocator = process_arena.allocator();
 
     const result = std.process.run(process_allocator, io, .{
-        .argv = &.{ "zig", "build", "-l" },
+        .argv = &.{ "zig", "build", "--cache-dir", ".zig-cache", "--global-cache-dir", ".zig-global-cache", "-l" },
         .cwd = .{ .path = build_root },
         .stdout_limit = .limited(256 * 1024),
         .stderr_limit = .limited(256 * 1024),
