@@ -200,17 +200,27 @@ fn parseSwiftHelpCommandNames(allocator: std.mem.Allocator, commands: *std.Array
         const line = common.stripTrailingCR(raw_line);
         const trimmed = common.trimSpaces(line);
         if (!in_commands_section) {
-            if (std.mem.eql(u8, trimmed, "SUBCOMMANDS:")) in_commands_section = true;
+            if (std.mem.eql(u8, trimmed, "SUBCOMMANDS:") or
+                std.mem.eql(u8, trimmed, "Subcommands:"))
+            {
+                in_commands_section = true;
+            }
             continue;
         }
 
         if (!isTwoSpaceCommandEntryLine(line)) continue;
-        if (extractCommandToken(trimmed)) |token| try pushUniqueCommand(allocator, commands, token);
+        if (extractSwiftCommandToken(trimmed)) |token| try pushUniqueCommand(allocator, commands, token);
     }
 }
 
 fn isTwoSpaceCommandEntryLine(line: []const u8) bool {
     return line.len > 2 and line[0] == ' ' and line[1] == ' ' and line[2] != ' ' and line[2] != '\t';
+}
+
+fn extractSwiftCommandToken(line: []const u8) ?[]const u8 {
+    const prefix = "swift ";
+    if (!std.mem.startsWith(u8, line, prefix)) return null;
+    return extractCommandToken(line[prefix.len..]);
 }
 
 fn extractCommandToken(line: []const u8) ?[]const u8 {
@@ -344,15 +354,16 @@ test "parse dart commands stops at help footer" {
 
 test "parse swift commands from subcommands section" {
     const allocator = std.testing.allocator;
-    const output = "SUBCOMMANDS:\n  build      Build sources into binary products\n  package     Perform package operations\n  run         Run an executable product\n  test        Run package tests\n";
+    const output = "OVERVIEW: Swift compiler\n\nSubcommands:\n  swift build      Build Swift packages\n  swift package    Create and work on packages\n  swift run        Run a program from a package\n  swift test       Run package tests\n  swift repl       Experiment with Swift code interactively\n\nUse `swift --version` for Swift version information.\n";
     const commands = try parseDetectCommandNames(allocator, .swift, output);
     defer types.freeOwnedCommandList(allocator, commands);
 
-    try std.testing.expectEqual(@as(usize, 4), commands.len);
+    try std.testing.expectEqual(@as(usize, 5), commands.len);
     try std.testing.expectEqualStrings("build", commands[0]);
     try std.testing.expectEqualStrings("package", commands[1]);
     try std.testing.expectEqualStrings("run", commands[2]);
     try std.testing.expectEqualStrings("test", commands[3]);
+    try std.testing.expectEqualStrings("repl", commands[4]);
 }
 
 test "parse command names rejects unsafe tool output" {
