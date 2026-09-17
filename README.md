@@ -186,6 +186,9 @@ The supported command-list interfaces are `zig --help`, `go help`, `cargo
 Perl, R, Julia, shell, Haskell, and Fortran tools expose compiler flags or
 project goals rather than a stable subcommand list, so those filetypes
 continue to use their existing runners and project/build-system detection.
+For Dart and Swift, the Zig backend also walks up from the source file to
+`pubspec.yaml` or `Package.swift` and runs project commands from that manifest
+directory.
 The Zig 0.16 `uninstall` build step is omitted because the standard library
 still panics when that step is executed.
 
