@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const project_common = @import("../../project/core/common.zig");
 const build_types = @import("../system/types.zig");
 
@@ -98,7 +99,7 @@ pub fn resolveCommandTemplate(
     const replacement = if (std.mem.eql(u8, filetype, "zig") and std.mem.eql(u8, command_name, "fetch"))
         try normalizeGithubRepoReferenceAlloc(allocator, trimmed)
     else
-        try project_common.quoteShellArgAlloc(allocator, trimmed);
+        try quoteCommandArgumentsAlloc(allocator, trimmed);
     defer allocator.free(replacement);
 
     var out: std.ArrayList(u8) = .empty;
@@ -116,6 +117,94 @@ pub fn resolveCommandTemplate(
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+fn quoteCommandArgumentsAlloc(allocator: std.mem.Allocator, raw_args: []const u8) ![]u8 {
+    var args = try tokenizeCompilerArguments(allocator, raw_args);
+    defer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit(allocator);
+    }
+    if (args.items.len == 0) return error.InvalidBuildResolveCommandArgs;
+
+    var quoted: std.ArrayList(u8) = .empty;
+    errdefer quoted.deinit(allocator);
+    for (args.items, 0..) |arg, index| {
+        if (index > 0) try quoted.append(allocator, ' ');
+        // Always quote arguments so the later command tokenizer preserves
+        // values such as -DNAME=VALUE in the direct argv path.
+        const quoted_arg = try project_common.quoteShellArgAlloc(allocator, arg);
+        defer allocator.free(quoted_arg);
+        try quoted.appendSlice(allocator, quoted_arg);
+    }
+    return quoted.toOwnedSlice(allocator);
+}
+
+fn tokenizeCompilerArguments(allocator: std.mem.Allocator, raw_args: []const u8) !std.ArrayList([]u8) {
+    var args: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit(allocator);
+    }
+
+    var current: std.ArrayList(u8) = .empty;
+    defer current.deinit(allocator);
+
+    var quote: ?u8 = null;
+    var token_started = false;
+    var index: usize = 0;
+    while (index < raw_args.len) : (index += 1) {
+        const ch = raw_args[index];
+        if (quote) |active_quote| {
+            if (ch == active_quote) {
+                quote = null;
+            } else if (ch == '\\' and builtin.os.tag != .windows and index + 1 < raw_args.len) {
+                index += 1;
+                try current.append(allocator, raw_args[index]);
+            } else {
+                try current.append(allocator, ch);
+            }
+            continue;
+        }
+
+        if (ch == '\'' or ch == '"') {
+            quote = ch;
+            token_started = true;
+        } else if (ch == ' ' or ch == '\t') {
+            if (token_started) try appendCompilerArgument(allocator, &args, &current, &token_started);
+        } else if (ch == '\\' and builtin.os.tag != .windows) {
+            if (index + 1 >= raw_args.len) return error.InvalidBuildResolveCommandArgs;
+            index += 1;
+            try current.append(allocator, raw_args[index]);
+            token_started = true;
+        } else if (ch == ';' or ch == '|' or ch == '&' or ch == '<' or ch == '>' or ch == '`' or
+            ch < 0x20 or ch == 0x7F)
+        {
+            return error.InvalidBuildResolveCommandArgs;
+        } else {
+            try current.append(allocator, ch);
+            token_started = true;
+        }
+    }
+
+    if (quote != null) return error.InvalidBuildResolveCommandArgs;
+    if (token_started) try appendCompilerArgument(allocator, &args, &current, &token_started);
+    return args;
+}
+
+fn appendCompilerArgument(
+    allocator: std.mem.Allocator,
+    args: *std.ArrayList([]u8),
+    current: *std.ArrayList(u8),
+    token_started: *bool,
+) !void {
+    const owned = try current.toOwnedSlice(allocator);
+    current.* = .empty;
+    args.append(allocator, owned) catch |err| {
+        allocator.free(owned);
+        return err;
+    };
+    token_started.* = false;
 }
 
 pub fn isReservedArgvCommand(command: []const u8) bool {
@@ -278,4 +367,39 @@ test "normalizeGithubRepoReferenceAlloc quotes shell syntax in every fetch input
         defer allocator.free(normalized);
         try std.testing.expectEqualStrings(case.expected, normalized);
     }
+}
+
+test "resolveCommandTemplate splits safe Zig compiler arguments" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveCommandTemplate(
+        allocator,
+        "zig",
+        "cc",
+        "zig cc $zignite_args",
+        "-DNAME=VALUE -c 'src/main file.c' -o out.o",
+    );
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings("zig cc '-DNAME=VALUE' '-c' 'src/main file.c' '-o' 'out.o'", resolved);
+}
+
+test "resolveCommandTemplate splits arguments for every command placeholder" {
+    const allocator = std.testing.allocator;
+    const resolved = try resolveCommandTemplate(
+        allocator,
+        "rust",
+        "add",
+        "cargo add $zignite_args",
+        "serde --features derive",
+    );
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings("cargo add 'serde' '--features' 'derive'", resolved);
+}
+
+test "resolveCommandTemplate rejects shell syntax in Zig compiler arguments" {
+    try std.testing.expectError(
+        error.InvalidBuildResolveCommandArgs,
+        resolveCommandTemplate(std.testing.allocator, "zig", "cc", "zig cc $zignite_args", "src.c; touch pwned"),
+    );
 }

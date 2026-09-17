@@ -150,6 +150,9 @@ fn parseOdinCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList(
 
         if (std.mem.eql(u8, trimmed, "Flags:")) break;
         if (std.mem.eql(u8, trimmed, "Example:") or std.mem.eql(u8, trimmed, "Examples:")) break;
+        if (std.mem.startsWith(u8, trimmed, "For further details on a command") or
+            std.mem.startsWith(u8, trimmed, "e.g.")) break;
+        if (!isOdinCommandEntryLine(line)) continue;
 
         if (extractCommandToken(trimmed)) |token| {
             if (!std.mem.eql(u8, token, "help")) {
@@ -157,6 +160,14 @@ fn parseOdinCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList(
             }
         }
     }
+}
+
+fn isOdinCommandEntryLine(line: []const u8) bool {
+    if (line.len > 1 and line[0] == '\t') {
+        return !std.ascii.isWhitespace(line[1]);
+    }
+
+    return line.len > 2 and line[0] == ' ' and line[1] == ' ' and line[2] != ' ' and line[2] != '\t';
 }
 
 fn extractCommandToken(line: []const u8) ?[]const u8 {
@@ -265,6 +276,16 @@ test "parse odin commands excludes help and stops at flags" {
     try std.testing.expectEqual(@as(usize, 2), commands.len);
     try std.testing.expectEqualStrings("build", commands[0]);
     try std.testing.expectEqualStrings("doc", commands[1]);
+}
+
+test "parse odin commands stops before the help footer" {
+    const allocator = std.testing.allocator;
+    const output = "Commands:\n\tbuild             compile and create an executable\n\t                  One must contain the program's entry point\n\nFor further details on a command, invoke command help:\n\te.g. `odin build -help` or `odin help build`\n";
+    const commands = try parseDetectCommandNames(allocator, .odin, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 1), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
 }
 
 test "parse command names rejects unsafe tool output" {

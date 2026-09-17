@@ -13,6 +13,10 @@ pub fn systemQueryForFiletype(filetype: []const u8) ?@import("../../system.zig")
     return filetype_policy.systemQueryForFiletype(filetype);
 }
 
+pub fn compilerToolForFiletype(filetype: []const u8) ?@import("../../../detect/types.zig").Tool {
+    return filetype_policy.compilerToolForFiletype(filetype);
+}
+
 pub fn isDetectionEnabled(filetype: []const u8) bool {
     return config_view.isDetectEnabled(filetype);
 }

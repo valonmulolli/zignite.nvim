@@ -4,6 +4,7 @@ const filetype_resolver = @import("../../../filetype.zig");
 const pathing = @import("../../../pathing.zig");
 const build_system = @import("../../system.zig");
 const build_types = @import("../../system/types.zig");
+const detect = @import("../../../detect.zig");
 const project = @import("../../../project.zig");
 const materialize = @import("../../../runtime/resolve/materialize.zig");
 const output = @import("output.zig");
@@ -122,6 +123,11 @@ fn collectSystemOutputWithIO(
     options: types.Options,
     filetype: []const u8,
 ) !types.ResolvedOutput {
+    if (policy.compilerToolForFiletype(filetype)) |tool| {
+        if (!policy.isDetectionEnabled(filetype)) return .{};
+        return collectCompilerOutputWithIO(io, allocator, tool);
+    }
+
     const query = policy.systemQueryForFiletype(filetype);
     if (query == null or !policy.isDetectionEnabled(filetype)) {
         return .{};
@@ -144,6 +150,58 @@ fn collectSystemOutputWithIO(
     }
 
     return try output.resolvedOutputFromSystemResult(allocator, result);
+}
+
+fn collectCompilerOutputWithIO(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    tool: detect.Tool,
+) !types.ResolvedOutput {
+    const records = try detect.detectToolCommandsWithIO(io, allocator, tool);
+    defer detect.freeOwnedCommandList(allocator, records);
+
+    return collectCompilerOutputFromRecords(allocator, tool, records);
+}
+
+fn collectCompilerOutputFromRecords(
+    allocator: std.mem.Allocator,
+    tool: detect.Tool,
+    records: []const []const u8,
+) !types.ResolvedOutput {
+    var resolved: types.ResolvedOutput = .{};
+    errdefer resolved.deinit(allocator);
+
+    for (records) |record| {
+        const tab = std.mem.findScalar(u8, record, '\t') orelse continue;
+        const name = record[0..tab];
+        const command = record[tab + 1 ..];
+        if (name.len == 0 or command.len == 0) continue;
+        try output.upsertOwnedCommand(&resolved.commands, allocator, name, command);
+    }
+
+    if (resolved.commands.items.len > 0) {
+        resolved.system = try allocator.dupe(u8, @tagName(tool));
+    }
+    return resolved;
+}
+
+test "collectCompilerOutput parses detected command records" {
+    const allocator = std.testing.allocator;
+    const records = [_][]const u8{
+        "build\tzig build",
+        "help\tzig help",
+        "malformed",
+        "\tzig empty-name",
+        "empty-command\t",
+    };
+
+    var resolved = try collectCompilerOutputFromRecords(allocator, .go, &records);
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("zig build", output.findCommand(resolved.commands.items, "build").?);
+    try std.testing.expectEqualStrings("zig help", output.findCommand(resolved.commands.items, "help").?);
+    try std.testing.expectEqual(@as(usize, 2), resolved.commands.items.len);
+    try std.testing.expectEqualStrings("go", resolved.system.?);
 }
 
 test "resolveDetectedOutput tolerates malformed package json auto output" {
