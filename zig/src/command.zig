@@ -441,3 +441,56 @@ test "windows timeout coordinator terminates a suspended child" {
         else => return error.UnexpectedWindowsTermination,
     }
 }
+
+test "windows timeout coordinator terminates descendants" {
+    if (comptime builtin.os.tag != .windows) return;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "child.bat",
+        .data = "@echo off\r\n" ++
+            "echo started > parent.marker\r\n" ++
+            "start \"\" /B cmd.exe /C \"ping.exe -n 3 127.0.0.1 > NUL & echo survived > descendant.marker\"\r\n" ++
+            "ping.exe -n 6 127.0.0.1 > NUL\r\n",
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const shell_args = [_][]const u8{ "cmd.exe", "/C", "child.bat" };
+
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
+        .argv = &shell_args,
+        .cwd = .{ .path = root },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }, true);
+    defer spawned.control.deinit();
+
+    var parent_started = false;
+    var attempt: usize = 0;
+    while (attempt < 100) : (attempt += 1) {
+        if (tmp.dir.access(std.testing.io, "parent.marker", .{})) |_| {
+            parent_started = true;
+            break;
+        } else |_| {
+            std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(20), .awake) catch unreachable;
+        }
+    }
+    try std.testing.expect(parent_started);
+
+    const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 2000);
+    switch (term) {
+        .exited => |code| try std.testing.expect(code != 0),
+        else => return error.UnexpectedWindowsTermination,
+    }
+
+    std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(2500), .awake) catch unreachable;
+    try std.testing.expectError(
+        error.FileNotFound,
+        tmp.dir.access(std.testing.io, "descendant.marker", .{}),
+    );
+}
