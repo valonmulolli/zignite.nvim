@@ -139,7 +139,13 @@ fn writeResolvedOutput(
     const resolved_filetype = parsed_output.filetype orelse options.filetype;
     const live_names = [_][]const u8{"live"};
     const live_name = detected.findPreferredCommandName(parsed_output.preferred.items, parsed_output.commands.items, &live_names);
-    const last_command_name = try action_state.getLastCommand(io, allocator, environ_map, resolved_filetype);
+    var last_command_name = try action_state.getLastCommand(io, allocator, environ_map, resolved_filetype);
+    if (last_command_name) |name| {
+        if (detected.findCommand(parsed_output.commands.items, name) == null) {
+            allocator.free(name);
+            last_command_name = null;
+        }
+    }
     defer if (last_command_name) |name| allocator.free(name);
     try serialize.writeResolvedOutputJson(
         stdout,
@@ -713,6 +719,43 @@ test "writeResolvedOutput emits custom zig build steps and project root" {
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trelease\tzig build bundle\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tlive\tzig build watch\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED_NAME\tlive\tlive\n") != null);
+}
+
+test "writeResolvedOutput omits a stale last command" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    defer action_state.resetForTests();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        \\{"build_commands":{},"detect":{"zig":true},"revision":24}
+    , 24);
+    try action_state.setLastCommand(std.testing.io, allocator, null, "zig", "check");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.zig", .data = "pub fn main() void {}\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.zig", .data =
+        \\const std = @import("std");
+        \\
+        \\pub fn build(b: *std.Build) void {
+        \\    _ = b;
+        \\}
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try std.fs.path.join(allocator, &.{ root, "main.zig" });
+    defer allocator.free(filepath);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try writeResolvedOutput(&out.writer, allocator, std.testing.io, null, .{
+        .path = filepath,
+        .filetype = "zig",
+    });
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "LAST_COMMAND_NAME\t") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"last_command_name\":\"check\"") == null);
 }
 
 test "writeResolvedOutput emits selected command execution metadata" {
