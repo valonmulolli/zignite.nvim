@@ -25,6 +25,8 @@ pub const Kind = enum {
     go_auto,
     go_mod,
     go_work,
+    dart_auto,
+    swift_auto,
     system,
 };
 

@@ -27,6 +27,8 @@ pub fn writeAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.All
         .cmake_auto => return try direct.writeCMakeAutoOutputWithIO(io, stdout, allocator, options),
         .meson_auto => return try direct.writeMesonAutoOutputWithIO(io, stdout, allocator, options),
         .bazel_auto => return try write.writeBazelAutoWithIO(io, stdout, allocator, options),
+        .dart_auto => return try write.writeDartAutoWithIO(io, stdout, allocator, options),
+        .swift_auto => return try write.writeSwiftAutoWithIO(io, stdout, allocator, options),
         else => return false,
     }
 }
@@ -511,4 +513,60 @@ test "writeAutoOutput emits c-family auto bazel commands for source files" {
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbazel-build-app-main\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbazel-build\tbazel build //app:main\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_BUILD\tbazel build //app:main\n") != null);
+}
+
+test "writeAutoOutput emits dart package root for nested source" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "lib/src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "pubspec.yaml", .data = "name: demo\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "lib/src/main.dart", .data = "void main() {}\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "lib/src/main.dart", allocator);
+    defer allocator.free(filepath);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{root});
+    defer allocator.free(expected_root);
+
+    try std.testing.expect(try writeAutoOutput(&out.writer, allocator, .{
+        .kind = .dart_auto,
+        .path = filepath,
+    }));
+
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_root) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "SYSTEM\tdart\n") != null);
+}
+
+test "writeAutoOutput emits swift package root for nested source" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "Sources/Demo");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Package.swift", .data = "// swift-tools-version: 6.0\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Sources/Demo/main.swift", .data = "print(\"hello\")\n" });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const filepath = try tmp.dir.realPathFileAlloc(std.testing.io, "Sources/Demo/main.swift", allocator);
+    defer allocator.free(filepath);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{root});
+    defer allocator.free(expected_root);
+
+    try std.testing.expect(try writeAutoOutput(&out.writer, allocator, .{
+        .kind = .swift_auto,
+        .path = filepath,
+    }));
+
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_root) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "SYSTEM\tswift\n") != null);
 }

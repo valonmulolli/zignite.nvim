@@ -39,6 +39,18 @@ pub fn readProjectFileWithIO(io: std.Io, allocator: std.mem.Allocator, kind: Kin
     if (kind == .go_auto) {
         return allocator.dupe(u8, "");
     }
+    if (kind == .dart_auto) {
+        const pubspec_path = try findParentFileAllocWithIO(io, allocator, path, "pubspec.yaml", 12);
+        defer if (pubspec_path) |value| allocator.free(value);
+        if (pubspec_path) |value| return common.readFileAllocWithIO(io, allocator, value);
+        return allocator.dupe(u8, "");
+    }
+    if (kind == .swift_auto) {
+        const package_path = try findParentFileAllocWithIO(io, allocator, path, "Package.swift", 12);
+        defer if (package_path) |value| allocator.free(value);
+        if (package_path) |value| return common.readFileAllocWithIO(io, allocator, value);
+        return allocator.dupe(u8, "");
+    }
     if (kind == .cmake_auto) {
         return allocator.dupe(u8, "");
     }
@@ -190,4 +202,30 @@ test "findParentFileAlloc ignores directory markers" {
     defer if (found) |value| allocator.free(value);
 
     try std.testing.expect(found == null);
+}
+
+test "readProjectFileWithIO reads dart and swift auto manifests" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "dart/lib");
+    try tmp.dir.createDirPath(std.testing.io, "swift/Sources/Demo");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dart/pubspec.yaml", .data = "name: dart_demo\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dart/lib/main.dart", .data = "void main() {}\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "swift/Package.swift", .data = "// swift-tools-version: 6.0\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "swift/Sources/Demo/main.swift", .data = "print(\"hello\")\n" });
+
+    const dart_path = try tmp.dir.realPathFileAlloc(std.testing.io, "dart/lib/main.dart", allocator);
+    defer allocator.free(dart_path);
+    const swift_path = try tmp.dir.realPathFileAlloc(std.testing.io, "swift/Sources/Demo/main.swift", allocator);
+    defer allocator.free(swift_path);
+
+    const dart_contents = try readProjectFileWithIO(std.testing.io, allocator, .dart_auto, dart_path);
+    defer allocator.free(dart_contents);
+    const swift_contents = try readProjectFileWithIO(std.testing.io, allocator, .swift_auto, swift_path);
+    defer allocator.free(swift_contents);
+
+    try std.testing.expectEqualStrings("name: dart_demo\n", dart_contents);
+    try std.testing.expectEqualStrings("// swift-tools-version: 6.0\n", swift_contents);
 }
