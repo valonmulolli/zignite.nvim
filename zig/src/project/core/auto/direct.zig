@@ -93,6 +93,8 @@ pub fn writeZigAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.
 
     for (steps) |step| {
         if (std.mem.eql(u8, step.name, "build")) continue;
+        // Zig 0.16 exposes uninstall, but its std.Build implementation still panics.
+        if (std.mem.eql(u8, step.name, "uninstall")) continue;
         if (std.mem.eql(u8, step.name, "install")) {
             try stdout.print("COMMAND\tinstall\tzig build install\n", .{});
             continue;
