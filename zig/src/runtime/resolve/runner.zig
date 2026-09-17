@@ -331,7 +331,7 @@ test "resolveRunner keeps inline Zig source on the scratch file inside a project
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings("zig", resolved.filetype.?);
     try std.testing.expect(std.mem.startsWith(u8, resolved.command.?, "zig run "));
-    try std.testing.expect(std.mem.indexOf(u8, resolved.command.?, "/tmp/repo/src/main.zig") == null);
+    try std.testing.expect(std.mem.find(u8, resolved.command.?, "/tmp/repo/src/main.zig") == null);
     try std.testing.expect(resolved.execution_path != null);
     try std.testing.expect(!std.mem.eql(u8, resolved.execution_path.?, "/tmp/repo/src/main.zig"));
 }
