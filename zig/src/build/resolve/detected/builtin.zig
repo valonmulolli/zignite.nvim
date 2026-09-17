@@ -70,7 +70,6 @@ const zig_builtin_commands = [_]BuiltinCommand{
     .{ .name = "build", .command = "zig build" },
     .{ .name = "run", .command = "zig build run" },
     .{ .name = "test", .command = "zig build test" },
-    .{ .name = "check", .command = "zig build check" },
     .{ .name = "release", .command = "zig build -Doptimize=ReleaseFast" },
     .{ .name = "release-run", .command = "zig build run -Doptimize=ReleaseFast" },
 };

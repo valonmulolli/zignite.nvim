@@ -33,17 +33,28 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
         if (std.mem.eql(u8, name, "build-exe")) return allocator.dupe(u8, "zig build-exe $file");
         if (std.mem.eql(u8, name, "build-lib")) return allocator.dupe(u8, "zig build-lib $file");
         if (std.mem.eql(u8, name, "build-obj")) return allocator.dupe(u8, "zig build-obj $file");
+        if (std.mem.eql(u8, name, "ar")) return std.fmt.allocPrint(allocator, "zig ar {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "cc")) return std.fmt.allocPrint(allocator, "zig cc {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "c++")) return std.fmt.allocPrint(allocator, "zig c++ {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "dlltool")) return std.fmt.allocPrint(allocator, "zig dlltool {s}", .{BUILD_ARG_PLACEHOLDER});
         if (std.mem.eql(u8, name, "env")) return allocator.dupe(u8, "zig env");
         if (std.mem.eql(u8, name, "fetch")) return std.fmt.allocPrint(allocator, "zig fetch {s}", .{BUILD_ARG_PLACEHOLDER});
         if (std.mem.eql(u8, name, "fmt")) return allocator.dupe(u8, "zig fmt $file");
         if (std.mem.eql(u8, name, "help")) return allocator.dupe(u8, "zig help");
         if (std.mem.eql(u8, name, "init")) return allocator.dupe(u8, "zig init");
+        if (std.mem.eql(u8, name, "lib")) return std.fmt.allocPrint(allocator, "zig lib {s}", .{BUILD_ARG_PLACEHOLDER});
         if (std.mem.eql(u8, name, "libc")) return allocator.dupe(u8, "zig libc");
+        if (std.mem.eql(u8, name, "objcopy")) return std.fmt.allocPrint(allocator, "zig objcopy {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "objdump")) return std.fmt.allocPrint(allocator, "zig objdump {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "ranlib")) return std.fmt.allocPrint(allocator, "zig ranlib {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "rc")) return std.fmt.allocPrint(allocator, "zig rc {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "reduce")) return std.fmt.allocPrint(allocator, "zig reduce {s}", .{BUILD_ARG_PLACEHOLDER});
         if (std.mem.eql(u8, name, "run")) return allocator.dupe(u8, "zig run $file");
         if (std.mem.eql(u8, name, "std")) return allocator.dupe(u8, "zig std");
         if (std.mem.eql(u8, name, "targets")) return allocator.dupe(u8, "zig targets");
         if (std.mem.eql(u8, name, "test")) return allocator.dupe(u8, "zig test $file");
         if (std.mem.eql(u8, name, "test-obj")) return allocator.dupe(u8, "zig test-obj $file");
+        if (std.mem.eql(u8, name, "translate-c")) return allocator.dupe(u8, "zig translate-c $file");
         if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "zig version");
         if (std.mem.eql(u8, name, "zen")) return allocator.dupe(u8, "zig zen");
         return buildToolCommandTemplate(allocator, "zig", name);
@@ -168,6 +179,40 @@ test "detect command records use $zignite_args placeholder for argument-taking c
 
     try std.testing.expectEqualStrings("add\tcargo add $zignite_args", commands[0]);
     try std.testing.expectEqualStrings("search\tcargo search $zignite_args", commands[1]);
+}
+
+test "detect command records cover Zig compiler commands" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .zig, &.{
+        "ar",
+        "build-exe",
+        "cc",
+        "c++",
+        "dlltool",
+        "help",
+        "lib",
+        "objcopy",
+        "objdump",
+        "ranlib",
+        "rc",
+        "reduce",
+        "translate-c",
+    });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("ar\tzig ar $zignite_args", commands[0]);
+    try std.testing.expectEqualStrings("build-exe\tzig build-exe $file", commands[1]);
+    try std.testing.expectEqualStrings("cc\tzig cc $zignite_args", commands[2]);
+    try std.testing.expectEqualStrings("c++\tzig c++ $zignite_args", commands[3]);
+    try std.testing.expectEqualStrings("dlltool\tzig dlltool $zignite_args", commands[4]);
+    try std.testing.expectEqualStrings("help\tzig help", commands[5]);
+    try std.testing.expectEqualStrings("lib\tzig lib $zignite_args", commands[6]);
+    try std.testing.expectEqualStrings("objcopy\tzig objcopy $zignite_args", commands[7]);
+    try std.testing.expectEqualStrings("objdump\tzig objdump $zignite_args", commands[8]);
+    try std.testing.expectEqualStrings("ranlib\tzig ranlib $zignite_args", commands[9]);
+    try std.testing.expectEqualStrings("rc\tzig rc $zignite_args", commands[10]);
+    try std.testing.expectEqualStrings("reduce\tzig reduce $zignite_args", commands[11]);
+    try std.testing.expectEqualStrings("translate-c\tzig translate-c $file", commands[12]);
 }
 
 test "detect command records map odin subcommands" {

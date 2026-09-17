@@ -1,10 +1,12 @@
 const std = @import("std");
 const build_system = @import("build/system.zig");
+const detect_types = @import("detect/types.zig");
 const project_types = @import("project/core/types.zig");
 
 pub const Entry = struct {
     filetype: []const u8,
     detect_key: ?[]const u8 = null,
+    compiler_tool: ?detect_types.Tool = null,
     auto_kind: ?project_types.Kind = null,
     system_query: ?build_system.Query = null,
 };
@@ -67,16 +69,19 @@ const entries = [_]Entry{
     .{
         .filetype = "rust",
         .detect_key = "rust",
+        .compiler_tool = .cargo,
         .auto_kind = .cargo_auto,
     },
     .{
         .filetype = "go",
         .detect_key = "go",
+        .compiler_tool = .go,
         .auto_kind = .go_auto,
     },
     .{
         .filetype = "zig",
         .detect_key = "zig",
+        .compiler_tool = .zig,
         .auto_kind = .zig_auto,
     },
     .{
@@ -139,6 +144,11 @@ const entries = [_]Entry{
         .system_query = .python_root,
     },
     .{
+        .filetype = "odin",
+        .detect_key = "odin",
+        .compiler_tool = .odin,
+    },
+    .{
         .filetype = "bash",
         .auto_kind = null,
         .system_query = null,
@@ -157,6 +167,10 @@ pub fn find(filetype: []const u8) ?Entry {
 
 pub fn detectKeyForFiletype(filetype: []const u8) ?[]const u8 {
     return if (find(filetype)) |entry| entry.detect_key else null;
+}
+
+pub fn compilerToolForFiletype(filetype: []const u8) ?detect_types.Tool {
+    return if (find(filetype)) |entry| entry.compiler_tool else null;
 }
 
 pub fn autoKindForFiletype(filetype: []const u8) ?project_types.Kind {
@@ -199,6 +213,15 @@ test "helper lookups expose aliased frontend filetypes too" {
     try std.testing.expectEqual(build_system.Query.jvm_root, systemQueryForFiletype("groovy").?);
     try std.testing.expectEqualStrings("js_package_scripts", detectKeyForFiletype("tsx").?);
     try std.testing.expectEqual(project_types.Kind.package_json_auto, autoKindForFiletype("javascriptreact").?);
+}
+
+test "compilerToolForFiletype maps supported command-list tools" {
+    try std.testing.expectEqual(detect_types.Tool.zig, compilerToolForFiletype("zig").?);
+    try std.testing.expectEqual(detect_types.Tool.go, compilerToolForFiletype("go").?);
+    try std.testing.expectEqual(detect_types.Tool.cargo, compilerToolForFiletype("rust").?);
+    try std.testing.expectEqual(detect_types.Tool.odin, compilerToolForFiletype("odin").?);
+    try std.testing.expect(compilerToolForFiletype("c") == null);
+    try std.testing.expect(compilerToolForFiletype("python") == null);
 }
 
 test "find returns null for unknown filetypes" {
