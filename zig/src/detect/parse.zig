@@ -19,6 +19,8 @@ pub fn detectToolOutputWithIO(io: std.Io, allocator: std.mem.Allocator, tool: To
         .go => &[_][]const u8{ "go", "help" },
         .cargo => &[_][]const u8{ "cargo", "--list" },
         .odin => &[_][]const u8{ "odin", "help" },
+        .dart => &[_][]const u8{ "dart", "--help" },
+        .swift => &[_][]const u8{ "swift", "--help" },
     };
 
     const result = try std.process.run(allocator, io, .{
@@ -57,6 +59,8 @@ pub fn parseDetectCommandNames(allocator: std.mem.Allocator, tool: Tool, output:
         .go => try parseGoHelpCommandNames(allocator, &commands, output),
         .cargo => try parseCargoCommandNames(allocator, &commands, output),
         .odin => try parseOdinCommandNames(allocator, &commands, output),
+        .dart => try parseDartHelpCommandNames(allocator, &commands, output),
+        .swift => try parseSwiftHelpCommandNames(allocator, &commands, output),
     }
 
     return try commands.toOwnedSlice(allocator);
@@ -167,6 +171,45 @@ fn isOdinCommandEntryLine(line: []const u8) bool {
         return !std.ascii.isWhitespace(line[1]);
     }
 
+    return line.len > 2 and line[0] == ' ' and line[1] == ' ' and line[2] != ' ' and line[2] != '\t';
+}
+
+fn parseDartHelpCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8), output: []const u8) !void {
+    var in_commands_section = false;
+    var lines = std.mem.splitScalar(u8, output, '\n');
+
+    while (lines.next()) |raw_line| {
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
+        if (!in_commands_section) {
+            if (std.mem.eql(u8, trimmed, "Available commands:")) in_commands_section = true;
+            continue;
+        }
+
+        if (std.mem.startsWith(u8, trimmed, "Run \"dart help")) break;
+        if (!isTwoSpaceCommandEntryLine(line)) continue;
+        if (extractCommandToken(trimmed)) |token| try pushUniqueCommand(allocator, commands, token);
+    }
+}
+
+fn parseSwiftHelpCommandNames(allocator: std.mem.Allocator, commands: *std.ArrayList([]u8), output: []const u8) !void {
+    var in_commands_section = false;
+    var lines = std.mem.splitScalar(u8, output, '\n');
+
+    while (lines.next()) |raw_line| {
+        const line = common.stripTrailingCR(raw_line);
+        const trimmed = common.trimSpaces(line);
+        if (!in_commands_section) {
+            if (std.mem.eql(u8, trimmed, "SUBCOMMANDS:")) in_commands_section = true;
+            continue;
+        }
+
+        if (!isTwoSpaceCommandEntryLine(line)) continue;
+        if (extractCommandToken(trimmed)) |token| try pushUniqueCommand(allocator, commands, token);
+    }
+}
+
+fn isTwoSpaceCommandEntryLine(line: []const u8) bool {
     return line.len > 2 and line[0] == ' ' and line[1] == ' ' and line[2] != ' ' and line[2] != '\t';
 }
 
@@ -286,6 +329,30 @@ test "parse odin commands stops before the help footer" {
 
     try std.testing.expectEqual(@as(usize, 1), commands.len);
     try std.testing.expectEqualStrings("build", commands[0]);
+}
+
+test "parse dart commands stops at help footer" {
+    const allocator = std.testing.allocator;
+    const output = "Available commands:\n  analyze    Analyze Dart code\n  run        Run a Dart program\n\nRun \"dart help <command>\" for more information.\n";
+    const commands = try parseDetectCommandNames(allocator, .dart, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 2), commands.len);
+    try std.testing.expectEqualStrings("analyze", commands[0]);
+    try std.testing.expectEqualStrings("run", commands[1]);
+}
+
+test "parse swift commands from subcommands section" {
+    const allocator = std.testing.allocator;
+    const output = "SUBCOMMANDS:\n  build      Build sources into binary products\n  package     Perform package operations\n  run         Run an executable product\n  test        Run package tests\n";
+    const commands = try parseDetectCommandNames(allocator, .swift, output);
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqual(@as(usize, 4), commands.len);
+    try std.testing.expectEqualStrings("build", commands[0]);
+    try std.testing.expectEqualStrings("package", commands[1]);
+    try std.testing.expectEqualStrings("run", commands[2]);
+    try std.testing.expectEqualStrings("test", commands[3]);
 }
 
 test "parse command names rejects unsafe tool output" {

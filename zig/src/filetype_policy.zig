@@ -149,6 +149,16 @@ const entries = [_]Entry{
         .compiler_tool = .odin,
     },
     .{
+        .filetype = "dart",
+        .detect_key = "dart",
+        .compiler_tool = .dart,
+    },
+    .{
+        .filetype = "swift",
+        .detect_key = "swift",
+        .compiler_tool = .swift,
+    },
+    .{
         .filetype = "bash",
         .auto_kind = null,
         .system_query = null,
@@ -220,6 +230,8 @@ test "compilerToolForFiletype maps supported command-list tools" {
     try std.testing.expectEqual(detect_types.Tool.go, compilerToolForFiletype("go").?);
     try std.testing.expectEqual(detect_types.Tool.cargo, compilerToolForFiletype("rust").?);
     try std.testing.expectEqual(detect_types.Tool.odin, compilerToolForFiletype("odin").?);
+    try std.testing.expectEqual(detect_types.Tool.dart, compilerToolForFiletype("dart").?);
+    try std.testing.expectEqual(detect_types.Tool.swift, compilerToolForFiletype("swift").?);
     try std.testing.expect(compilerToolForFiletype("c") == null);
     try std.testing.expect(compilerToolForFiletype("python") == null);
 }

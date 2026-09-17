@@ -5,6 +5,8 @@ pub const Tool = enum {
     go,
     cargo,
     odin,
+    dart,
+    swift,
 };
 
 pub const Options = struct {
@@ -16,6 +18,8 @@ pub fn parseTool(value: []const u8) !Tool {
     if (std.ascii.eqlIgnoreCase(value, "go")) return .go;
     if (std.ascii.eqlIgnoreCase(value, "cargo")) return .cargo;
     if (std.ascii.eqlIgnoreCase(value, "odin")) return .odin;
+    if (std.ascii.eqlIgnoreCase(value, "dart")) return .dart;
+    if (std.ascii.eqlIgnoreCase(value, "swift")) return .swift;
     return error.InvalidDetectTool;
 }
 
@@ -32,6 +36,8 @@ test "parseTool accepts case-insensitive tool names" {
     try std.testing.expectEqual(Tool.go, try parseTool("go"));
     try std.testing.expectEqual(Tool.cargo, try parseTool("CARGO"));
     try std.testing.expectEqual(Tool.odin, try parseTool("Odin"));
+    try std.testing.expectEqual(Tool.dart, try parseTool("Dart"));
+    try std.testing.expectEqual(Tool.swift, try parseTool("SWIFT"));
 }
 
 test "parseTool rejects unknown tool names" {

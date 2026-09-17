@@ -28,7 +28,7 @@ fn printUsage() void {
         \\  zignite --quickfix [--max-lines=N] [--max-bytes=N] [--strip-ansi=0|1]
         \\                    [--strip-max-lines=N] [--parse-diagnostics=0|1]
         \\  zignite --quickfix-daemon
-        \\  zignite --detect --tool=zig|go|cargo|odin
+        \\  zignite --detect --tool=zig|go|cargo|odin|dart|swift
         \\  zignite --detect-daemon
         \\  zignite --project-parse-daemon
         \\  zignite --project-parse --kind=make|package-json|maven|gradle|cmake|bazel|bazel-workspace|meson|cargo|pyproject|go|go-mod|go-work --path=/abs/path
