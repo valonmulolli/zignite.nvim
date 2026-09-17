@@ -209,6 +209,8 @@ fn parseKind(value: []const u8) !Kind {
     if (std.ascii.eqlIgnoreCase(value, "go-auto")) return .go_auto;
     if (std.ascii.eqlIgnoreCase(value, "go-mod")) return .go_mod;
     if (std.ascii.eqlIgnoreCase(value, "go-work")) return .go_work;
+    if (std.ascii.eqlIgnoreCase(value, "dart-auto")) return .dart_auto;
+    if (std.ascii.eqlIgnoreCase(value, "swift-auto")) return .swift_auto;
     if (std.ascii.eqlIgnoreCase(value, "system")) return .system;
     return error.InvalidProjectParseKind;
 }

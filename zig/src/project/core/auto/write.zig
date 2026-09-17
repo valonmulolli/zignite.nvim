@@ -5,6 +5,7 @@ const common = @import("../common.zig");
 const direct = @import("direct.zig");
 const emit = @import("../emit.zig");
 const make = @import("../../make/api.zig");
+const pathing = @import("../../../pathing.zig");
 const project_io = @import("../io.zig");
 const signature = @import("signature.zig");
 const types = @import("../types.zig");
@@ -168,6 +169,31 @@ fn writeJVMAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allo
         defer allocator.free(build_contents);
         try emit.writeDirectOutputWithIO(io, stdout, allocator, .{ .kind = .gradle, .path = build_file }, build_contents);
     }
+}
+
+pub fn writeDartAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
+    return writeManifestRootWithIO(io, stdout, allocator, options.path, "pubspec.yaml", "dart");
+}
+
+pub fn writeSwiftAutoWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options) !bool {
+    return writeManifestRootWithIO(io, stdout, allocator, options.path, "Package.swift", "swift");
+}
+
+fn writeManifestRootWithIO(
+    io: std.Io,
+    stdout: anytype,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    manifest_name: []const u8,
+    system_name: []const u8,
+) !bool {
+    const manifest_path = try project_io.findParentFileAllocWithIO(io, allocator, path, manifest_name, 12);
+    defer if (manifest_path) |value| allocator.free(value);
+    if (manifest_path == null) return true;
+
+    try common.writeSafeStringRecord(stdout, "ROOT", .{pathing.dirOrDot(manifest_path.?)});
+    try common.writeSafeStringRecord(stdout, "SYSTEM", .{system_name});
+    return true;
 }
 
 fn writeCFamilyAutoOutputWithIO(io: std.Io, stdout: anytype, allocator: std.mem.Allocator, options: Options, result: build_system.Result) !void {
