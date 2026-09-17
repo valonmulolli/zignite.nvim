@@ -198,6 +198,7 @@ test "writeAutoOutput emits zig-auto records from build steps" {
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tzig build run\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\twatch\tzig build watch\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbundle\tzig build bundle\n") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tuninstall\t") == null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tlive\tzig build watch\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trelease\tzig build bundle\n") != null);
 }
