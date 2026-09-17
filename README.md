@@ -181,11 +181,13 @@ Project steps win when names overlap:
 ```
 
 The supported command-list interfaces are `zig --help`, `go help`, `cargo
---list`, and `odin help`. The C/C++, Python, Java, JavaScript/TypeScript, and
-Fortran tools expose compiler flags or project goals rather than a stable
-subcommand list, so those filetypes continue to use their existing runners and
-project/build-system detection. The Zig 0.16 `uninstall` build step is omitted
-because the standard library still panics when that step is executed.
+--list`, `odin help`, Dart `dart --help`, and Swift Package Manager `swift
+--help`. The C/C++, Python, Java/Kotlin, JavaScript/TypeScript, Ruby, PHP,
+Perl, R, Julia, shell, Haskell, and Fortran tools expose compiler flags or
+project goals rather than a stable subcommand list, so those filetypes
+continue to use their existing runners and project/build-system detection.
+The Zig 0.16 `uninstall` build step is omitted because the standard library
+still panics when that step is executed.
 
 Use:
 
@@ -211,7 +213,7 @@ picker = {
 Picker commands are built from your configured `build_commands.<filetype>` plus
 auto-detected commands when available. Detection currently covers:
 
-- tool commands for `zig`, `go`, `rust` (Cargo), and `odin`
+- tool commands for `zig`, `go`, `rust` (Cargo), `odin`, `dart`, and `swift`
 - project/build-system commands for C/C++, Python, Java/Kotlin, JavaScript/TypeScript, and Fortran
 - project commands for `Makefile`, `package.json`, Maven, Gradle, CMake, Meson, Bazel, `Cargo.toml`, `go.mod`, `go.work`, and `pyproject.toml`
 - Python project workflows for `uv`, `requirements.txt`/`pip`, and conda (`environment.yml` / `environment.yaml`)

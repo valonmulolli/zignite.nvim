@@ -173,11 +173,13 @@ test "parseArgs returns tool when --tool= is provided" {
     try std.testing.expectEqual(Tool.zig, options.tool);
 }
 
-test "parseArgs accepts all four tool variants" {
+test "parseArgs accepts all supported tool variants" {
     try std.testing.expectEqual(Tool.zig, (try parseArgs(&.{ "--detect", "--tool=zig" })).tool);
     try std.testing.expectEqual(Tool.go, (try parseArgs(&.{ "--detect", "--tool=go" })).tool);
     try std.testing.expectEqual(Tool.cargo, (try parseArgs(&.{ "--detect", "--tool=cargo" })).tool);
     try std.testing.expectEqual(Tool.odin, (try parseArgs(&.{ "--detect", "--tool=odin" })).tool);
+    try std.testing.expectEqual(Tool.dart, (try parseArgs(&.{ "--detect", "--tool=dart" })).tool);
+    try std.testing.expectEqual(Tool.swift, (try parseArgs(&.{ "--detect", "--tool=swift" })).tool);
 }
 
 test "parseArgs rejects missing --tool" {

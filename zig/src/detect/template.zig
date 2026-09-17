@@ -118,14 +118,43 @@ fn detectCommandTemplate(allocator: std.mem.Allocator, tool: Tool, name: []const
         return buildToolCommandTemplate(allocator, "cargo", name);
     }
 
-    if (std.mem.eql(u8, name, "build")) return allocator.dupe(u8, "odin build .");
-    if (std.mem.eql(u8, name, "check")) return allocator.dupe(u8, "odin check .");
-    if (std.mem.eql(u8, name, "doc")) return allocator.dupe(u8, "odin doc .");
-    if (std.mem.eql(u8, name, "query")) return std.fmt.allocPrint(allocator, "odin query {s}", .{BUILD_ARG_PLACEHOLDER});
-    if (std.mem.eql(u8, name, "run")) return allocator.dupe(u8, "odin run .");
-    if (std.mem.eql(u8, name, "test")) return allocator.dupe(u8, "odin test .");
-    if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "odin version");
-    return buildToolCommandTemplate(allocator, "odin", name);
+    if (tool == .odin) {
+        if (std.mem.eql(u8, name, "build")) return allocator.dupe(u8, "odin build .");
+        if (std.mem.eql(u8, name, "check")) return allocator.dupe(u8, "odin check .");
+        if (std.mem.eql(u8, name, "doc")) return allocator.dupe(u8, "odin doc .");
+        if (std.mem.eql(u8, name, "query")) return std.fmt.allocPrint(allocator, "odin query {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "run")) return allocator.dupe(u8, "odin run .");
+        if (std.mem.eql(u8, name, "test")) return allocator.dupe(u8, "odin test .");
+        if (std.mem.eql(u8, name, "version")) return allocator.dupe(u8, "odin version");
+        return buildToolCommandTemplate(allocator, "odin", name);
+    }
+
+    if (tool == .dart) {
+        if (std.mem.eql(u8, name, "analyze")) return allocator.dupe(u8, "dart analyze");
+        if (std.mem.eql(u8, name, "build")) return std.fmt.allocPrint(allocator, "dart build {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "compile")) return std.fmt.allocPrint(allocator, "dart compile {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "create")) return std.fmt.allocPrint(allocator, "dart create {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "devtools")) return allocator.dupe(u8, "dart devtools");
+        if (std.mem.eql(u8, name, "doc")) return std.fmt.allocPrint(allocator, "dart doc {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "fix")) return std.fmt.allocPrint(allocator, "dart fix {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "format")) return std.fmt.allocPrint(allocator, "dart format {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "info")) return allocator.dupe(u8, "dart info");
+        if (std.mem.eql(u8, name, "pub")) return std.fmt.allocPrint(allocator, "dart pub {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "run")) return std.fmt.allocPrint(allocator, "dart run {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "test")) return std.fmt.allocPrint(allocator, "dart test {s}", .{BUILD_ARG_PLACEHOLDER});
+        return buildToolCommandTemplate(allocator, "dart", name);
+    }
+
+    if (tool == .swift) {
+        if (std.mem.eql(u8, name, "build")) return allocator.dupe(u8, "swift build");
+        if (std.mem.eql(u8, name, "package")) return std.fmt.allocPrint(allocator, "swift package {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "repl")) return allocator.dupe(u8, "swift repl");
+        if (std.mem.eql(u8, name, "run")) return std.fmt.allocPrint(allocator, "swift run {s}", .{BUILD_ARG_PLACEHOLDER});
+        if (std.mem.eql(u8, name, "test")) return allocator.dupe(u8, "swift test");
+        return buildToolCommandTemplate(allocator, "swift", name);
+    }
+
+    return error.InvalidDetectTool;
 }
 
 fn buildToolCommandTemplate(allocator: std.mem.Allocator, tool: []const u8, name: []const u8) ![]u8 {
@@ -222,6 +251,27 @@ test "detect command records map odin subcommands" {
 
     try std.testing.expectEqualStrings("build\todin build .", commands[0]);
     try std.testing.expectEqualStrings("test\todin test .", commands[1]);
+}
+
+test "detect command records map dart subcommands" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .dart, &.{ "analyze", "run", "test" });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("analyze\tdart analyze", commands[0]);
+    try std.testing.expectEqualStrings("run\tdart run $zignite_args", commands[1]);
+    try std.testing.expectEqualStrings("test\tdart test $zignite_args", commands[2]);
+}
+
+test "detect command records map swift subcommands" {
+    const allocator = std.testing.allocator;
+    const commands = try buildDetectCommandRecords(allocator, .swift, &.{ "build", "package", "run", "test" });
+    defer types.freeOwnedCommandList(allocator, commands);
+
+    try std.testing.expectEqualStrings("build\tswift build", commands[0]);
+    try std.testing.expectEqualStrings("package\tswift package $zignite_args", commands[1]);
+    try std.testing.expectEqualStrings("run\tswift run $zignite_args", commands[2]);
+    try std.testing.expectEqualStrings("test\tswift test", commands[3]);
 }
 
 test "detect command records skip unsafe names" {
