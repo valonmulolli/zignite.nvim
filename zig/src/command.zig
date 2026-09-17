@@ -305,12 +305,14 @@ fn requestChildForceTermination(child_id: std.process.Child.Id, control: *const 
 }
 
 fn requestChildTermination(child_id: std.process.Child.Id, control: *const ChildControl) void {
-    _ = control;
     switch (builtin.os.tag) {
         .windows => {
             // Windows has no portable graceful process-tree signal. Terminate
-            // the leader during the grace window and use the Job Object for
-            // the forceful descendant cleanup if the grace period expires.
+            // the Job Object immediately so descendants cannot outlive a leader
+            // that exits before the coordinator's grace window expires.
+            if (control.job) |job| {
+                if (TerminateJobObject(job, 1).toBool()) return;
+            }
             _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
         },
         .wasi => {},
