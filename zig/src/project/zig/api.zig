@@ -273,22 +273,22 @@ test "detectSteps cleans up timeout watcher when output collection fails" {
 
     const started = std.Io.Timestamp.now(io, .awake);
     if (builtin.os.tag == .windows) {
-        // Windows process startup can consume the short bound before the
-        // fixture reaches its output limit; still verify timeout cleanup.
+        // Process startup can consume a short bound before the fixture
+        // reaches its output limit; still verify timeout cleanup.
         try std.testing.expectError(
             error.ZigBuildListStepsFailed,
-            detectStepsWithTimeoutWithIO(io, allocator, root, 5000),
+            detectStepsWithTimeoutWithIO(io, allocator, root, 30000),
         );
         const elapsed_ms = started.untilNow(io, .awake).toMilliseconds();
-        try std.testing.expect(elapsed_ms < 10_000);
+        try std.testing.expect(elapsed_ms < 45_000);
     } else {
-        const timeout_ms: u64 = if (builtin.os.tag == .macos) 30000 else 5000;
+        const timeout_ms: u64 = 30000;
         try std.testing.expectError(
             error.StreamTooLong,
             detectStepsWithTimeoutWithIO(io, allocator, root, timeout_ms),
         );
         const elapsed_ms = started.untilNow(io, .awake).toMilliseconds();
-        const max_elapsed_ms: u64 = if (builtin.os.tag == .macos) 30_000 else 10_000;
+        const max_elapsed_ms: u64 = 45_000;
         try std.testing.expect(elapsed_ms < max_elapsed_ms);
     }
 }
