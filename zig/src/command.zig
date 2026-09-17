@@ -21,12 +21,16 @@ extern "kernel32" fn TerminateJobObject(
 const ChildControl = struct {
     job: if (builtin.os.tag == .windows) ?std.os.windows.HANDLE else void,
 
-    fn init(child_id: std.process.Child.Id) @This() {
+    fn empty() @This() {
+        return .{ .job = if (comptime builtin.os.tag == .windows) null else {} };
+    }
+
+    fn init(child_id: std.process.Child.Id) !@This() {
         if (comptime builtin.os.tag == .windows) {
-            const job = CreateJobObjectW(null, null) orelse return .{ .job = null };
+            const job = CreateJobObjectW(null, null) orelse return error.WindowsJobObjectUnavailable;
             if (!AssignProcessToJobObject(job, child_id).toBool()) {
                 std.os.windows.CloseHandle(job);
-                return .{ .job = null };
+                return error.WindowsJobObjectUnavailable;
             }
             return .{ .job = job };
         }
@@ -47,14 +51,20 @@ const SpawnedChild = struct {
     child: std.process.Child,
     control: ChildControl,
 
-    fn spawn(io: std.Io, options: std.process.SpawnOptions) !@This() {
+    fn spawn(io: std.Io, options: std.process.SpawnOptions, require_process_tree: bool) !@This() {
         var spawn_options = options;
         if (comptime builtin.os.tag == .windows) {
             spawn_options.start_suspended = true;
         }
 
         var child = try std.process.spawn(io, spawn_options);
-        var control = ChildControl.init(child.id.?);
+        var control = if (require_process_tree)
+            ChildControl.init(child.id.?) catch |err| {
+                child.kill(io);
+                return err;
+            }
+        else
+            ChildControl.empty();
         errdefer {
             child.kill(io);
             control.deinit();
@@ -118,7 +128,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
-        });
+        }, timeout_ms != null);
     } else blk: {
         const full_command = args[command_idx];
         const shell_flag = if (is_windows) "/C" else "-c";
@@ -129,7 +139,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
-        });
+        }, timeout_ms != null);
     };
     defer spawned.control.deinit();
 
@@ -341,7 +351,7 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    }) catch |err| {
+    }, true) catch |err| {
         std.log.warn("Failed to spawn cleanup command: {}", .{err});
         return;
     };
@@ -377,7 +387,7 @@ test "timeout termination includes descendant processes" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
     requestChildTermination(spawned.child.id.?, &spawned.control);
     _ = try spawned.child.wait(std.testing.io);
@@ -400,7 +410,7 @@ test "timeout coordinator force-kills processes that ignore term" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
     const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
     switch (term) {
@@ -422,7 +432,7 @@ test "windows timeout coordinator terminates a suspended child" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
 
     const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
