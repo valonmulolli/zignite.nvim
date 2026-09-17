@@ -19,6 +19,7 @@ function M.run_tests()
         "test_input_guard",
         "test_json_result",
         "test_registry",
+        "test_transport",
     }
 
     local passed = 0

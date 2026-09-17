@@ -333,6 +333,21 @@ end
 
 ---@param worker table
 ---@return nil
+local function fail_protocol_request(worker)
+	local request = worker and worker.active_request
+	if not request then
+		return
+	end
+
+	-- A malformed frame makes the stream position unknowable. Do not reuse the
+	-- worker, because subsequent requests could consume stale output.
+	worker.active_request = nil
+	finalize_request(request, nil, true)
+	stop_shared_worker(worker)
+end
+
+---@param worker table
+---@return nil
 start_next_request = function(worker)
 	if worker.stopped or worker.active_request or #worker.queue == 0 then
 		return
@@ -344,8 +359,8 @@ start_next_request = function(worker)
 	request.error = nil
 	request.started = false
 
-	local ok_send = pcall(vim.fn.chansend, worker.job_id, request.payload)
-	if ok_send then
+	local ok_send, sent = pcall(vim.fn.chansend, worker.job_id, request.payload)
+	if ok_send and tonumber(sent) and tonumber(sent) > 0 then
 		return
 	end
 
@@ -405,7 +420,11 @@ local function process_protocol_line(worker, line)
 	local protocol = request.protocol
 
 	local begin_id = line:match("^" .. protocol.res_begin .. "%s+(%d+)$")
-	if begin_id and tonumber(begin_id) == request.request_id then
+	if begin_id then
+		if request.started or tonumber(begin_id) ~= request.request_id then
+			fail_protocol_request(worker)
+			return
+		end
 		request.lines = {}
 		request.error = nil
 		request.started = true
@@ -417,13 +436,21 @@ local function process_protocol_line(worker, line)
 	end
 
 	local error_id, error_message = line:match("^" .. protocol.res_err .. "%s+(%d+)%s+(.+)$")
-	if error_id and tonumber(error_id) == request.request_id then
+	if error_id then
+		if tonumber(error_id) ~= request.request_id then
+			fail_protocol_request(worker)
+			return
+		end
 		request.error = trim_text(error_message)
 		return
 	end
 
 	local end_id = line:match("^" .. protocol.res_end .. "%s+(%d+)$")
-	if end_id and tonumber(end_id) == request.request_id then
+	if end_id then
+		if tonumber(end_id) ~= request.request_id then
+			fail_protocol_request(worker)
+			return
+		end
 		if request.error and request.error ~= "" then
 			finalize_request(request, nil, true)
 		else
@@ -431,6 +458,11 @@ local function process_protocol_line(worker, line)
 		end
 		worker.active_request = nil
 		start_next_request(worker)
+		return
+	end
+
+	if line:sub(1, 1) ~= "\t" then
+		fail_protocol_request(worker)
 		return
 	end
 
@@ -517,8 +549,10 @@ function M.new(opts)
 		end
 		if type(vim.fn.jobwait) == "function" and type(worker.job_id) == "number" and worker.job_id > 0 then
 			local ok, statuses = pcall(vim.fn.jobwait, { worker.job_id }, 0)
-			if ok and type(statuses) == "table" and tonumber(statuses[1]) and tonumber(statuses[1]) >= 0 then
-				return false
+			if ok and type(statuses) == "table" and tonumber(statuses[1]) then
+				-- Neovim reports -1 while running and negative values for
+				-- signal/interrupt states after the process is gone.
+				return tonumber(statuses[1]) == -1
 			end
 		end
 		return true
