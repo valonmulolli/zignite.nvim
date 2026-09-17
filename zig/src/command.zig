@@ -406,3 +406,26 @@ test "timeout coordinator force-kills processes that ignore term" {
         else => return error.ProcessWasNotForceKilled,
     }
 }
+
+test "windows timeout coordinator terminates a suspended child" {
+    if (comptime builtin.os.tag != .windows) return;
+
+    const shell_args = [_][]const u8{
+        "cmd.exe",
+        "/C",
+        "ping.exe -n 6 127.0.0.1 > NUL",
+    };
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
+        .argv = &shell_args,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    defer spawned.control.deinit();
+
+    const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
+    switch (term) {
+        .exited => |code| try std.testing.expect(code != 0),
+        else => return error.UnexpectedWindowsTermination,
+    }
+}
