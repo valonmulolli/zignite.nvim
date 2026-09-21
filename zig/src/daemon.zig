@@ -43,9 +43,11 @@ pub fn runWithIO(
         const line = frame.stripTrailingCR(line_owned);
         if (line.len == 0) continue;
 
-        if (try dispatch.handleDaemonLine(arena_alloc, io, environ_map, reader, stdout, line)) {
-            continue;
-        }
+        const handled = dispatch.handleDaemonLine(arena_alloc, io, environ_map, reader, stdout, line) catch |err| {
+            if (err == error.UnexpectedEof) break;
+            return err;
+        };
+        if (handled) continue;
     }
 }
 
@@ -305,6 +307,23 @@ test "runWithIO drains invalid run_resolve payload before the next request" {
         "@@ZRUN_RES_BEGIN 8\n@@ZRUN_RES_ERR 8 InvalidRunResolvePayload\n@@ZRUN_RES_END 8\n@@ZHLT_RES_BEGIN 7\n@@ZHLT_RES_END 7\n",
         out.written(),
     );
+}
+
+test "runWithIO stops cleanly on a truncated request frame" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{
+        "@@ZBR_REQ_BEGIN 8",
+        "\t--build-resolve",
+        "@@ZHLT_REQ_BEGIN 9",
+        "@@ZHLT_REQ_END 9",
+    } };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try runWithIO(allocator, std.testing.io, null, &reader, &out.writer);
+
+    try std.testing.expectEqualStrings("", out.written());
+    try std.testing.expectEqual(@as(usize, 4), reader.index);
 }
 
 test "runWithIO health endpoint responds to ping" {
