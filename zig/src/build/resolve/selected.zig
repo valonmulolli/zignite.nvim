@@ -1,4 +1,5 @@
 const std = @import("std");
+const project_common = @import("../../project/core/common.zig");
 const command = @import("command.zig");
 const detected = @import("detected.zig");
 const pathing = @import("../../pathing.zig");
@@ -157,7 +158,11 @@ test "resolveCommandExecution substitutes file path variables" {
     });
     defer resolved.deinit(allocator);
 
-    try std.testing.expectEqualStrings("glow '/home/user/readme.md'", resolved.exec_command);
+    const expected_path = try project_common.quoteShellArgAlloc(allocator, "/home/user/readme.md");
+    defer allocator.free(expected_path);
+    const expected_command = try std.fmt.allocPrint(allocator, "glow {s}", .{expected_path});
+    defer allocator.free(expected_command);
+    try std.testing.expectEqualStrings(expected_command, resolved.exec_command);
     try std.testing.expectEqualStrings("glow", resolved.exec_argv.items[0]);
     try std.testing.expectEqualStrings("/home/user/readme.md", resolved.exec_argv.items[1]);
 }
@@ -176,7 +181,11 @@ test "resolveCommandExecution substitutes file path in compile command" {
     });
     defer resolved.deinit(allocator);
 
-    try std.testing.expectEqualStrings("go run '/project/main.go'", resolved.exec_command);
+    const expected_path = try project_common.quoteShellArgAlloc(allocator, "/project/main.go");
+    defer allocator.free(expected_path);
+    const expected_command = try std.fmt.allocPrint(allocator, "go run {s}", .{expected_path});
+    defer allocator.free(expected_command);
+    try std.testing.expectEqualStrings(expected_command, resolved.exec_command);
     try std.testing.expectEqualStrings("go", resolved.exec_argv.items[0]);
     try std.testing.expectEqualStrings("run", resolved.exec_argv.items[1]);
     try std.testing.expectEqualStrings("/project/main.go", resolved.exec_argv.items[2]);

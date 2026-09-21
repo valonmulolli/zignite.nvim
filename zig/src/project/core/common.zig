@@ -275,7 +275,11 @@ test "quoteShellArgAlloc escapes embedded single quotes" {
     const quoted = try quoteShellArgAlloc(allocator, "cmd/app's");
     defer allocator.free(quoted);
 
-    try std.testing.expectEqualStrings("'cmd/app'\"'\"'s'", quoted);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("\"cmd/app's\"", quoted);
+    } else {
+        try std.testing.expectEqualStrings("'cmd/app'\"'\"'s'", quoted);
+    }
 }
 
 test "quoteShellArgAlloc reserves space for repeated single quotes" {
@@ -286,7 +290,8 @@ test "quoteShellArgAlloc reserves space for repeated single quotes" {
     const quoted = try quoteShellArgAlloc(allocator, &value);
     defer allocator.free(quoted);
 
-    try std.testing.expectEqual(@as(usize, 2 + value.len + value.len * 4), quoted.len);
+    const expected_len = if (comptime builtin.os.tag == .windows) 2 + value.len else 2 + value.len + value.len * 4;
+    try std.testing.expectEqual(@as(usize, expected_len), quoted.len);
 }
 
 test "quoteShellArgIfNeededAlloc preserves safe args and quotes spaces" {
@@ -465,12 +470,20 @@ test "quoteShellArgIfNeededAlloc quotes empty string" {
     const allocator = std.testing.allocator;
     const quoted = try quoteShellArgIfNeededAlloc(allocator, "");
     defer allocator.free(quoted);
-    try std.testing.expectEqualStrings("''", quoted);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("\"\"", quoted);
+    } else {
+        try std.testing.expectEqualStrings("''", quoted);
+    }
 }
 
 test "quoteShellArgAlloc wraps simple arg without escaping" {
     const allocator = std.testing.allocator;
     const quoted = try quoteShellArgAlloc(allocator, "simple");
     defer allocator.free(quoted);
-    try std.testing.expectEqualStrings("'simple'", quoted);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("\"simple\"", quoted);
+    } else {
+        try std.testing.expectEqualStrings("'simple'", quoted);
+    }
 }

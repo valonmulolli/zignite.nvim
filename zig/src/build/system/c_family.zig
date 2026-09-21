@@ -255,7 +255,11 @@ test "make target commands quote shell-special target names" {
     const command = try makeTargetCommandAlloc(std.testing.allocator, "run`touch`");
     defer std.testing.allocator.free(command);
 
-    try std.testing.expectEqualStrings("make 'run`touch`'", command);
+    const expected_target = try project_common.quoteShellArgIfNeededAlloc(std.testing.allocator, "run`touch`");
+    defer std.testing.allocator.free(expected_target);
+    const expected = try std.fmt.allocPrint(std.testing.allocator, "make {s}", .{expected_target});
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, command);
 }
 
 fn findMakefilePathAlloc(allocator: std.mem.Allocator, root: []const u8) !?[]u8 {

@@ -1,79 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const process_tree = @import("process_tree.zig");
 
-const timeout_grace_ms: u64 = 100;
-
-extern "kernel32" fn CreateJobObjectW(
-    attributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
-    name: ?std.os.windows.LPCWSTR,
-) callconv(.winapi) ?std.os.windows.HANDLE;
-
-extern "kernel32" fn AssignProcessToJobObject(
-    job: std.os.windows.HANDLE,
-    process: std.os.windows.HANDLE,
-) callconv(.winapi) std.os.windows.BOOL;
-
-extern "kernel32" fn TerminateJobObject(
-    job: std.os.windows.HANDLE,
-    exit_code: std.os.windows.UINT,
-) callconv(.winapi) std.os.windows.BOOL;
-
-const ChildControl = struct {
-    job: if (builtin.os.tag == .windows) ?std.os.windows.HANDLE else void,
-
-    fn init(child_id: std.process.Child.Id) @This() {
-        if (comptime builtin.os.tag == .windows) {
-            const job = CreateJobObjectW(null, null) orelse return .{ .job = null };
-            if (!AssignProcessToJobObject(job, child_id).toBool()) {
-                std.os.windows.CloseHandle(job);
-                return .{ .job = null };
-            }
-            return .{ .job = job };
-        }
-        return .{ .job = {} };
-    }
-
-    fn deinit(self: *@This()) void {
-        if (comptime builtin.os.tag == .windows) {
-            if (self.job) |job| {
-                std.os.windows.CloseHandle(job);
-                self.job = null;
-            }
-        }
-    }
-};
-
-const SpawnedChild = struct {
-    child: std.process.Child,
-    control: ChildControl,
-
-    fn spawn(io: std.Io, options: std.process.SpawnOptions) !@This() {
-        var spawn_options = options;
-        if (comptime builtin.os.tag == .windows) {
-            spawn_options.start_suspended = true;
-        }
-
-        var child = try std.process.spawn(io, spawn_options);
-        var control = ChildControl.init(child.id.?);
-        errdefer {
-            child.kill(io);
-            control.deinit();
-        }
-
-        if (comptime builtin.os.tag == .windows) {
-            const status = std.os.windows.ntdll.NtResumeThread(child.thread_handle, null);
-            if (status != .SUCCESS) return error.Unexpected;
-        }
-
-        return .{ .child = child, .control = control };
-    }
-};
-
-const ProcessWaitResult = union(enum) {
-    child: std.process.Child.WaitError!std.process.Child.Term,
-    timeout: std.Io.Cancelable!void,
-    grace: std.Io.Cancelable!void,
-};
+const SpawnedChild = process_tree.SpawnedChild;
+const childProcessGroupId = process_tree.childProcessGroupId;
+const requestChildForceTermination = process_tree.requestChildForceTermination;
+const requestChildTermination = process_tree.requestChildTermination;
 
 pub fn run(io: std.Io, args: []const []const u8) !void {
     var timeout_ms: ?u64 = null;
@@ -118,7 +50,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
-        });
+        }, timeout_ms != null);
     } else blk: {
         const full_command = args[command_idx];
         const shell_flag = if (is_windows) "/C" else "-c";
@@ -129,7 +61,7 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
-        });
+        }, timeout_ms != null);
     };
     defer spawned.control.deinit();
 
@@ -148,85 +80,6 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
     std.process.exit(termToExitCode(term));
 }
 
-fn waitForChild(io: std.Io, child: *std.process.Child) std.process.Child.WaitError!std.process.Child.Term {
-    return child.wait(io);
-}
-
-fn sleepFor(io: std.Io, duration_ms: u64) std.Io.Cancelable!void {
-    const duration = std.math.cast(i64, duration_ms) orelse std.math.maxInt(i64);
-    return std.Io.sleep(io, std.Io.Duration.fromMilliseconds(duration), .awake);
-}
-
-fn waitForChildWithTimeout(
-    io: std.Io,
-    child: *std.process.Child,
-    control: *const ChildControl,
-    timeout_ms: ?u64,
-) !std.process.Child.Term {
-    if (timeout_ms == null) return child.wait(io);
-
-    var select_buffer: [3]ProcessWaitResult = undefined;
-    var select = std.Io.Select(ProcessWaitResult).init(io, &select_buffer);
-    select.async(.child, waitForChild, .{ io, child });
-    select.async(.timeout, sleepFor, .{ io, timeout_ms.? });
-
-    const child_id = child.id.?;
-    const first = select.await() catch |err| {
-        requestChildForceTermination(child_id, control);
-        select.cancelDiscard();
-        return err;
-    };
-
-    switch (first) {
-        .child => |result| {
-            select.cancelDiscard();
-            return result;
-        },
-        .timeout => |result| {
-            _ = result catch |err| {
-                requestChildForceTermination(child_id, control);
-                select.cancelDiscard();
-                return err;
-            };
-        },
-        .grace => unreachable,
-    }
-
-    requestChildTermination(child_id, control);
-    writeTimeoutMessage(io, timeout_ms.?);
-
-    select.async(.grace, sleepFor, .{ io, timeout_grace_ms });
-    const second = select.await() catch |err| {
-        requestChildForceTermination(child_id, control);
-        select.cancelDiscard();
-        return err;
-    };
-
-    switch (second) {
-        .child => |result| {
-            select.cancelDiscard();
-            return result;
-        },
-        .grace => |result| {
-            _ = result catch |err| {
-                requestChildForceTermination(child_id, control);
-                select.cancelDiscard();
-                return err;
-            };
-            requestChildForceTermination(child_id, control);
-            const final = select.await() catch |err| {
-                select.cancelDiscard();
-                return err;
-            };
-            switch (final) {
-                .child => |child_result| return child_result,
-                .timeout, .grace => unreachable,
-            }
-        },
-        .timeout => unreachable,
-    }
-}
-
 fn writeTimeoutMessage(io: std.Io, duration_ms: u64) void {
     var stderr_buffer: [128]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
@@ -236,6 +89,15 @@ fn writeTimeoutMessage(io: std.Io, duration_ms: u64) void {
     stderr_writer.interface.flush() catch |err| {
         std.log.err("Failed to flush timeout message: {}", .{err});
     };
+}
+
+fn waitForChildWithTimeout(
+    io: std.Io,
+    child: *std.process.Child,
+    control: *const process_tree.ChildControl,
+    timeout_ms: ?u64,
+) !std.process.Child.Term {
+    return process_tree.waitForChildWithTimeout(io, child, control, timeout_ms, true);
 }
 
 fn termToExitCode(term: std.process.Child.Term) u8 {
@@ -251,10 +113,6 @@ fn termToExitCode(term: std.process.Child.Term) u8 {
         },
         .unknown => |status| if (status > 255) 255 else @as(u8, @intCast(status)),
     };
-}
-
-fn childProcessGroupId() ?std.posix.pid_t {
-    return if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) null else 0;
 }
 
 test "termToExitCode passes through small exit codes" {
@@ -287,43 +145,6 @@ test "termToExitCode treats unknown as raw status" {
     try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
 }
 
-fn requestChildForceTermination(child_id: std.process.Child.Id, control: *const ChildControl) void {
-    switch (builtin.os.tag) {
-        .windows => {
-            if (control.job) |job| {
-                if (TerminateJobObject(job, 1).toBool()) return;
-            }
-            _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
-        },
-        .wasi => {},
-        else => {
-            _ = std.posix.kill(-child_id, .KILL) catch {
-                _ = std.posix.kill(child_id, .KILL) catch {};
-            };
-        },
-    }
-}
-
-fn requestChildTermination(child_id: std.process.Child.Id, control: *const ChildControl) void {
-    _ = control;
-    switch (builtin.os.tag) {
-        .windows => {
-            // Windows has no portable graceful process-tree signal. Terminate
-            // the leader during the grace window and use the Job Object for
-            // the forceful descendant cleanup if the grace period expires.
-            _ = std.os.windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1));
-        },
-        .wasi => {},
-        else => {
-            // The runner can start a shell or a process tree. Signal the
-            // dedicated group so descendants do not outlive the timeout.
-            _ = std.posix.kill(-child_id, .TERM) catch {
-                _ = std.posix.kill(child_id, .TERM) catch {};
-            };
-        },
-    }
-}
-
 fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
     const cleanup = cleanup_command orelse return;
     if (std.mem.trim(u8, cleanup, " \t\r\n").len == 0) return;
@@ -339,7 +160,7 @@ fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    }) catch |err| {
+    }, true) catch |err| {
         std.log.warn("Failed to spawn cleanup command: {}", .{err});
         return;
     };
@@ -375,7 +196,7 @@ test "timeout termination includes descendant processes" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
     requestChildTermination(spawned.child.id.?, &spawned.control);
     _ = try spawned.child.wait(std.testing.io);
@@ -398,7 +219,7 @@ test "timeout coordinator force-kills processes that ignore term" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
     const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
     switch (term) {
@@ -420,7 +241,7 @@ test "windows timeout coordinator terminates a suspended child" {
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
-    });
+    }, true);
     defer spawned.control.deinit();
 
     const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 50);
@@ -428,4 +249,57 @@ test "windows timeout coordinator terminates a suspended child" {
         .exited => |code| try std.testing.expect(code != 0),
         else => return error.UnexpectedWindowsTermination,
     }
+}
+
+test "windows timeout coordinator terminates descendants" {
+    if (comptime builtin.os.tag != .windows) return;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "child.bat",
+        .data = "@echo off\r\n" ++
+            "echo started > parent.marker\r\n" ++
+            "start \"\" /B cmd.exe /C \"ping.exe -n 6 127.0.0.1 > NUL & echo survived > descendant.marker\"\r\n" ++
+            "ping.exe -n 6 127.0.0.1 > NUL\r\n",
+    });
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+    const shell_args = [_][]const u8{ "cmd.exe", "/C", "child.bat" };
+
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
+        .argv = &shell_args,
+        .cwd = .{ .path = root },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }, true);
+    defer spawned.control.deinit();
+
+    var parent_started = false;
+    var attempt: usize = 0;
+    while (attempt < 100) : (attempt += 1) {
+        if (tmp.dir.access(std.testing.io, "parent.marker", .{})) |_| {
+            parent_started = true;
+            break;
+        } else |_| {
+            std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(20), .awake) catch unreachable;
+        }
+    }
+    try std.testing.expect(parent_started);
+
+    const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, 2000);
+    switch (term) {
+        .exited => |code| try std.testing.expect(code != 0),
+        else => return error.UnexpectedWindowsTermination,
+    }
+
+    std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(6500), .awake) catch unreachable;
+    try std.testing.expectError(
+        error.FileNotFound,
+        tmp.dir.access(std.testing.io, "descendant.marker", .{}),
+    );
 }

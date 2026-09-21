@@ -1,5 +1,6 @@
 const std = @import("std");
 const cache = @import("cache.zig");
+const project_common = @import("common.zig");
 const direct = @import("auto/direct.zig");
 const types = @import("types.zig");
 const write = @import("auto/write.zig");
@@ -57,7 +58,11 @@ test "writeAutoOutput emits cargo-auto records from source path" {
     }));
 
     try std.testing.expect(std.mem.find(u8, out.written(), "BIN\ttool\t1\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tcargo run --bin 'tool'\n") != null);
+    const quoted_bin = try project_common.quoteShellArgAlloc(allocator, "tool");
+    defer allocator.free(quoted_bin);
+    const expected_command = try std.fmt.allocPrint(allocator, "COMMAND\trun\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(expected_command);
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_command) != null);
 }
 
 test "writeAutoOutput emits go-auto records preferring go.work" {
@@ -92,7 +97,11 @@ test "writeAutoOutput emits go-auto records preferring go.work" {
     try std.testing.expect(std.mem.find(u8, out.written(), "SYSTEM\tgo\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "MODULE\tgithub.com/example/api\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_SELECTOR\t./services/api/cmd/api\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tgo run './services/api/cmd/api'\n") != null);
+    const quoted_selector = try project_common.quoteShellArgAlloc(allocator, "./services/api/cmd/api");
+    defer allocator.free(quoted_selector);
+    const expected_command = try std.fmt.allocPrint(allocator, "COMMAND\trun\tgo run {s}\n", .{quoted_selector});
+    defer allocator.free(expected_command);
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_command) != null);
 }
 
 test "writeAutoOutput emits make-backed commands for go projects with Makefile" {
@@ -531,7 +540,9 @@ test "writeAutoOutput emits dart package root for nested source" {
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{root});
+    const normalized_root = try project_common.normalizePathAlloc(allocator, root);
+    defer allocator.free(normalized_root);
+    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{normalized_root});
     defer allocator.free(expected_root);
 
     try std.testing.expect(try writeAutoOutput(&out.writer, allocator, .{
@@ -559,7 +570,9 @@ test "writeAutoOutput emits swift package root for nested source" {
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{root});
+    const normalized_root = try project_common.normalizePathAlloc(allocator, root);
+    defer allocator.free(normalized_root);
+    const expected_root = try std.fmt.allocPrint(allocator, "ROOT\t{s}\n", .{normalized_root});
     defer allocator.free(expected_root);
 
     try std.testing.expect(try writeAutoOutput(&out.writer, allocator, .{

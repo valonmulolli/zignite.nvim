@@ -68,14 +68,22 @@ test "writeBuildOutput emits cmake primary target and discovered run path" {
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_TARGET\tdemo-app\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_RUN_PATH\t./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n") != null);
+    const expected_clean = if (comptime @import("builtin").os.tag == .windows)
+        "COMMAND\tclean\tif exist build rmdir /S /Q build\n"
+    else
+        "COMMAND\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n";
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_clean) != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trelease\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\ttest\tctest --test-dir build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target demo-app && ./build/bin/demo-app\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tconfig\tcmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n") != null);
+    const expected_preferred_clean = if (comptime @import("builtin").os.tag == .windows)
+        "PREFERRED\tclean\tif exist build rmdir /S /Q build\n"
+    else
+        "PREFERRED\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n";
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_preferred_clean) != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tdebug\tcmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\trelease\tcmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\ttest\tctest --test-dir build\n") != null);
@@ -156,8 +164,16 @@ test "writeBuildOutput emits meson portable clean fallback without build tree" {
         \\executable('demo-app', 'src/main.cpp')
     ));
 
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n") != null);
+    const expected_clean = if (comptime @import("builtin").os.tag == .windows)
+        "COMMAND\tclean\tif exist build rmdir /S /Q build\n"
+    else
+        "COMMAND\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n";
+    const expected_preferred_clean = if (comptime @import("builtin").os.tag == .windows)
+        "PREFERRED\tclean\tif exist build rmdir /S /Q build\n"
+    else
+        "PREFERRED\tclean\tpython -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' -- build\n";
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_clean) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_preferred_clean) != null);
 }
 
 test "writeBuildOutput emits bazel commands and primary targets" {

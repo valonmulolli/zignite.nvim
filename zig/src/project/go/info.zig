@@ -159,7 +159,11 @@ test "parse go module info" {
     try std.testing.expect(info.primary_selector != null);
     try std.testing.expectEqualStrings("./cmd/app", info.primary_selector.?);
     try std.testing.expect(info.primary_run != null);
-    try std.testing.expectEqualStrings("go run './cmd/app'", info.primary_run.?);
+    const quoted_selector = try common.quoteShellArgAlloc(allocator, "./cmd/app");
+    defer allocator.free(quoted_selector);
+    const expected_run = try std.fmt.allocPrint(allocator, "go run {s}", .{quoted_selector});
+    defer allocator.free(expected_run);
+    try std.testing.expectEqualStrings(expected_run, info.primary_run.?);
 }
 
 test "parse go module info at project root keeps selector dot without package commands" {

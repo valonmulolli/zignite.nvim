@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config = @import("../config.zig");
 const frame = @import("../protocol/frame.zig");
 const protocol_stdio = @import("../protocol/stdio.zig");
@@ -95,12 +96,17 @@ test "resolve live plan json includes wrapped system argv" {
     var wrapped_argv = try system_command.buildSystemArgv(allocator, plan.exec_command.?, plan.exec_argv.items, null);
     defer system_command.deinitOwnedArgv(allocator, &wrapped_argv);
 
-    try std.testing.expect(wrapped_argv.items.len >= 6);
     try std.testing.expectEqualStrings("--timeout=1200", wrapped_argv.items[1]);
-    try std.testing.expectEqualStrings("--argv", wrapped_argv.items[2]);
-    try std.testing.expectEqualStrings("npm", wrapped_argv.items[3]);
-    try std.testing.expectEqualStrings("run", wrapped_argv.items[4]);
-    try std.testing.expectEqualStrings("live", wrapped_argv.items[5]);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(usize, 3), wrapped_argv.items.len);
+        try std.testing.expectEqualStrings("npm run live", wrapped_argv.items[2]);
+    } else {
+        try std.testing.expect(wrapped_argv.items.len >= 6);
+        try std.testing.expectEqualStrings("--argv", wrapped_argv.items[2]);
+        try std.testing.expectEqualStrings("npm", wrapped_argv.items[3]);
+        try std.testing.expectEqualStrings("run", wrapped_argv.items[4]);
+        try std.testing.expectEqualStrings("live", wrapped_argv.items[5]);
+    }
 }
 
 test "resolve live plan returns execution payload" {

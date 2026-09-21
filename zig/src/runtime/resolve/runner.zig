@@ -4,6 +4,7 @@ const build_detected = @import("../../build/resolve/detected.zig");
 const config_view = @import("../../config/view.zig");
 const builtin = @import("builtin.zig");
 const materialize = @import("materialize.zig");
+const project_common = @import("../../project/core/common.zig");
 const source = @import("../source.zig");
 const types = @import("types.zig");
 const zig_classifier = @import("zig_classifier.zig");
@@ -305,7 +306,11 @@ test "resolveRunner uses the most specific configured project override" {
 
     try std.testing.expectEqualStrings("project", resolved.source);
     try std.testing.expectEqualStrings("Service Project", resolved.name.?);
-    try std.testing.expectEqualStrings("make service '/tmp/repo/service/src/main.go'", resolved.command.?);
+    const quoted_file = try project_common.quoteShellArgAlloc(allocator, "/tmp/repo/service/src/main.go");
+    defer allocator.free(quoted_file);
+    const expected_command = try std.fmt.allocPrint(allocator, "make service {s}", .{quoted_file});
+    defer allocator.free(expected_command);
+    try std.testing.expectEqualStrings(expected_command, resolved.command.?);
     try std.testing.expectEqualStrings("/tmp/repo/service", resolved.cwd.?);
     try std.testing.expectEqualStrings("make clean", resolved.cleanup_command.?);
 }

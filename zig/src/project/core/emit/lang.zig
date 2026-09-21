@@ -93,12 +93,26 @@ test "writeLanguageOutput emits cargo primary run metadata with quoted bin names
 
     try std.testing.expect(std.mem.find(u8, out.written(), "BIN\tdemo's-tool\t1\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_BIN\tdemo's-tool\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_RUN\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_RELEASE_RUN\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\trun\tcargo run --bin 'demo'\"'\"'s-tool'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\trelease-run\tcargo run --release --bin 'demo'\"'\"'s-tool'\n") != null);
+    const quoted_bin = try common.quoteShellArgAlloc(allocator, "demo's-tool");
+    defer allocator.free(quoted_bin);
+    const primary_run = try std.fmt.allocPrint(allocator, "PRIMARY_RUN\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(primary_run);
+    const primary_release_run = try std.fmt.allocPrint(allocator, "PRIMARY_RELEASE_RUN\tcargo run --release --bin {s}\n", .{quoted_bin});
+    defer allocator.free(primary_release_run);
+    const command_run = try std.fmt.allocPrint(allocator, "COMMAND\trun\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(command_run);
+    const command_release_run = try std.fmt.allocPrint(allocator, "COMMAND\trelease-run\tcargo run --release --bin {s}\n", .{quoted_bin});
+    defer allocator.free(command_release_run);
+    const preferred_run = try std.fmt.allocPrint(allocator, "PREFERRED\trun\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(preferred_run);
+    const preferred_release_run = try std.fmt.allocPrint(allocator, "PREFERRED\trelease-run\tcargo run --release --bin {s}\n", .{quoted_bin});
+    defer allocator.free(preferred_release_run);
+    try std.testing.expect(std.mem.find(u8, out.written(), primary_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), primary_release_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_release_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), preferred_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), preferred_release_run) != null);
 }
 
 test "writeLanguageOutput emits make command records" {
@@ -137,7 +151,11 @@ test "writeLanguageOutput quotes shell-special make targets" {
         "deploy;touch:\n\t@echo deploy\n",
     ));
 
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tdeploy;touch\tmake 'deploy;touch'\n") != null);
+    const quoted_target = try common.quoteShellArgIfNeededAlloc(allocator, "deploy;touch");
+    defer allocator.free(quoted_target);
+    const expected_command = try std.fmt.allocPrint(allocator, "COMMAND\tdeploy;touch\tmake {s}\n", .{quoted_target});
+    defer allocator.free(expected_command);
+    try std.testing.expect(std.mem.find(u8, out.written(), expected_command) != null);
 }
 
 test "writeLanguageOutput derives smarter make aliases from common target names" {
@@ -343,12 +361,26 @@ test "writeLanguageOutput emits go primary command metadata" {
 
     try std.testing.expect(std.mem.find(u8, out.written(), "MODULE\tgithub.com/example/demo\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_SELECTOR\t./cmd/api\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_BUILD\tgo build './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_RUN\tgo run './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_TEST\tgo test './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tgo build './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tgo run './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\ttest\tgo test './cmd/api'\n") != null);
+    const quoted_selector = try common.quoteShellArgAlloc(allocator, "./cmd/api");
+    defer allocator.free(quoted_selector);
+    const primary_build = try std.fmt.allocPrint(allocator, "PRIMARY_BUILD\tgo build {s}\n", .{quoted_selector});
+    defer allocator.free(primary_build);
+    const primary_run = try std.fmt.allocPrint(allocator, "PRIMARY_RUN\tgo run {s}\n", .{quoted_selector});
+    defer allocator.free(primary_run);
+    const primary_test = try std.fmt.allocPrint(allocator, "PRIMARY_TEST\tgo test {s}\n", .{quoted_selector});
+    defer allocator.free(primary_test);
+    const command_build = try std.fmt.allocPrint(allocator, "COMMAND\tbuild\tgo build {s}\n", .{quoted_selector});
+    defer allocator.free(command_build);
+    const command_run = try std.fmt.allocPrint(allocator, "COMMAND\trun\tgo run {s}\n", .{quoted_selector});
+    defer allocator.free(command_run);
+    const command_test = try std.fmt.allocPrint(allocator, "COMMAND\ttest\tgo test {s}\n", .{quoted_selector});
+    defer allocator.free(command_test);
+    try std.testing.expect(std.mem.find(u8, out.written(), primary_build) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), primary_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), primary_test) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_build) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_test) != null);
 }
 
 test "writeLanguageOutput emits maven command records" {
@@ -604,8 +636,14 @@ test "writeLanguageOutput emits cargo command records from fixture project" {
 
     try std.testing.expect(std.mem.find(u8, out.written(), "BIN\tapi\t1\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_BIN\tapi\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tcargo-run-api\tcargo run --bin 'api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "PREFERRED\trun\tcargo run --bin 'api'\n") != null);
+    const quoted_bin = try common.quoteShellArgAlloc(allocator, "api");
+    defer allocator.free(quoted_bin);
+    const command_run = try std.fmt.allocPrint(allocator, "COMMAND\tcargo-run-api\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(command_run);
+    const preferred_run = try std.fmt.allocPrint(allocator, "PREFERRED\trun\tcargo run --bin {s}\n", .{quoted_bin});
+    defer allocator.free(preferred_run);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), preferred_run) != null);
 }
 
 test "writeLanguageOutput emits go command records from fixture project" {
@@ -633,9 +671,17 @@ test "writeLanguageOutput emits go command records from fixture project" {
 
     try std.testing.expect(std.mem.find(u8, out.written(), "MODULE\tgithub.com/example/demo\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_SELECTOR\t./cmd/api\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\tbuild\tgo build './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tgo run './cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\ttest\tgo test './cmd/api'\n") != null);
+    const quoted_selector = try common.quoteShellArgAlloc(allocator, "./cmd/api");
+    defer allocator.free(quoted_selector);
+    const command_build = try std.fmt.allocPrint(allocator, "COMMAND\tbuild\tgo build {s}\n", .{quoted_selector});
+    defer allocator.free(command_build);
+    const command_run = try std.fmt.allocPrint(allocator, "COMMAND\trun\tgo run {s}\n", .{quoted_selector});
+    defer allocator.free(command_run);
+    const command_test = try std.fmt.allocPrint(allocator, "COMMAND\ttest\tgo test {s}\n", .{quoted_selector});
+    defer allocator.free(command_test);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_build) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_test) != null);
 }
 
 test "writeLanguageOutput emits go workspace command records from fixture project" {
@@ -663,8 +709,14 @@ test "writeLanguageOutput emits go workspace command records from fixture projec
 
     try std.testing.expect(std.mem.find(u8, out.written(), "MODULE\tgithub.com/example/workspace-service\n") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "PRIMARY_SELECTOR\t./service/cmd/api\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\trun\tgo run './service/cmd/api'\n") != null);
-    try std.testing.expect(std.mem.find(u8, out.written(), "COMMAND\ttest\tgo test './service/cmd/api'\n") != null);
+    const quoted_selector = try common.quoteShellArgAlloc(allocator, "./service/cmd/api");
+    defer allocator.free(quoted_selector);
+    const command_run = try std.fmt.allocPrint(allocator, "COMMAND\trun\tgo run {s}\n", .{quoted_selector});
+    defer allocator.free(command_run);
+    const command_test = try std.fmt.allocPrint(allocator, "COMMAND\ttest\tgo test {s}\n", .{quoted_selector});
+    defer allocator.free(command_test);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_run) != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), command_test) != null);
 }
 
 test "writeLanguageOutput emits python auto commands from fixture project" {
