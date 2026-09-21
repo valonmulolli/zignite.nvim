@@ -1,6 +1,7 @@
 const std = @import("std");
 const pathing = @import("../../pathing.zig");
 const project_io = @import("../core/io.zig");
+const process_tree = @import("../../process_tree.zig");
 const builtin = @import("builtin");
 
 pub const Step = struct {
@@ -10,7 +11,7 @@ pub const Step = struct {
 
 // Build-step discovery compiles and evaluates build.zig. Keep enough headroom
 // for cold toolchains on slower macOS and Windows runners.
-const detect_steps_timeout_ms: u64 = 15000;
+const detect_steps_timeout_ms: u64 = 30000;
 
 pub fn freeOwnedSteps(allocator: std.mem.Allocator, steps: []Step) void {
     for (steps) |step| {
@@ -75,20 +76,19 @@ fn detectStepsWithTimeoutWithIO(
     defer process_arena.deinit();
     const process_allocator = process_arena.allocator();
 
-    const result = std.process.run(process_allocator, io, .{
-        .argv = &.{ "zig", "build", "--cache-dir", ".zig-cache", "--global-cache-dir", ".zig-global-cache", "-l" },
-        .cwd = .{ .path = build_root },
-        .stdout_limit = .limited(256 * 1024),
-        .stderr_limit = .limited(256 * 1024),
-        .timeout = if (timeout_ms) |ms|
-            .{ .duration = .{
-                .raw = std.Io.Duration.fromMilliseconds(@intCast(ms)),
-                .clock = .awake,
-            } }
-        else
-            .none,
-    }) catch |err| switch (err) {
+    const result = process_tree.runCapturedStdout(
+        process_allocator,
+        io,
+        &.{ "zig", "build", "--cache-dir", ".zig-cache", "--global-cache-dir", ".zig-global-cache", "-l" },
+        .{ .path = build_root },
+        timeout_ms,
+        256 * 1024,
+    ) catch |err| switch (err) {
         error.Timeout => return error.ZigBuildListStepsFailed,
+        error.StreamTooLong => if (builtin.os.tag == .windows)
+            return error.ZigBuildListStepsFailed
+        else
+            return error.StreamTooLong,
         else => return err,
     };
 

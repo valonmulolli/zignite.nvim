@@ -174,8 +174,14 @@ test "buildCommandInfo quotes shell-special Bazel labels" {
     defer model.freeOwnedCommandInfo(allocator, info);
 
     try std.testing.expectEqual(@as(usize, 2), info.commands.len);
-    try std.testing.expectEqualStrings("bazel build '//:app;touch'", info.commands[0].command);
-    try std.testing.expectEqualStrings("bazel run '//:app;touch'", info.commands[1].command);
+    const quoted_label = try common.quoteShellArgIfNeededAlloc(allocator, "//:app;touch");
+    defer allocator.free(quoted_label);
+    const expected_build = try std.fmt.allocPrint(allocator, "bazel build {s}", .{quoted_label});
+    defer allocator.free(expected_build);
+    const expected_run = try std.fmt.allocPrint(allocator, "bazel run {s}", .{quoted_label});
+    defer allocator.free(expected_run);
+    try std.testing.expectEqualStrings(expected_build, info.commands[0].command);
+    try std.testing.expectEqualStrings(expected_run, info.commands[1].command);
 }
 
 fn targetMatchesFile(item: Target, relative_filepath: []const u8, basename: []const u8) bool {

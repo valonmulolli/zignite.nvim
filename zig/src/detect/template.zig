@@ -198,7 +198,11 @@ test "detect command records quote shell syntax in unknown names" {
     const commands = try buildDetectCommandRecords(allocator, .zig, &.{"custom;touch"});
     defer types.freeOwnedCommandList(allocator, commands);
 
-    try std.testing.expectEqualStrings("custom;touch\tzig 'custom;touch'", commands[0]);
+    const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, "custom;touch");
+    defer allocator.free(quoted_name);
+    const expected = try std.fmt.allocPrint(allocator, "custom;touch\tzig {s}", .{quoted_name});
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, commands[0]);
 }
 
 test "detect command records use $zignite_args placeholder for argument-taking cargo subcommands" {

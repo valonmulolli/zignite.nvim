@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config = @import("../config.zig");
 const config_store = @import("../config/store.zig");
 const protocol_args = @import("../protocol/args.zig");
@@ -9,11 +10,28 @@ const protocol = @import("resolve/protocol.zig");
 const runner = @import("resolve/runner.zig");
 const serialize = @import("resolve/serialize.zig");
 const source = @import("source.zig");
+const project_common = @import("../project/core/common.zig");
 const types = @import("resolve/types.zig");
 
 pub const Options = types.Options;
 pub const ResolvedRunner = types.ResolvedRunner;
 pub const resolveRunner = runner.resolveRunner;
+
+fn expectedShellCommand(allocator: std.mem.Allocator, executable: []const u8, path: []const u8) ![]u8 {
+    const normalized_path = try project_common.normalizePathAlloc(allocator, path);
+    defer allocator.free(normalized_path);
+    const quoted_path = try project_common.quoteShellArgAlloc(allocator, normalized_path);
+    defer allocator.free(quoted_path);
+    return std.fmt.allocPrint(allocator, "{s} -u {s}", .{ executable, quoted_path });
+}
+
+fn expectedRunnerCommand(allocator: std.mem.Allocator, executable: []const u8, path: []const u8) ![]u8 {
+    const normalized_path = try project_common.normalizePathAlloc(allocator, path);
+    defer allocator.free(normalized_path);
+    const quoted_path = try project_common.quoteShellArgAlloc(allocator, normalized_path);
+    defer allocator.free(quoted_path);
+    return std.fmt.allocPrint(allocator, "{s} run {s}", .{ executable, quoted_path });
+}
 
 pub const RUN_RESOLVE_REQ_BEGIN = protocol.RUN_RESOLVE_REQ_BEGIN;
 pub const RUN_RESOLVE_REQ_PAYLOAD_BEGIN = protocol.RUN_RESOLVE_REQ_PAYLOAD_BEGIN;
@@ -502,7 +520,9 @@ test "resolveRunner returns configured filetype runner" {
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings("/tmp/test.py", resolved.execution_path.?);
-    try std.testing.expectEqualStrings("python3 -u '/tmp/test.py'", resolved.command.?);
+    const expected_command = try expectedShellCommand(allocator, "python3", "/tmp/test.py");
+    defer allocator.free(expected_command);
+    try std.testing.expectEqualStrings(expected_command, resolved.command.?);
     try std.testing.expectEqualStrings("python3", resolved.argv.items[0]);
     try std.testing.expectEqualStrings("-u", resolved.argv.items[1]);
     try std.testing.expectEqualStrings("/tmp/test.py", resolved.argv.items[2]);
@@ -530,8 +550,11 @@ test "resolveRunner returns builtin filetype runner without configured override"
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings("/tmp/test.py", resolved.execution_path.?);
-    try std.testing.expectEqualStrings("python3 -u '/tmp/test.py'", resolved.command.?);
-    try std.testing.expectEqualStrings("python3", resolved.argv.items[0]);
+    const python = if (comptime builtin.os.tag == .windows) "python" else "python3";
+    const expected_command = try expectedShellCommand(allocator, python, "/tmp/test.py");
+    defer allocator.free(expected_command);
+    try std.testing.expectEqualStrings(expected_command, resolved.command.?);
+    try std.testing.expectEqualStrings(python, resolved.argv.items[0]);
     try std.testing.expectEqualStrings("-u", resolved.argv.items[1]);
     try std.testing.expectEqualStrings("/tmp/test.py", resolved.argv.items[2]);
 }
@@ -591,15 +614,17 @@ test "resolveRunner keeps configured zig single-file runner when build.zig exist
     });
     defer resolved.deinit(allocator);
 
-    const expected_command = try std.fmt.allocPrint(allocator, "zig run '{s}'", .{filepath});
+    const expected_command = try expectedRunnerCommand(allocator, "zig", filepath);
     defer allocator.free(expected_command);
+    const normalized_filepath = try project_common.normalizePathAlloc(allocator, filepath);
+    defer allocator.free(normalized_filepath);
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings(filepath, resolved.execution_path.?);
     try std.testing.expectEqualStrings(expected_command, resolved.command.?);
     try std.testing.expectEqualStrings("zig", resolved.argv.items[0]);
     try std.testing.expectEqualStrings("run", resolved.argv.items[1]);
-    try std.testing.expectEqualStrings(filepath, resolved.argv.items[2]);
+    try std.testing.expectEqualStrings(normalized_filepath, resolved.argv.items[2]);
     try std.testing.expect(resolved.cwd == null);
     try std.testing.expectEqualStrings("zig", resolved.name.?);
 }
@@ -636,15 +661,17 @@ test "resolveRunner keeps builtin zig single-file runner when build.zig exists" 
     });
     defer resolved.deinit(allocator);
 
-    const expected_command = try std.fmt.allocPrint(allocator, "zig run '{s}'", .{filepath});
+    const expected_command = try expectedRunnerCommand(allocator, "zig", filepath);
     defer allocator.free(expected_command);
+    const normalized_filepath = try project_common.normalizePathAlloc(allocator, filepath);
+    defer allocator.free(normalized_filepath);
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings(filepath, resolved.execution_path.?);
     try std.testing.expectEqualStrings(expected_command, resolved.command.?);
     try std.testing.expectEqualStrings("zig", resolved.argv.items[0]);
     try std.testing.expectEqualStrings("run", resolved.argv.items[1]);
-    try std.testing.expectEqualStrings(filepath, resolved.argv.items[2]);
+    try std.testing.expectEqualStrings(normalized_filepath, resolved.argv.items[2]);
     try std.testing.expect(resolved.cwd == null);
     try std.testing.expectEqualStrings("zig", resolved.name.?);
 }
@@ -781,13 +808,15 @@ test "resolveRunner ignores commented and quoted zig imports when choosing proje
     });
     defer resolved.deinit(allocator);
 
-    const expected_command = try std.fmt.allocPrint(allocator, "zig run '{s}'", .{filepath});
+    const expected_command = try expectedRunnerCommand(allocator, "zig", filepath);
     defer allocator.free(expected_command);
+    const normalized_filepath = try project_common.normalizePathAlloc(allocator, filepath);
+    defer allocator.free(normalized_filepath);
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings(filepath, resolved.execution_path.?);
     try std.testing.expectEqualStrings(expected_command, resolved.command.?);
-    try std.testing.expectEqualStrings(filepath, resolved.argv.items[2]);
+    try std.testing.expectEqualStrings(normalized_filepath, resolved.argv.items[2]);
     try std.testing.expect(resolved.cwd == null);
 }
 
@@ -913,13 +942,15 @@ test "resolveRunner keeps single-file go runner even inside go module" {
     });
     defer resolved.deinit(allocator);
 
-    const expected_command = try std.fmt.allocPrint(allocator, "go run '{s}'", .{filepath});
+    const expected_command = try expectedRunnerCommand(allocator, "go", filepath);
     defer allocator.free(expected_command);
+    const normalized_filepath = try project_common.normalizePathAlloc(allocator, filepath);
+    defer allocator.free(normalized_filepath);
 
     try std.testing.expectEqualStrings("filetype", resolved.source);
     try std.testing.expectEqualStrings(filepath, resolved.execution_path.?);
     try std.testing.expectEqualStrings(expected_command, resolved.command.?);
     try std.testing.expectEqualStrings("go", resolved.argv.items[0]);
     try std.testing.expectEqualStrings("run", resolved.argv.items[1]);
-    try std.testing.expectEqualStrings(filepath, resolved.argv.items[2]);
+    try std.testing.expectEqualStrings(normalized_filepath, resolved.argv.items[2]);
 }

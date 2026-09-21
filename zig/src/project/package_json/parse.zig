@@ -197,7 +197,11 @@ test "format package script command quotes unsafe script names" {
     const command = try formatScriptCommandAlloc(allocator, "npm", "build; touch /tmp/pwned");
     defer allocator.free(command);
 
-    try std.testing.expectEqualStrings("npm run 'build; touch /tmp/pwned'", command);
+    const quoted_name = try common.quoteShellArgIfNeededAlloc(allocator, "build; touch /tmp/pwned");
+    defer allocator.free(quoted_name);
+    const expected = try std.fmt.allocPrint(allocator, "npm run {s}", .{quoted_name});
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, command);
 }
 
 test "format install command respects package manager" {

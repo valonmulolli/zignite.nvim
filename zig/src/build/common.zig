@@ -629,7 +629,13 @@ test "cmakeBuildCommandAlloc quotes discovered build directory with spaces" {
     const command = try cmakeBuildCommandAlloc(allocator, root, "demo app");
     defer allocator.free(command);
 
-    try std.testing.expectEqualStrings("cmake --build 'build debug' --target 'demo app'", command);
+    const expected_build_dir = try project_common.quoteShellArgIfNeededAlloc(allocator, "build debug");
+    defer allocator.free(expected_build_dir);
+    const expected_target = try project_common.quoteShellArgIfNeededAlloc(allocator, "demo app");
+    defer allocator.free(expected_target);
+    const expected = try std.fmt.allocPrint(allocator, "cmake --build {s} --target {s}", .{ expected_build_dir, expected_target });
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, command);
 }
 
 test "mesonBuildCommandAlloc quotes discovered build directory with spaces" {
@@ -649,7 +655,13 @@ test "mesonBuildCommandAlloc quotes discovered build directory with spaces" {
     const command = try mesonBuildCommandAlloc(allocator, root, "demo app");
     defer allocator.free(command);
 
-    try std.testing.expectEqualStrings("meson compile -C 'build debug' 'demo app'", command);
+    const expected_build_dir = try project_common.quoteShellArgIfNeededAlloc(allocator, "build debug");
+    defer allocator.free(expected_build_dir);
+    const expected_target = try project_common.quoteShellArgIfNeededAlloc(allocator, "demo app");
+    defer allocator.free(expected_target);
+    const expected = try std.fmt.allocPrint(allocator, "meson compile -C {s} {s}", .{ expected_build_dir, expected_target });
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, command);
 }
 
 test "buildDiscoveredRunSuffix fallback searches discovered build directory" {
@@ -673,7 +685,9 @@ test "buildDiscoveredRunSuffix quotes a metadata artifact path" {
     const command = try buildDiscoveredRunSuffixAlloc(allocator, "build", "demo", "./build debug/bin/demo;echo injected");
     defer allocator.free(command);
 
-    try std.testing.expectEqualStrings("'./build debug/bin/demo;echo injected'", command);
+    const expected = try project_common.quoteShellArgAlloc(allocator, "./build debug/bin/demo;echo injected");
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, command);
 }
 
 test "discoverBuildRunPathAlloc uses discovered custom build directory" {

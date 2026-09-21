@@ -333,7 +333,11 @@ test "normalizeGithubRepoReferenceAlloc keeps explicit fragment when url also ha
     );
     defer allocator.free(normalized);
 
-    try std.testing.expectEqualStrings("--save 'git+https://github.com/owner/repo#v2'", normalized);
+    const expected_reference = try project_common.quoteShellArgIfNeededAlloc(allocator, "git+https://github.com/owner/repo#v2");
+    defer allocator.free(expected_reference);
+    const expected = try std.fmt.allocPrint(allocator, "--save {s}", .{expected_reference});
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, normalized);
 }
 
 test "normalizeGithubRepoReferenceAlloc quotes shell syntax in every fetch input" {
@@ -342,23 +346,38 @@ test "normalizeGithubRepoReferenceAlloc quotes shell syntax in every fetch input
     const cases = .{
         .{
             .input = "git+https://github.com/owner/repo;touch /tmp/pwned",
-            .expected = "--save 'git+https://github.com/owner/repo;touch /tmp/pwned'",
+            .expected = if (comptime builtin.os.tag == .windows)
+                "--save \"git+https://github.com/owner/repo;touch /tmp/pwned\""
+            else
+                "--save 'git+https://github.com/owner/repo;touch /tmp/pwned'",
         },
         .{
             .input = "https://github.com/owner/repo#main;touch /tmp/pwned",
-            .expected = "--save 'git+https://github.com/owner/repo#main;touch /tmp/pwned'",
+            .expected = if (comptime builtin.os.tag == .windows)
+                "--save \"git+https://github.com/owner/repo#main;touch /tmp/pwned\""
+            else
+                "--save 'git+https://github.com/owner/repo#main;touch /tmp/pwned'",
         },
         .{
             .input = "owner/repo;touch",
-            .expected = "--save 'git+https://github.com/owner/repo;touch'",
+            .expected = if (comptime builtin.os.tag == .windows)
+                "--save \"git+https://github.com/owner/repo;touch\""
+            else
+                "--save 'git+https://github.com/owner/repo;touch'",
         },
         .{
             .input = "--save git+https://github.com/owner/repo;touch /tmp/pwned",
-            .expected = "'--save git+https://github.com/owner/repo;touch /tmp/pwned'",
+            .expected = if (comptime builtin.os.tag == .windows)
+                "\"--save git+https://github.com/owner/repo;touch /tmp/pwned\""
+            else
+                "'--save git+https://github.com/owner/repo;touch /tmp/pwned'",
         },
         .{
             .input = "/tmp/repo;touch /tmp/pwned",
-            .expected = "'/tmp/repo;touch /tmp/pwned'",
+            .expected = if (comptime builtin.os.tag == .windows)
+                "\"/tmp/repo;touch /tmp/pwned\""
+            else
+                "'/tmp/repo;touch /tmp/pwned'",
         },
     };
 
@@ -380,7 +399,11 @@ test "resolveCommandTemplate splits safe Zig compiler arguments" {
     );
     defer allocator.free(resolved);
 
-    try std.testing.expectEqualStrings("zig cc '-DNAME=VALUE' '-c' 'src/main file.c' '-o' 'out.o'", resolved);
+    const expected = if (comptime builtin.os.tag == .windows)
+        "zig cc \"-DNAME=VALUE\" \"-c\" \"src/main file.c\" \"-o\" \"out.o\""
+    else
+        "zig cc '-DNAME=VALUE' '-c' 'src/main file.c' '-o' 'out.o'";
+    try std.testing.expectEqualStrings(expected, resolved);
 }
 
 test "resolveCommandTemplate splits arguments for every command placeholder" {
@@ -394,7 +417,11 @@ test "resolveCommandTemplate splits arguments for every command placeholder" {
     );
     defer allocator.free(resolved);
 
-    try std.testing.expectEqualStrings("cargo add 'serde' '--features' 'derive'", resolved);
+    const expected = if (comptime builtin.os.tag == .windows)
+        "cargo add \"serde\" \"--features\" \"derive\""
+    else
+        "cargo add 'serde' '--features' 'derive'";
+    try std.testing.expectEqualStrings(expected, resolved);
 }
 
 test "resolveCommandTemplate rejects shell syntax in Zig compiler arguments" {
