@@ -8,6 +8,7 @@ jobs:
   zig:
     name: Zig (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -24,6 +25,16 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
+
+      - name: Run Windows process tests
+        if: matrix.os == 'windows-latest'
+        working-directory: zig
+        run: zig test src/command.zig --test-filter "windows timeout coordinator terminates descendants"
+
+      - name: Run Windows Zig project tests
+        if: matrix.os == 'windows-latest'
+        working-directory: zig
+        run: zig test tests.zig --test-filter "detectSteps"
 
       - name: Run Debug tests
         working-directory: zig
