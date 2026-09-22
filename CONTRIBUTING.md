@@ -9,9 +9,7 @@ This repo uses a split architecture:
 
 Before adding new logic, check whether it belongs in the Lua runtime layer or the Zig backend layer.
 
-The detailed architecture overview lives in:
-
-- `docs/architecture.md`
+The detailed architecture overview lives in the [README architecture section](README.md#architecture).
 
 ## Local validation
 
