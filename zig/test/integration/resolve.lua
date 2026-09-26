@@ -1,8 +1,10 @@
--- luacheck: globals project_root config reset_job_results get_upvalue_by_name
+-- luacheck: globals project_root config reset_job_results get_upvalue_by_name state with_overrides
 
 local build_resolve = require("zignite.rpc.build_resolve")
 local config_sync = require("zignite.rpc.config_sync")
 local run_resolve = require("zignite.rpc.run_resolve")
+local zignite_init = require("zignite.init")
+local ui_windows = require("zignite.ui.windows")
 
 local function encode_json(payload)
 	local encode = vim.json and vim.json.encode or vim.fn.json_encode
@@ -1060,6 +1062,49 @@ local function test_health_ping_responsive_daemon()
 	print("✓ Health ping responsive daemon test passed")
 end
 
+local function test_missing_runner_executable_reports_actionable_error()
+	config.setup({})
+
+	local captured_lines = {}
+	local function capture_lines(_, _, _, _, lines)
+		captured_lines = lines
+	end
+
+	local function assert_missing_executable_message(mode)
+		captured_lines = {}
+		state.next_jobstart_error = "Vim:E475: Invalid value for argument cmd: 'dart' is not executable"
+
+		local ok, err = pcall(function()
+			zignite_init.execute_command({ "dart", "/tmp/missing.dart" }, mode, "dart")
+		end)
+		assert(ok, tostring(err))
+		assert(captured_lines[1] == "Error: Required executable 'dart' was not found in PATH.")
+		assert(captured_lines[2] == "Install 'dart', restart Neovim, or configure runners.dart.")
+		assert(captured_lines[3] == "Command: dart /tmp/missing.dart")
+		ui_windows.close_output(true)
+	end
+
+	with_overrides({
+		{
+			tbl = vim.fn,
+			key = "executable",
+			value = function(executable)
+				if executable == "dart" then
+					return 0
+				end
+				return 1
+			end,
+		},
+		{ tbl = vim.api, key = "nvim_buf_set_lines", value = capture_lines },
+	}, function()
+		assert_missing_executable_message("float")
+		assert_missing_executable_message("split")
+	end)
+
+	reset_job_results()
+	print("✓ Missing runner executable error test passed")
+end
+
 test_build_resolve_returns_command_metadata()
 test_build_resolve_reports_backend_no_build_commands()
 test_build_resolve_selected_command_materializes_execution()
@@ -1089,3 +1134,4 @@ test_run_resolve_zig_prefers_project_runner_for_build_modules()
 test_run_resolve_zig_ignores_quoted_build_module_imports()
 test_build_resolve_cpp_in_bazel_workspace_uses_bazel_commands()
 test_health_ping_responsive_daemon()
+test_missing_runner_executable_reports_actionable_error()

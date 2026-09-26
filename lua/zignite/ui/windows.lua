@@ -65,12 +65,56 @@ end
 
 ---@param buf integer
 ---@param command string|string[]
+---@param title_name string|nil
+---@param job_error string|nil
 ---@return nil
-local function show_jobstart_failure(buf, command)
-	set_message_buffer(buf, {
-		"Error: Failed to start runner.",
-		"Command: " .. ui_common.summarize_command(command),
-	})
+local function show_jobstart_failure(buf, command, title_name, job_error)
+	local executable
+	if type(command) == "table" then
+		executable = type(command[1]) == "string" and command[1] or nil
+	elseif type(command) == "string" then
+		executable = command:match("^%s*([^%s]+)")
+	end
+
+	local error_executable = type(job_error) == "string" and job_error:match("cmd:%s*'([^']+)' is not executable") or nil
+	executable = error_executable or executable
+	if type(executable) == "string" then
+		executable = executable:gsub("^['\"]", ""):gsub("['\"]$", "")
+	end
+
+	local executable_missing = false
+	if executable and executable ~= "" and type(vim.fn.executable) == "function" then
+		local ok, available = pcall(vim.fn.executable, executable)
+		executable_missing = ok and tonumber(available) ~= 1
+	end
+
+	local lines = {}
+	if executable_missing then
+		lines[#lines + 1] = string.format("Error: Required executable '%s' was not found in PATH.", executable)
+		lines[#lines + 1] = string.format(
+			"Install '%s', restart Neovim, or configure runners.%s.",
+			executable,
+			type(title_name) == "string" and title_name ~= "" and title_name or "<filetype>"
+		)
+	else
+		lines[#lines + 1] = "Error: Failed to start runner."
+		if type(job_error) == "string" and job_error ~= "" then
+			lines[#lines + 1] = "Reason: " .. job_error
+		end
+	end
+	lines[#lines + 1] = "Command: " .. tostring(ui_common.summarize_command(command) or "<unknown>")
+	set_message_buffer(buf, lines)
+end
+
+---@param command string|string[]
+---@param opts table
+---@return any, string|nil
+local function start_terminal_job(command, opts)
+	local ok, job_id = pcall(vim.fn.jobstart, command, opts)
+	if not ok then
+		return nil, tostring(job_id)
+	end
+	return job_id, nil
 end
 
 ---@param tracked_runner table
@@ -269,7 +313,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 
 	spinner.start_title_spinner(win, activity_title)
 
-	local job_id = vim.fn.jobstart(command, {
+	local job_id, job_error = start_terminal_job(command, {
 		term = true,
 		cwd = job_opts and job_opts.cwd or nil,
 		on_exit = build_terminal_exit_handler(tracked_runner, buf, on_exit_cb, config.quickfix, {
@@ -284,7 +328,8 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	tracked_runner.job_id = job_id
 	if not is_valid_job_id(job_id) then
 		tracked_runner.job_id = nil
-		show_jobstart_failure(buf, command)
+		spinner.stop_spinner()
+		show_jobstart_failure(buf, command, title_name, job_error)
 		if vim.api.nvim_win_is_valid(win) then
 			spinner.set_exit_status(win, 127)
 		else
@@ -304,8 +349,9 @@ end
 ---@param command string
 ---@param on_exit_cb fun(exit_code: integer):nil
 ---@param job_opts table|nil
+---@param title_name string|nil
 ---@return nil
-function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
+function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts, title_name)
 	local config_opts = ui_common.get_config()
 	if config_opts.singleton then
 		M.close_output(nil)
@@ -323,7 +369,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	local tracked_runner = registry.track(win, buf)
 	restore_focus_if_disabled(resolved_mode, term_config, previous_win, previous_tab)
 
-	local job_id = vim.fn.jobstart(command, {
+	local job_id, job_error = start_terminal_job(command, {
 		term = true,
 		cwd = job_opts and job_opts.cwd or nil,
 		on_exit = build_terminal_exit_handler(tracked_runner, buf, on_exit_cb, config_opts.quickfix),
@@ -331,7 +377,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts)
 	tracked_runner.job_id = job_id
 	if not is_valid_job_id(job_id) then
 		tracked_runner.job_id = nil
-		show_jobstart_failure(buf, command)
+		show_jobstart_failure(buf, command, title_name, job_error)
 		return
 	end
 
