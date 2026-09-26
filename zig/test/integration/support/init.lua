@@ -16,6 +16,7 @@ local state = {
 	next_detect_backend_error = nil,
 	next_project_backend_error = nil,
 	next_project_backend_stdout_chunks = nil,
+	next_jobstart_error = nil,
 	next_job_id = 123,
 	jobstop_count = 0,
 	quickfix_backend_invocations = 0,
@@ -105,6 +106,7 @@ local function reset_job_results()
 	state.next_project_backend_error = nil
 	state.next_quickfix_backend_error = nil
 	state.next_project_backend_stdout_chunks = nil
+	state.next_jobstart_error = nil
 	state.jobstop_count = 0
 end
 

@@ -145,7 +145,7 @@ function M.execute_command(system_command, mode, display_name, exec_opts)
 	if mode == "float" then
 		ui_windows.run_in_float_terminal(system_command, nil, display_name, exec_opts)
 	else
-		ui_windows.run_in_split_terminal(mode, system_command, nil, exec_opts)
+		ui_windows.run_in_split_terminal(mode, system_command, nil, exec_opts, display_name)
 	end
 end
 

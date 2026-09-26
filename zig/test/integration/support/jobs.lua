@@ -35,6 +35,12 @@ function M.attach(ctx, simulation)
 	end
 
 	vim.fn.jobstart = function(cmd, opts)
+		if type(ctx.state.next_jobstart_error) == "string" and ctx.state.next_jobstart_error ~= "" then
+			local error_message = ctx.state.next_jobstart_error
+			ctx.state.next_jobstart_error = nil
+			error(error_message)
+		end
+
 		local job_id = ctx.state.next_job_id
 		ctx.state.next_job_id = ctx.state.next_job_id + 1
 		table.insert(ctx.job_results, { cmd = cmd, opts = opts, job_id = job_id })
