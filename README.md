@@ -4,6 +4,7 @@
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/>
   <img src="https://img.shields.io/badge/Lua%20%2B%20Zig-blueviolet.svg" alt="Lua + Zig"/>
   <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
+  <a href="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml"><img src="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"/></a>
   <br/>
   <strong>Async code runner for Neovim. Powered by Zig for near-zero overhead execution with non-blocking output streaming.</strong>
 </p>
