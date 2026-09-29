@@ -105,6 +105,7 @@ local function run_tests()
 	local malformed_transport = require("zignite.rpc.transport")
 	local malformed = new_client(malformed_transport)
 	assert(malformed.sync_request({}) == nil, "unprefixed payload must fail the request")
+	assert(malformed.has_live_worker() == false, "malformed frames must stop the worker")
 	malformed_transport.reset_all()
 
 	_G.vim = make_fake_vim({}, 0)
