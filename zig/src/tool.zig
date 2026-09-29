@@ -19,9 +19,17 @@ pub fn findMissingToolWithIO(
     }
 
     var scanner = CommandScanner{ .command = command_text orelse "" };
+    var previous_command_was_external = false;
     while (scanner.next()) |tool| {
-        if (isShellBuiltin(tool) or isShellKeyword(tool)) continue;
+        if (isShellBuiltin(tool) or isShellKeyword(tool)) {
+            previous_command_was_external = false;
+            continue;
+        }
+        // Commands such as `gcc ... && /tmp/output` run an artifact produced
+        // by the preceding tool. It cannot be required on PATH before launch.
+        if (previous_command_was_external and hasPathSeparator(tool)) continue;
         if (try findMissingToolInWord(io, allocator, path_value, cwd, tool)) |missing| return missing;
+        previous_command_was_external = true;
     }
     return null;
 }
@@ -360,6 +368,24 @@ test "findMissingTool skips environment assignments" {
     )).?;
     defer allocator.free(missing);
     try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool ignores generated path artifacts after an external command" {
+    if (comptime builtin.os.tag == .windows) return;
+
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    try std.testing.expect((try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "/bin/sh -c true && /tmp/zignite-generated-output",
+        &.{},
+    )) == null);
 }
 
 test "findMissingTool does not treat a directory as an executable" {
