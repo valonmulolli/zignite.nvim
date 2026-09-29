@@ -386,6 +386,47 @@ local function test_run_code_visual_uses_backend_managed_execution_path()
     print("✓ RunCode visual backend execution path test passed")
 end
 
+local function test_execution_modes_start_runner_jobs()
+    config.setup({
+        singleton = false,
+        quickfix = { enabled = false },
+        float = { startinsert = false },
+        term = { startinsert = false },
+    })
+
+    local original_cmd = vim.cmd
+    local window_commands = {}
+    vim.cmd = function(command)
+        window_commands[#window_commands + 1] = command
+    end
+
+    local expected_window_commands = {
+        float = nil,
+        split = "botright split",
+        vsplit = "botright vsplit",
+        tab = "tabnew",
+    }
+
+    for _, mode in ipairs({ "float", "split", "vsplit", "tab" }) do
+        reset_job_results()
+        local command_count = #window_commands
+        init.execute_command({ "printf", "zignite-mode-test" }, mode, "mode-test")
+        assert(#job_results == 1, mode .. " mode should start exactly one runner job")
+
+        local expected = expected_window_commands[mode]
+        if expected then
+            assert(window_commands[command_count + 1] == expected,
+                mode .. " mode should open the expected terminal window")
+        else
+            assert(#window_commands == command_count, "float mode should not open a split or tab")
+        end
+    end
+
+    vim.cmd = original_cmd
+    reset_job_results()
+    print("✓ Runner output mode matrix test passed")
+end
+
 test_run_build_last_behavior()
 test_run_build_last_ignores_stale_command()
 test_build_resolve_exposes_backend_last_command_name()
@@ -394,3 +435,4 @@ test_run_live_missing_command()
 test_run_live_javascript_ignores_missing_default_scripts()
 test_run_live_javascript_uses_detected_live_alias()
 test_run_code_visual_uses_backend_managed_execution_path()
+test_execution_modes_start_runner_jobs()
