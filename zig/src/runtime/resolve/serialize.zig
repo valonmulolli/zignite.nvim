@@ -13,16 +13,24 @@ pub fn writeResolvedOutputJson(
 ) !void {
     var wrapped_argv: std.ArrayList([]u8) = .empty;
     defer system_command.deinitOwnedArgv(allocator, &wrapped_argv);
-    if (resolved.command) |command_text| {
+    if (resolved.command != null and resolved.missing_tool == null) {
+        const command_text = resolved.command.?;
         wrapped_argv = try system_command.buildSystemArgvWithIO(io, allocator, command_text, resolved.argv.items, resolved.cleanup_command);
     }
 
     var json_out: std.Io.Writer.Allocating = .init(allocator);
     defer json_out.deinit();
 
-    const ok = resolved.command != null;
-    const reason: ?[]const u8 = if (ok) null else "no_runner";
-    const message = if (ok)
+    const ok = resolved.command != null and resolved.missing_tool == null;
+    const reason: ?[]const u8 = if (resolved.missing_tool != null)
+        "missing_tool"
+    else if (ok)
+        null
+    else
+        "no_runner";
+    const message = if (resolved.missing_tool) |missing_tool|
+        try std.fmt.allocPrint(allocator, "Error: Required executable '{s}' was not found in PATH.", .{missing_tool})
+    else if (ok)
         null
     else
         try std.fmt.allocPrint(allocator, "Error: No runner configured for filetype: {s}", .{filetype});
@@ -40,6 +48,7 @@ pub fn writeResolvedOutputJson(
         .filetype = filetype,
         .cwd = resolved.cwd,
         .name = resolved.name,
+        .missing_tool = resolved.missing_tool,
         .config_revision = config.getSyncedRevision(),
     };
     try std.json.Stringify.value(payload, .{}, &json_out.writer);
@@ -51,12 +60,20 @@ pub fn writeResolvedOutputLegacy(
     resolved: types.ResolvedRunner,
     filetype: []const u8,
 ) !void {
-    const ok = resolved.command != null;
+    const ok = resolved.command != null and resolved.missing_tool == null;
     const safe_filetype = !common.hasInvalidPayloadChars(filetype);
     try stdout.print("OK\t{d}\n", .{if (ok) @as(u8, 1) else @as(u8, 0)});
     if (!ok) {
-        try stdout.print("REASON\tno_runner\n", .{});
-        if (safe_filetype) {
+        if (resolved.missing_tool) |missing_tool| {
+            try stdout.print("REASON\tmissing_tool\n", .{});
+            if (!common.hasInvalidPayloadChars(missing_tool)) {
+                try stdout.print("MISSING_TOOL\t{s}\n", .{missing_tool});
+                try stdout.print("MESSAGE\tError: Required executable '{s}' was not found in PATH.\n", .{missing_tool});
+            }
+        } else {
+            try stdout.print("REASON\tno_runner\n", .{});
+        }
+        if (safe_filetype and resolved.missing_tool == null) {
             try stdout.print("MESSAGE\tError: No runner configured for filetype: {s}\n", .{filetype});
         }
     }
@@ -104,6 +121,7 @@ const RunResolvedJson = struct {
     filetype: []const u8,
     cwd: ?[]const u8,
     name: ?[]const u8,
+    missing_tool: ?[]const u8,
     config_revision: u64,
 
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
@@ -146,6 +164,10 @@ const RunResolvedJson = struct {
             try jw.objectField("name");
             try jw.write(name_value);
         }
+        if (self.missing_tool) |missing_tool_value| {
+            try jw.objectField("missing_tool");
+            try jw.write(missing_tool_value);
+        }
         try jw.endObject();
     }
 };
@@ -187,6 +209,28 @@ test "writeResolvedOutputJson includes no_runner failure metadata when command i
     try std.testing.expect(std.mem.find(u8, out.written(), "\"ok\":false") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"reason\":\"no_runner\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"message\":\"Error: No runner configured for filetype: go\"") != null);
+}
+
+test "writeResolvedOutputJson reports missing tool without launch argv" {
+    const allocator = std.testing.allocator;
+
+    var resolved = types.ResolvedRunner{
+        .source = "filetype",
+        .filetype = try allocator.dupe(u8, "dart"),
+        .command = try allocator.dupe(u8, "dart run /tmp/main.dart"),
+        .missing_tool = try allocator.dupe(u8, "dart"),
+    };
+    defer resolved.deinit(allocator);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try writeResolvedOutputJson(&out.writer, allocator, std.testing.io, resolved, "dart");
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"reason\":\"missing_tool\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"missing_tool\":\"dart\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "system_argv") == null);
 }
 
 test "writeResolvedOutputLegacy rejects unsafe filetype fields" {

@@ -153,6 +153,33 @@ test "resolve named plan returns execution payload" {
     try std.testing.expectEqualStrings("namedft: test", plan.name.?);
 }
 
+test "resolve named plan reports missing executable from the environment PATH" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    defer @import("action/state.zig").resetForTests();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        "{\"build_commands\":{\"missingft\":{\"build\":\"not-installed-zignite-tool build\"}},\"detect\":{},\"revision\":87}",
+        87,
+    );
+
+    var environ = std.process.Environ.Map.init(allocator);
+    defer environ.deinit();
+    try environ.put("PATH", "/zignite/path/does/not/exist");
+
+    var plan = try resolvePlan(std.testing.io, allocator, &environ, .{
+        .path = "/tmp/missingft/main.txt",
+        .filetype = "missingft",
+        .action = .named,
+        .command_name = "build",
+    });
+    defer plan.deinit(allocator);
+
+    try std.testing.expect(!plan.ok);
+    try std.testing.expectEqual(FailureReason.missing_tool, plan.reason.?);
+    try std.testing.expectEqualStrings("not-installed-zignite-tool", plan.missing_tool.?);
+    try std.testing.expect(std.mem.find(u8, plan.message.?, "not-installed-zignite-tool") != null);
+}
+
 test "resolve live plan reports missing live command" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();

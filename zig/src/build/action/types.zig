@@ -23,6 +23,7 @@ pub const FailureReason = enum {
     missing_last_command,
     stale_last_command,
     missing_arguments,
+    missing_tool,
 };
 
 pub const Plan = struct {
@@ -36,6 +37,7 @@ pub const Plan = struct {
     filetype: ?[]u8 = null,
     cwd: ?[]u8 = null,
     name: ?[]u8 = null,
+    missing_tool: ?[]u8 = null,
     exec_command: ?[]u8 = null,
     exec_argv: std.ArrayList([]u8) = .empty,
     config_revision: u64 = 0,
@@ -48,6 +50,7 @@ pub const Plan = struct {
         if (self.filetype) |value| allocator.free(value);
         if (self.cwd) |value| allocator.free(value);
         if (self.name) |value| allocator.free(value);
+        if (self.missing_tool) |value| allocator.free(value);
         if (self.exec_command) |value| allocator.free(value);
         for (self.exec_argv.items) |arg| allocator.free(arg);
         self.exec_argv.deinit(allocator);
@@ -93,6 +96,10 @@ pub const Plan = struct {
             try jw.objectField("name");
             try jw.write(name);
         }
+        if (self.missing_tool) |missing_tool| {
+            try jw.objectField("missing_tool");
+            try jw.write(missing_tool);
+        }
         if (self.exec_command) |command_text| {
             try jw.objectField("exec_command");
             try jw.write(command_text);
@@ -106,3 +113,19 @@ pub const Plan = struct {
         try jw.endObject();
     }
 };
+
+test "Plan JSON preserves missing tool diagnostics" {
+    const allocator = std.testing.allocator;
+    var plan = Plan{
+        .ok = false,
+        .reason = .missing_tool,
+        .missing_tool = try allocator.dupe(u8, "dart"),
+    };
+    defer plan.deinit(allocator);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try std.json.Stringify.value(plan, .{}, &out.writer);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"missing_tool\":\"dart\"") != null);
+}

@@ -559,6 +559,28 @@ test "resolveRunner returns builtin filetype runner without configured override"
     try std.testing.expectEqualStrings("/tmp/test.py", resolved.argv.items[2]);
 }
 
+test "resolveRunner reports missing executable from the environment PATH" {
+    const allocator = std.testing.allocator;
+    defer config_store.reset();
+
+    try config_store.setSyncedConfigJson(
+        "{\"runners\":{\"dart\":\"dart run $file\"},\"build_commands\":{},\"detect\":{},\"revision\":32}",
+        32,
+    );
+
+    var environ = std.process.Environ.Map.init(allocator);
+    defer environ.deinit();
+    try environ.put("PATH", "/zignite/path/does/not/exist");
+
+    var resolved = try resolveRunner(std.testing.io, allocator, &environ, .{
+        .path = "/tmp/main.dart",
+        .filetype = "dart",
+    });
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("dart", resolved.missing_tool.?);
+}
+
 test "handleDaemonFrame writes run resolve error frame for malformed header with request id" {
     const allocator = std.testing.allocator;
     var reader = TestReader{ .lines = &.{} };

@@ -82,6 +82,11 @@ fn writePlanLegacy(stdout: anytype, plan: types.Plan) !void {
             try stdout.print("NAME\t{s}\n", .{name});
         }
     }
+    if (plan.missing_tool) |missing_tool| {
+        if (!common.hasInvalidPayloadChars(missing_tool)) {
+            try stdout.print("MISSING_TOOL\t{s}\n", .{missing_tool});
+        }
+    }
     if (plan.exec_command) |command_text| {
         if (!common.hasInvalidPayloadChars(command_text)) {
             try stdout.print("EXEC_COMMAND\t{s}\n", .{command_text});
@@ -139,6 +144,10 @@ const PlanJson = struct {
         if (plan.name) |name| {
             try jw.objectField("name");
             try jw.write(name);
+        }
+        if (plan.missing_tool) |missing_tool| {
+            try jw.objectField("missing_tool");
+            try jw.write(missing_tool);
         }
         if (plan.exec_command) |command_text| {
             try jw.objectField("exec_command");

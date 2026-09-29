@@ -6,12 +6,32 @@ const builtin = @import("builtin.zig");
 const materialize = @import("materialize.zig");
 const project_common = @import("../../project/core/common.zig");
 const source = @import("../source.zig");
+const tool = @import("../../tool.zig");
 const types = @import("types.zig");
 const zig_classifier = @import("zig_classifier.zig");
 
 const project_runner_preferred_names = [_][]const u8{ "run", "live", "dev", "watch", "serve", "start", "preview", "build" };
 
 pub fn resolveRunner(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    environ_map: ?*const std.process.Environ.Map,
+    options: types.Options,
+) !types.ResolvedRunner {
+    var resolved = try resolveRunnerImpl(io, allocator, environ_map, options);
+    errdefer resolved.deinit(allocator);
+    resolved.missing_tool = try tool.findMissingToolWithIO(
+        io,
+        allocator,
+        environ_map,
+        resolved.cwd,
+        resolved.command,
+        resolved.argv.items,
+    );
+    return resolved;
+}
+
+fn resolveRunnerImpl(
     io: std.Io,
     allocator: std.mem.Allocator,
     environ_map: ?*const std.process.Environ.Map,

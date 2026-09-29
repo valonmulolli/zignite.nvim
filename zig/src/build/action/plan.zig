@@ -6,6 +6,7 @@ const command = @import("../resolve/command.zig");
 const detected = @import("../resolve/detected.zig");
 const selected = @import("../resolve/selected.zig");
 const state = @import("state.zig");
+const tool = @import("../../tool.zig");
 const types = @import("types.zig");
 
 const ActionTarget = struct {
@@ -56,6 +57,25 @@ pub fn resolvePlan(
         .project_root = options.project_root,
     }, target.command_name);
     errdefer plan.deinit(allocator);
+
+    plan.missing_tool = try tool.findMissingToolWithIO(
+        io,
+        allocator,
+        environ_map,
+        plan.cwd,
+        plan.exec_command,
+        plan.exec_argv.items,
+    );
+    if (plan.missing_tool) |missing_tool| {
+        plan.ok = false;
+        plan.reason = .missing_tool;
+        plan.message = try std.fmt.allocPrint(
+            allocator,
+            "Error: Required executable '{s}' was not found in PATH.",
+            .{missing_tool},
+        );
+        return plan;
+    }
 
     try state.setLastCommand(io, allocator, environ_map, target.resolved_filetype, target.command_name);
     return plan;

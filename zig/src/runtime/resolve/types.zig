@@ -21,6 +21,7 @@ pub const ResolvedRunner = struct {
     cleanup_command: ?[]u8 = null,
     cwd: ?[]u8 = null,
     name: ?[]u8 = null,
+    missing_tool: ?[]u8 = null,
     argv: std.ArrayList([]u8) = .empty,
 
     pub fn deinit(self: *ResolvedRunner, allocator: std.mem.Allocator) void {
@@ -30,6 +31,7 @@ pub const ResolvedRunner = struct {
         if (self.cleanup_command) |cleanup| allocator.free(cleanup);
         if (self.cwd) |cwd| allocator.free(cwd);
         if (self.name) |name| allocator.free(name);
+        if (self.missing_tool) |missing_tool| allocator.free(missing_tool);
         for (self.argv.items) |arg| allocator.free(arg);
         self.argv.deinit(allocator);
     }
