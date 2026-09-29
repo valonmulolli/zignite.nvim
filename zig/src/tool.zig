@@ -11,14 +11,31 @@ pub fn findMissingToolWithIO(
     command_text: ?[]const u8,
     argv: []const []u8,
 ) !?[]u8 {
-    const tool = if (argv.len > 0) argv[0] else firstCommandWord(command_text orelse "");
-    if (tool == null or tool.?.len == 0 or isShellBuiltin(tool.?)) return null;
-
     const environment = environ_map orelse return null;
     const path_value = environment.get("PATH") orelse return null;
-    if (try isToolAvailable(io, allocator, path_value, cwd, tool.?)) return null;
 
-    return try allocator.dupe(u8, tool.?);
+    if (argv.len > 0) {
+        return try findMissingToolInWord(io, allocator, path_value, cwd, argv[0]);
+    }
+
+    var scanner = CommandScanner{ .command = command_text orelse "" };
+    while (scanner.next()) |tool| {
+        if (isShellBuiltin(tool) or isShellKeyword(tool)) continue;
+        if (try findMissingToolInWord(io, allocator, path_value, cwd, tool)) |missing| return missing;
+    }
+    return null;
+}
+
+fn findMissingToolInWord(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    path_value: []const u8,
+    cwd: ?[]const u8,
+    tool: []const u8,
+) !?[]u8 {
+    if (tool.len == 0 or isShellBuiltin(tool) or isShellKeyword(tool)) return null;
+    if (try isToolAvailable(io, allocator, path_value, cwd, tool)) return null;
+    return try allocator.dupe(u8, tool);
 }
 
 fn isToolAvailable(
@@ -104,30 +121,161 @@ fn accessPath(io: std.Io, candidate: []const u8) !bool {
     return true;
 }
 
-fn firstCommandWord(command: []const u8) ?[]const u8 {
-    var index: usize = 0;
-    while (index < command.len and std.ascii.isWhitespace(command[index])) : (index += 1) {}
-    if (index == command.len) return null;
+const CommandScanner = struct {
+    command: []const u8,
+    index: usize = 0,
+    command_active: bool = false,
+    wrapper_pending: bool = false,
 
-    if (command[index] == '\'' or command[index] == '"') {
-        const quote = command[index];
-        const start = index + 1;
-        index = start;
-        while (index < command.len and command[index] != quote) : (index += 1) {}
-        if (index == start) return null;
-        return command[start..index];
+    fn next(self: *CommandScanner) ?[]const u8 {
+        while (self.index < self.command.len) {
+            if (self.command_active) {
+                if (self.wrapper_pending) {
+                    self.wrapper_pending = false;
+                    self.skipHorizontalWhitespace();
+                    if (self.index < self.command.len and !isCommandSeparator(self.command[self.index])) {
+                        if (self.readWord()) |word| {
+                            if (isAssignmentWord(word)) {
+                                self.wrapper_pending = true;
+                                continue;
+                            }
+                            return word;
+                        }
+                    }
+                }
+                self.skipToCommandSeparator();
+                self.command_active = false;
+                continue;
+            }
+
+            self.skipCommandSeparators();
+            self.skipHorizontalWhitespace();
+            if (self.index >= self.command.len) return null;
+
+            const word = self.readWord() orelse {
+                self.index += 1;
+                continue;
+            };
+            if (isAssignmentWord(word)) continue;
+
+            self.command_active = true;
+            self.wrapper_pending = isCommandWrapper(word);
+            return word;
+        }
+        return null;
     }
 
-    const start = index;
-    while (index < command.len and !std.ascii.isWhitespace(command[index]) and
-        !isShellOperator(command[index])) : (index += 1)
-    {}
-    if (index == start) return null;
-    return command[start..index];
+    fn readWord(self: *CommandScanner) ?[]const u8 {
+        const start = self.index;
+        var quote: ?u8 = null;
+        while (self.index < self.command.len) {
+            const ch = self.command[self.index];
+            if (quote) |active_quote| {
+                if (ch == active_quote) {
+                    quote = null;
+                } else if (ch == '\\' and self.index + 1 < self.command.len) {
+                    self.index += 1;
+                }
+                self.index += 1;
+                continue;
+            }
+
+            if (ch == '\'' or ch == '"') {
+                quote = ch;
+                self.index += 1;
+            } else if (ch == '\\' and self.index + 1 < self.command.len) {
+                self.index += 2;
+            } else if (std.ascii.isWhitespace(ch) or isCommandSeparator(ch)) {
+                break;
+            } else {
+                self.index += 1;
+            }
+        }
+        if (self.index == start) return null;
+
+        const word = self.command[start..self.index];
+        if (word.len >= 2 and (word[0] == '\'' or word[0] == '"') and word[word.len - 1] == word[0]) {
+            return word[1 .. word.len - 1];
+        }
+        return word;
+    }
+
+    fn skipCommandSeparators(self: *CommandScanner) void {
+        while (self.index < self.command.len) {
+            if (self.command[self.index] == '\n' or self.command[self.index] == '\r') {
+                self.index += 1;
+                continue;
+            }
+            if (!isCommandSeparator(self.command[self.index])) return;
+            self.index += 1;
+            if (self.index < self.command.len and
+                (self.command[self.index] == '&' or self.command[self.index] == '|'))
+            {
+                self.index += 1;
+            }
+        }
+    }
+
+    fn skipToCommandSeparator(self: *CommandScanner) void {
+        var quote: ?u8 = null;
+        while (self.index < self.command.len) {
+            const ch = self.command[self.index];
+            if (quote) |active_quote| {
+                if (ch == active_quote) {
+                    quote = null;
+                } else if (ch == '\\' and self.index + 1 < self.command.len) {
+                    self.index += 1;
+                }
+                self.index += 1;
+                continue;
+            }
+
+            if (ch == '\'' or ch == '"') {
+                quote = ch;
+                self.index += 1;
+            } else if (ch == '\\' and self.index + 1 < self.command.len) {
+                self.index += 2;
+            } else if (isCommandSeparator(ch)) {
+                return;
+            } else {
+                self.index += 1;
+            }
+        }
+    }
+
+    fn skipHorizontalWhitespace(self: *CommandScanner) void {
+        while (self.index < self.command.len and
+            (self.command[self.index] == ' ' or self.command[self.index] == '\t'))
+        {
+            self.index += 1;
+        }
+    }
+};
+
+fn isCommandSeparator(ch: u8) bool {
+    return ch == '&' or ch == '|' or ch == ';' or ch == '\n' or ch == '\r';
 }
 
-fn isShellOperator(ch: u8) bool {
-    return ch == '&' or ch == '|' or ch == ';' or ch == '<' or ch == '>';
+fn isCommandWrapper(word: []const u8) bool {
+    return std.mem.eql(u8, word, "command") or std.mem.eql(u8, word, "exec");
+}
+
+fn isAssignmentWord(word: []const u8) bool {
+    if (word.len == 0) return false;
+    var index: usize = 0;
+    if (!(std.ascii.isAlphabetic(word[index]) or word[index] == '_')) return false;
+    index += 1;
+    while (index < word.len and (std.ascii.isAlphanumeric(word[index]) or word[index] == '_')) : (index += 1) {}
+    return index < word.len and word[index] == '=';
+}
+
+fn isShellKeyword(word: []const u8) bool {
+    for ([_][]const u8{
+        "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "select", "then", "until", "while",
+    }) |keyword| {
+        if (std.mem.eql(u8, word, keyword)) return true;
+    }
+    return false;
 }
 
 fn hasPathSeparator(tool: []const u8) bool {
@@ -176,6 +324,42 @@ test "findMissingTool ignores shell builtins" {
         "cd /tmp",
         &.{},
     )) == null);
+}
+
+test "findMissingTool scans past shell builtins and separators" {
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    const missing = (try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "cd '/tmp/project' && printf ready | dart run main.dart",
+        &.{},
+    )).?;
+    defer allocator.free(missing);
+    try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool skips environment assignments" {
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    const missing = (try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "ZIG_GLOBAL_CACHE_DIR=/tmp/cache dart run main.dart",
+        &.{},
+    )).?;
+    defer allocator.free(missing);
+    try std.testing.expectEqualStrings("dart", missing);
 }
 
 test "findMissingTool does not treat a directory as an executable" {
