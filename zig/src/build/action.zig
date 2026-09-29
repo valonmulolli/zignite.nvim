@@ -180,6 +180,36 @@ test "resolve named plan reports missing executable from the environment PATH" {
     try std.testing.expect(std.mem.find(u8, plan.message.?, "not-installed-zignite-tool") != null);
 }
 
+test "write resolved plan reports missing executable payload" {
+    const allocator = std.testing.allocator;
+    defer @import("../config/store.zig").reset();
+    defer @import("action/state.zig").resetForTests();
+    try @import("../config/store.zig").setSyncedConfigJson(
+        "{\"build_commands\":{\"missingft\":{\"build\":\"not-installed-zignite-tool build\"}},\"detect\":{},\"revision\":88}",
+        88,
+    );
+
+    var environ = std.process.Environ.Map.init(allocator);
+    defer environ.deinit();
+    try environ.put("PATH", "/zignite/path/does/not/exist");
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try serialize.writeResolvedPlan(&out.writer, allocator, std.testing.io, &environ, .{
+        .path = "/tmp/missingft/main.txt",
+        .filetype = "missingft",
+        .action = .named,
+        .command_name = "build",
+    });
+
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"reason\":\"missing_tool\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"missing_tool\":\"not-installed-zignite-tool\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "system_argv") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "MISSING_TOOL\tnot-installed-zignite-tool") != null);
+}
+
 test "resolve live plan reports missing live command" {
     const allocator = std.testing.allocator;
     defer @import("../config/store.zig").reset();
