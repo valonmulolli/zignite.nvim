@@ -5,6 +5,21 @@ on:
   pull_request:
 
 jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reject generated artifacts
+        run: |
+          if git ls-files | grep -E '(^|/)(\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)' >/dev/null; then
+            echo "Generated build artifacts must not be tracked:"
+            git ls-files | grep -E '(^|/)(\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)'
+            exit 1
+          fi
+
   zig:
     name: Zig (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
