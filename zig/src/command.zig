@@ -145,6 +145,27 @@ test "termToExitCode treats unknown as raw status" {
     try std.testing.expectEqual(@as(u8, 255), termToExitCode(.{ .unknown = 9999 }));
 }
 
+test "process execution preserves nonzero child exit codes" {
+    const shell_args = if (comptime builtin.os.tag == .windows)
+        [_][]const u8{ "cmd.exe", "/C", "exit /B 23" }
+    else
+        [_][]const u8{ "/bin/sh", "-c", "exit 23" };
+
+    var spawned = try SpawnedChild.spawn(std.testing.io, .{
+        .argv = &shell_args,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }, false);
+    defer spawned.control.deinit();
+
+    const term = try waitForChildWithTimeout(std.testing.io, &spawned.child, &spawned.control, null);
+    switch (term) {
+        .exited => |code| try std.testing.expectEqual(@as(u32, 23), code),
+        else => return error.UnexpectedChildTermination,
+    }
+}
+
 fn runCleanup(io: std.Io, cleanup_command: ?[]const u8) void {
     const cleanup = cleanup_command orelse return;
     if (std.mem.trim(u8, cleanup, " \t\r\n").len == 0) return;
