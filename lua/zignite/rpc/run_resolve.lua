@@ -46,7 +46,7 @@ local function can_use_backend_run_resolve(filepath, has_inline_source)
 	if has_inline_source and type(filepath) ~= "string" then
 		return false
 	end
-	return config_sync.ensure_current()
+	return true
 end
 
 ---@param value any
@@ -218,7 +218,7 @@ function M.resolve_sync_request(params)
 		return failed_resolution(
 			filetype,
 			string.format("Failed to resolve runner for filetype: %s", tostring(filetype or "")),
-			"config_sync_failed"
+			"invalid_request"
 		)
 	end
 	local request = {
@@ -229,7 +229,10 @@ function M.resolve_sync_request(params)
 		selection_text = selection_text,
 	}
 
-	local lines = resolve_client.sync_request(request)
+	local lines
+	if config_sync.ensure_current() then
+		lines = resolve_client.sync_request(request)
+	end
 	if type(lines) ~= "table" and not has_inline_source then
 		lines = resolve_client.once_request(request)
 	end

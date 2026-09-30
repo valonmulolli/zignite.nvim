@@ -236,16 +236,12 @@ local function decode_buffered_lines(buffer, data)
 		lines[#lines + 1] = tostring(data[index] or "")
 	end
 
-	buffer.value = tostring(data[#data] or "")
 	if #data == 1 then
 		buffer.value = lines[1]
 		return {}
 	end
 
-	if buffer.value == "" then
-		return lines
-	end
-
+	buffer.value = tostring(data[#data] or "")
 	return lines
 end
 
@@ -492,7 +488,7 @@ local function ensure_shared_worker(opts)
 		stopped = false,
 	}
 
-	local job_id = vim.fn.jobstart(opts.worker_argv, {
+	local ok_job, job_id = pcall(vim.fn.jobstart, opts.worker_argv, {
 		stdout_buffered = false,
 		on_stdout = function(_, data)
 			for _, line in ipairs(decode_buffered_lines(worker.stdout_buffer, data)) do
@@ -507,7 +503,7 @@ local function ensure_shared_worker(opts)
 			stop_shared_worker(worker, true)
 		end,
 	})
-	if type(job_id) ~= "number" or job_id <= 0 then
+	if not ok_job or type(job_id) ~= "number" or job_id <= 0 then
 		return nil
 	end
 
@@ -825,7 +821,7 @@ function M.new(opts)
 		---@type string[]
 		local output_lines = {}
 		local cancelled = false
-		local job_id = vim.fn.jobstart(argv, {
+	local ok_job, job_id = pcall(vim.fn.jobstart, argv, {
 			stdout_buffered = true,
 			stderr_buffered = true,
 			on_stdout = function(_, data)
@@ -849,10 +845,10 @@ function M.new(opts)
 					on_done(output_lines)
 				end
 			end,
-		})
-		if type(job_id) ~= "number" or job_id <= 0 then
-			return false
-		end
+	})
+	if not ok_job or type(job_id) ~= "number" or job_id <= 0 then
+		return false
+	end
 		if input ~= nil then
 			local sent_ok, sent = pcall(vim.fn.chansend, job_id, input)
 			if not sent_ok or sent == 0 then
