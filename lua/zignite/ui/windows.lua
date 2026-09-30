@@ -328,12 +328,11 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 	tracked_runner.job_id = job_id
 	if not is_valid_job_id(job_id) then
 		tracked_runner.job_id = nil
-		spinner.stop_spinner()
 		show_jobstart_failure(buf, command, title_name, job_error)
 		if vim.api.nvim_win_is_valid(win) then
 			spinner.set_exit_status(win, 127)
 		else
-			spinner.stop_spinner()
+			spinner.stop_spinner(win)
 		end
 		return nil, win, buf
 	end

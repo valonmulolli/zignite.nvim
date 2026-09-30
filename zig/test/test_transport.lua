@@ -3,7 +3,7 @@
 local original_vim = _G.vim
 local original_transport = package.loaded["zignite.rpc.transport"]
 
-local function make_fake_vim(response_lines, send_result)
+local function make_fake_vim(response_lines, send_result, jobstart_error)
 	local jobs = {}
 	local next_job_id = 1
 
@@ -23,6 +23,9 @@ local function make_fake_vim(response_lines, send_result)
 				return 1
 			end,
 			jobstart = function(_, opts)
+				if jobstart_error then
+					error(jobstart_error)
+				end
 				local job_id = next_job_id
 				next_job_id = next_job_id + 1
 				jobs[job_id] = opts
@@ -79,10 +82,13 @@ local function new_client(transport)
 			res_err = "@@ZTEST_RES_ERR",
 		},
 		worker_wait_ms = 100,
-		build_worker_payload = function(request_id)
-			return string.format("@@ZTEST_REQ_BEGIN %d\n@@ZTEST_REQ_END %d\n", request_id, request_id)
-		end,
-	})
+			build_worker_payload = function(request_id)
+				return string.format("@@ZTEST_REQ_BEGIN %d\n@@ZTEST_REQ_END %d\n", request_id, request_id)
+			end,
+			build_once_argv = function()
+				return { "zignite-test-worker" }
+			end,
+		})
 end
 
 local function run_tests()
@@ -119,6 +125,18 @@ local function run_tests()
 	end), "request should be accepted before send is attempted")
 	assert(callback_called, "failed send should not wait for the request timeout")
 	send_failure_transport.reset_all()
+
+	_G.vim = make_fake_vim({}, nil, "jobstart failed")
+	package.loaded["zignite.rpc.transport"] = nil
+	local jobstart_failure_transport = require("zignite.rpc.transport")
+	local jobstart_failure = new_client(jobstart_failure_transport)
+	assert(jobstart_failure.async_request({}, function()
+		error("failed jobstart must not invoke the callback")
+	end) == false, "worker jobstart exceptions should return false")
+	assert(jobstart_failure.once_request_async({}, function()
+		error("failed jobstart must not invoke the callback")
+	end) == false, "one-shot jobstart exceptions should return false")
+	jobstart_failure_transport.reset_all()
 end
 
 local ok, err = xpcall(function()

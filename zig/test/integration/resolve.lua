@@ -5,6 +5,7 @@ local config_sync = require("zignite.rpc.config_sync")
 local run_resolve = require("zignite.rpc.run_resolve")
 local zignite_init = require("zignite.init")
 local ui_windows = require("zignite.ui.windows")
+local spinner = require("zignite.ui.spinner")
 
 local function encode_json(payload)
 	local encode = vim.json and vim.json.encode or vim.fn.json_encode
@@ -639,6 +640,58 @@ local function test_run_resolve_reports_backend_no_runner_failure()
 	print("✓ Run resolve backend no-runner failure test passed")
 end
 
+local function test_run_resolve_falls_back_when_config_sync_fails()
+	config.setup({})
+
+	local original_ensure_synced = config_sync.ensure_synced
+	local resolve_client = get_upvalue_by_name(run_resolve.resolve_sync_request, "resolve_client")
+	assert(type(resolve_client) == "table", "expected run resolve client upvalue")
+	local original_sync_request = resolve_client.sync_request
+	local original_once_request = resolve_client.once_request
+	local sync_called = false
+	local once_called = false
+
+	config_sync.ensure_synced = function()
+		return false
+	end
+	resolve_client.sync_request = function()
+		sync_called = true
+		return nil
+	end
+	resolve_client.once_request = function()
+		once_called = true
+		return {
+			"RESULT_JSON\t" .. encode_json({
+				ok = true,
+				filetype = "python",
+				command = "python3 /tmp/main.py",
+				argv = { "python3", "/tmp/main.py" },
+				system_argv = { "zig/zig-out/bin/zignite", "--argv", "python3", "/tmp/main.py" },
+				config_revision = config.revision,
+			}),
+		}
+	end
+
+	local ok, resolved = pcall(run_resolve.resolve_sync_request, {
+		path = "/tmp/main.py",
+		filetype = "python",
+	})
+
+	config_sync.ensure_synced = original_ensure_synced
+	resolve_client.sync_request = original_sync_request
+	resolve_client.once_request = original_once_request
+
+	assert(ok, resolved)
+	assert(sync_called == false, "daemon resolve should not run when config sync fails")
+	assert(once_called == true, "run resolve should fall back to one-shot execution")
+	assert(type(resolved) == "table" and resolved.ok == true, "one-shot runner result should be returned")
+	assert(type(resolved.system_argv) == "table" and resolved.system_argv[3] == "python3",
+		"one-shot runner result should preserve system argv")
+
+	reset_job_results()
+	print("✓ Run resolve config-sync fallback test passed")
+end
+
 local function test_build_action_sync_falls_back_to_once_request()
 	config.setup({})
 
@@ -1063,15 +1116,17 @@ local function test_health_ping_responsive_daemon()
 end
 
 local function test_missing_runner_executable_reports_actionable_error()
-	config.setup({})
+	config.setup({ singleton = false })
 
 	local captured_lines = {}
+	local spinner_stop_calls = {}
 	local function capture_lines(_, _, _, _, lines)
 		captured_lines = lines
 	end
 
 	local function assert_missing_executable_message(mode)
 		captured_lines = {}
+		local spinner_call_start = #spinner_stop_calls
 		state.next_jobstart_error = "Vim:E475: Invalid value for argument cmd: 'dart' is not executable"
 
 		local ok, err = pcall(function()
@@ -1081,6 +1136,11 @@ local function test_missing_runner_executable_reports_actionable_error()
 		assert(captured_lines[1] == "Error: Required executable 'dart' was not found in PATH.")
 		assert(captured_lines[2] == "Install 'dart', restart Neovim, or configure runners.dart.")
 		assert(captured_lines[3] == "Command: dart /tmp/missing.dart")
+		if mode == "float" then
+			for index = spinner_call_start + 1, #spinner_stop_calls do
+				assert(spinner_stop_calls[index] ~= nil, "failed float launch must stop only its own spinner")
+			end
+		end
 		ui_windows.close_output(true)
 	end
 
@@ -1096,6 +1156,13 @@ local function test_missing_runner_executable_reports_actionable_error()
 			end,
 		},
 		{ tbl = vim.api, key = "nvim_buf_set_lines", value = capture_lines },
+		{
+			tbl = spinner,
+			key = "stop_spinner",
+			value = function(win_id)
+				spinner_stop_calls[#spinner_stop_calls + 1] = win_id
+			end,
+		},
 	}, function()
 		assert_missing_executable_message("float")
 		assert_missing_executable_message("split")
@@ -1126,6 +1193,7 @@ test_build_action_sync_falls_back_to_once_request()
 test_build_action_interactive_retries_with_prompted_arguments()
 test_build_action_interactive_reports_structured_cancellation()
 test_run_resolve_reports_backend_no_runner_failure()
+test_run_resolve_falls_back_when_config_sync_fails()
 test_run_resolve_typescript_without_package_json_uses_configured_runner()
 test_run_resolve_python_conda_without_env_name_uses_project_runner()
 test_run_resolve_go_keeps_single_file_runner_inside_module()
