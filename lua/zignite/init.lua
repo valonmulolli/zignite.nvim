@@ -25,8 +25,8 @@ end
 ---@return string
 local function get_visual_selection()
 	local buf_num, start_line, start_col = table_unpack(vim.fn.getpos("'<"))
-	local _, end_line, end_col = table_unpack(vim.fn.getpos("'>"))
-	if start_line == 0 or end_line == 0 or buf_num ~= vim.api.nvim_get_current_buf() then
+	local end_buf_num, end_line, end_col = table_unpack(vim.fn.getpos("'>"))
+	if start_line == 0 or end_line == 0 or buf_num ~= end_buf_num or buf_num ~= vim.api.nvim_get_current_buf() then
 		return ""
 	end
 	local ok, text = pcall(vim.api.nvim_buf_get_text, 0, start_line - 1, start_col - 1, end_line - 1, end_col, {})

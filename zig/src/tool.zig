@@ -134,6 +134,7 @@ const CommandScanner = struct {
     index: usize = 0,
     command_active: bool = false,
     wrapper_pending: bool = false,
+    wrapper_skip_next: bool = false,
 
     fn next(self: *CommandScanner) ?[]const u8 {
         while (self.index < self.command.len) {
@@ -143,7 +144,17 @@ const CommandScanner = struct {
                     self.skipHorizontalWhitespace();
                     if (self.index < self.command.len and !isCommandSeparator(self.command[self.index])) {
                         if (self.readWord()) |word| {
+                            if (self.wrapper_skip_next) {
+                                self.wrapper_skip_next = false;
+                                self.wrapper_pending = true;
+                                continue;
+                            }
                             if (isAssignmentWord(word)) {
+                                self.wrapper_pending = true;
+                                continue;
+                            }
+                            if (isWrapperOption(word)) {
+                                self.wrapper_skip_next = isWrapperOptionWithArgument(word);
                                 self.wrapper_pending = true;
                                 continue;
                             }
@@ -151,6 +162,7 @@ const CommandScanner = struct {
                         }
                     }
                 }
+                self.wrapper_skip_next = false;
                 self.skipToCommandSeparator();
                 self.command_active = false;
                 continue;
@@ -268,6 +280,14 @@ fn isCommandWrapper(word: []const u8) bool {
     return std.mem.eql(u8, word, "command") or std.mem.eql(u8, word, "exec");
 }
 
+fn isWrapperOption(word: []const u8) bool {
+    return word.len > 1 and word[0] == '-';
+}
+
+fn isWrapperOptionWithArgument(word: []const u8) bool {
+    return std.mem.eql(u8, word, "-a") or std.mem.eql(u8, word, "--argv0");
+}
+
 fn isAssignmentWord(word: []const u8) bool {
     if (word.len == 0) return false;
     var index: usize = 0;
@@ -346,6 +366,60 @@ test "findMissingTool scans past shell builtins and separators" {
         &environment,
         "/tmp",
         "cd '/tmp/project' && printf ready | dart run main.dart",
+        &.{},
+    )).?;
+    defer allocator.free(missing);
+    try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool skips command wrapper options" {
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    const missing = (try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "command -v dart",
+        &.{},
+    )).?;
+    defer allocator.free(missing);
+    try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool skips exec option arguments" {
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    const missing = (try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "exec -a zignite dart run main.dart",
+        &.{},
+    )).?;
+    defer allocator.free(missing);
+    try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool resets wrapper option state at separators" {
+    const allocator = std.testing.allocator;
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", "/zignite/path/does/not/exist");
+
+    const missing = (try findMissingToolWithIO(
+        std.testing.io,
+        allocator,
+        &environment,
+        "/tmp",
+        "exec -a; exec dart run main.dart",
         &.{},
     )).?;
     defer allocator.free(missing);

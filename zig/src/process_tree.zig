@@ -3,6 +3,12 @@ const builtin = @import("builtin");
 
 const timeout_grace_ms: u64 = 100;
 
+const CaptureResult = union(enum) {
+    stdout: std.Io.Reader.LimitedAllocError![]u8,
+    stderr: std.Io.Reader.LimitedAllocError![]u8,
+    timeout: std.Io.Cancelable!void,
+};
+
 extern "kernel32" fn CreateJobObjectW(
     attributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
     name: ?std.os.windows.LPCWSTR,
@@ -242,6 +248,26 @@ fn readChildStdout(
     return reader.interface.allocRemaining(allocator, .limited(max_bytes));
 }
 
+fn freeCaptureResult(allocator: std.mem.Allocator, result: CaptureResult) void {
+    switch (result) {
+        .stdout, .stderr => |output| {
+            if (output) |bytes| {
+                allocator.free(bytes);
+            } else |_| {}
+        },
+        .timeout => {},
+    }
+}
+
+fn cancelCaptureSelect(
+    allocator: std.mem.Allocator,
+    select: *std.Io.Select(CaptureResult),
+) void {
+    while (select.cancel()) |result| {
+        freeCaptureResult(allocator, result);
+    }
+}
+
 pub const CapturedStdout = struct {
     term: std.process.Child.Term,
     stdout: []u8,
@@ -265,23 +291,19 @@ pub fn runCapturedStdout(
     }, timeout_ms != null);
     defer spawned.control.deinit();
 
-    const WaitResult = union(enum) {
-        stdout: std.Io.Reader.LimitedAllocError![]u8,
-        stderr: std.Io.Reader.LimitedAllocError![]u8,
-        timeout: std.Io.Cancelable!void,
-    };
-    var select_buffer: [3]WaitResult = undefined;
-    var select = std.Io.Select(WaitResult).init(io, &select_buffer);
+    var select_buffer: [3]CaptureResult = undefined;
+    var select = std.Io.Select(CaptureResult).init(io, &select_buffer);
     select.async(.stdout, readChildStdout, .{ allocator, io, spawned.child.stdout.?, max_bytes });
     select.async(.stderr, readChildStdout, .{ allocator, io, spawned.child.stderr.?, max_bytes });
     if (timeout_ms) |ms| select.async(.timeout, sleepFor, .{ io, ms });
 
     var stdout: ?[]u8 = null;
+    errdefer if (stdout) |bytes| allocator.free(bytes);
     var completed_streams: usize = 0;
     while (completed_streams < 2) {
         const result = select.await() catch |err| {
             requestChildForceTermination(spawned.child.id.?, &spawned.control);
-            select.cancelDiscard();
+            cancelCaptureSelect(allocator, &select);
             _ = spawned.child.wait(io) catch {};
             return err;
         };
@@ -290,39 +312,73 @@ pub fn runCapturedStdout(
             .stdout => |output| {
                 stdout = output catch |err| {
                     requestChildForceTermination(spawned.child.id.?, &spawned.control);
-                    select.cancelDiscard();
+                    cancelCaptureSelect(allocator, &select);
                     _ = spawned.child.wait(io) catch {};
                     return err;
                 };
                 completed_streams += 1;
             },
             .stderr => |output| {
-                _ = output catch |err| {
+                const stderr = output catch |err| {
                     requestChildForceTermination(spawned.child.id.?, &spawned.control);
-                    select.cancelDiscard();
+                    cancelCaptureSelect(allocator, &select);
                     _ = spawned.child.wait(io) catch {};
                     return err;
                 };
+                allocator.free(stderr);
                 completed_streams += 1;
             },
             .timeout => |timeout_result| {
                 _ = timeout_result catch |err| {
                     requestChildForceTermination(spawned.child.id.?, &spawned.control);
-                    select.cancelDiscard();
+                    cancelCaptureSelect(allocator, &select);
                     _ = spawned.child.wait(io) catch {};
                     return err;
                 };
                 requestChildForceTermination(spawned.child.id.?, &spawned.control);
-                select.cancelDiscard();
+                cancelCaptureSelect(allocator, &select);
                 _ = spawned.child.wait(io) catch {};
                 return error.Timeout;
             },
         }
     }
 
-    select.cancelDiscard();
+    cancelCaptureSelect(allocator, &select);
     const term = try spawned.child.wait(io);
     return .{ .term = term, .stdout = stdout.? };
+}
+
+test "runCapturedStdout releases stderr output" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
+    const result = try runCapturedStdout(
+        std.testing.allocator,
+        std.testing.io,
+        &.{ "/bin/sh", "-c", "printf stdout; printf stderr >&2" },
+        .inherit,
+        null,
+        4096,
+    );
+    defer std.testing.allocator.free(result.stdout);
+
+    try std.testing.expectEqualStrings("stdout", result.stdout);
+    try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "runCapturedStdout releases output when timed out" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
+    try std.testing.expectError(
+        error.Timeout,
+        runCapturedStdout(
+            std.testing.allocator,
+            std.testing.io,
+            &.{ "/bin/sh", "-c", "printf stdout; sleep 5" },
+            .inherit,
+            25,
+            4096,
+        ),
+    );
 }
 
 pub fn childProcessGroupId() ?std.posix.pid_t {

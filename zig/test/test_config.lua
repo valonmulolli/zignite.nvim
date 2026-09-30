@@ -75,6 +75,21 @@ local function test_config_setup()
     assert(config.options.runners.python == nil, "Builtin runners should no longer live in Lua config")
     assert(next(config.options.build_commands) == nil, "Custom setup should not invent builtin build command overrides")
 
+    config.setup({
+        float = {
+            border = "invalid",
+            height = 2,
+            width = 0,
+            x = -1,
+            y = 2,
+        },
+    })
+    assert(config.options.float.border == "rounded", "Invalid float border should use the default")
+    assert(config.options.float.height == 0.8, "Invalid float height should use the default")
+    assert(config.options.float.width == 0.8, "Invalid float width should use the default")
+    assert(config.options.float.x == 0.5, "Invalid float x should use the default")
+    assert(config.options.float.y == 0.5, "Invalid float y should use the default")
+
     print("✓ Config setup test passed")
 end
 

@@ -230,6 +230,34 @@ local function validate_config(opts)
 	end
 end
 
+---@param options table
+---@return nil
+local function normalize_float_config(options)
+	local float = options.float
+	local defaults = M.defaults.float
+	if type(float) ~= "table" then
+		options.float = vim.deepcopy(defaults)
+		return
+	end
+
+	if not vim.tbl_contains(VALID_FLOAT_BORDERS, float.border) then
+		float.border = defaults.border
+	end
+
+	for _, field in ipairs({ "height", "width" }) do
+		local value = float[field]
+		if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge or value <= 0 or value > 1 then
+			float[field] = defaults[field]
+		end
+	end
+	for _, field in ipairs({ "x", "y" }) do
+		local value = float[field]
+		if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge or value < 0 or value > 1 then
+			float[field] = defaults[field]
+		end
+	end
+end
+
 ---@return nil
 local function sync_config_async()
 	if type(vim.fn) ~= "table" or type(vim.fn.fnamemodify) ~= "function" then
@@ -250,6 +278,7 @@ function M.setup(opts)
 	opts = opts or {}
 	validate_config(opts)
 	M.options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
+	normalize_float_config(M.options)
 	M.revision = (tonumber(M.revision) or 0) + 1
 
 	M.setup_keymaps()

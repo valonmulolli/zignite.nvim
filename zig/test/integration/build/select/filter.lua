@@ -173,7 +173,7 @@ local function test_build_picker_filter_inline_mode()
     local cmdline_calls = 0
     local ui_calls = 0
     local idx = 1
-    local keys = { "r", "u", "n", "\r" }
+	local keys = { "é", "\127", "r", "u", "n", "\r" }
 
     config.setup({
         build_commands = {
@@ -362,9 +362,49 @@ local function test_build_picker_uses_backend_no_command_message()
 	print("✓ Build picker backend no-command message test passed")
 end
 
+local function test_build_picker_handles_window_creation_failure()
+	local original_expand = vim.fn.expand
+	local original_open_win = vim.api.nvim_open_win
+	local original_buf_delete = vim.api.nvim_buf_delete
+	local delete_calls = 0
+
+	config.setup({
+		build_commands = {
+			tinyft = { run = "echo run" },
+		},
+		picker = { filter_input = "cmdline" },
+	})
+
+	vim.bo.filetype = "tinyft"
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then return "/tmp/picker/main.tinyft" end
+		return original_expand(expr)
+	end
+	vim.api.nvim_open_win = function()
+		error("window closed during picker creation")
+	end
+	vim.api.nvim_buf_delete = function(...)
+		delete_calls = delete_calls + 1
+		return original_buf_delete(...)
+	end
+
+	local ok, err = pcall(init.select_build_command, "float")
+
+	vim.fn.expand = original_expand
+	vim.api.nvim_open_win = original_open_win
+	vim.api.nvim_buf_delete = original_buf_delete
+
+	assert(ok, "picker window creation failure should not escape")
+	assert(err == nil, "picker window creation failure should be handled")
+	assert(delete_calls == 1, "picker should delete its buffer after window creation fails")
+
+	print("✓ Build picker window failure test passed")
+end
+
 test_build_picker_respects_backend_picker_metadata()
 test_build_picker_filter_and_preview()
 test_build_picker_filter_cmdline_mode()
 test_build_picker_filter_inline_mode()
 test_build_picker_inline_argument_entry()
 test_build_picker_uses_backend_no_command_message()
+test_build_picker_handles_window_creation_failure()

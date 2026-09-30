@@ -89,7 +89,6 @@ end, {})
 -- Usage: :RunBuild build, :RunBuild run, :RunBuild test, etc.
 vim.api.nvim_create_user_command("RunBuild", function(opts)
 	local command_name = opts.fargs[1]
-	local mode = nil
 	local args_start = 2
 
 	if not command_name then
@@ -100,7 +99,7 @@ vim.api.nvim_create_user_command("RunBuild", function(opts)
 		return
 	end
 
-	mode = parse_mode(opts.fargs, 2)
+	local mode = parse_mode(opts.fargs, 2)
 	if opts.fargs[2] and not mode then
 		args_start = 2
 	elseif mode then

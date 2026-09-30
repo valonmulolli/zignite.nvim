@@ -386,6 +386,34 @@ local function test_run_code_visual_uses_backend_managed_execution_path()
     print("✓ RunCode visual backend execution path test passed")
 end
 
+local function test_run_code_rejects_cross_buffer_visual_selection()
+    config.setup({})
+
+    local original_getpos = vim.fn.getpos
+    local original_execute_command = init.execute_command
+    local execution_attempts = 0
+
+    vim.fn.getpos = function(mark)
+        if mark == "'<" then
+            return { 1, 1, 1, 0 }
+        end
+        return { 2, 1, 1, 0 }
+    end
+    init.execute_command = function()
+        execution_attempts = execution_attempts + 1
+    end
+
+    init.run_code(1, "float")
+
+    init.execute_command = original_execute_command
+    vim.fn.getpos = original_getpos
+
+    assert(execution_attempts == 0, "visual runs should reject marks from different buffers")
+    reset_job_results()
+
+    print("✓ Cross-buffer visual selection test passed")
+end
+
 local function test_execution_modes_start_runner_jobs()
     config.setup({
         singleton = false,
@@ -435,4 +463,5 @@ test_run_live_missing_command()
 test_run_live_javascript_ignores_missing_default_scripts()
 test_run_live_javascript_uses_detected_live_alias()
 test_run_code_visual_uses_backend_managed_execution_path()
+test_run_code_rejects_cross_buffer_visual_selection()
 test_execution_modes_start_runner_jobs()

@@ -165,7 +165,12 @@ function M.open(opts)
 	local picker_focus = picker_config.focus ~= false
 	local resize_group_id = nil
 
-	win = vim.api.nvim_open_win(buf, picker_focus, initial_win_opts)
+	local ok_win, opened_win = pcall(vim.api.nvim_open_win, buf, picker_focus, initial_win_opts)
+	if not ok_win then
+		pcall(vim.api.nvim_buf_delete, buf, { force = true })
+		return
+	end
+	win = opened_win
 	vim.api.nvim_set_option_value("cursorline", true, { win = win })
 	vim.api.nvim_set_option_value("wrap", false, { win = win })
 	vim.api.nvim_set_option_value("winhl", "Normal:Normal,FloatBorder:FloatBorder,CursorLine:Visual", { win = win })
