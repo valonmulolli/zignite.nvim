@@ -39,7 +39,7 @@ local function read_inline_input(opts)
 
 		local key_byte = string.byte(key, 1)
 		if key == "\127" or key == "\008" then
-			value = value:sub(1, math.max(0, #value - 1))
+			value = value:gsub("[%z\1-\127\194-\244][\128-\191]*$", "")
 		elseif key == "\021" then
 			value = ""
 		elseif key_byte and key_byte >= 32 and key_byte ~= 128 then
