@@ -224,6 +224,8 @@ pub fn loadRunnerConfig(allocator: std.mem.Allocator, filetype: []const u8) !?Ru
 pub fn loadProjectConfig(allocator: std.mem.Allocator, path: []const u8) !?ProjectConfig {
     const root = rootObject() orelse return null;
     const projects = objectField(root, "project") orelse return null;
+    const normalized_path = try common.normalizePathAlloc(allocator, path);
+    defer allocator.free(normalized_path);
 
     var best_pattern: ?[]const u8 = null;
     var best_root: ?[]const u8 = null;
@@ -233,18 +235,21 @@ pub fn loadProjectConfig(allocator: std.mem.Allocator, path: []const u8) !?Proje
     while (it.next()) |entry| {
         if (common.hasInvalidPayloadChars(entry.key_ptr.*) or entry.value_ptr.* != .object) continue;
         const project_root = projectRoot(entry.key_ptr.*);
-        if (project_root.len == 0 or !projectPatternMatches(path, project_root)) continue;
+        if (project_root.len == 0) continue;
+        const normalized_root = try common.normalizePathAlloc(allocator, project_root);
+        defer allocator.free(normalized_root);
+        if (!projectPatternMatches(normalized_path, normalized_root)) continue;
 
         const command = entry.value_ptr.object.get("command") orelse continue;
         if (command != .string or command.string.len == 0 or common.hasInvalidPayloadChars(command.string)) continue;
 
-        if (project_root.len > best_length or
-            (project_root.len == best_length and
+        if (normalized_root.len > best_length or
+            (normalized_root.len == best_length and
                 (best_pattern == null or std.mem.order(u8, entry.key_ptr.*, best_pattern.?) == .lt)))
         {
             best_pattern = entry.key_ptr.*;
             best_root = project_root;
-            best_length = project_root.len;
+            best_length = normalized_root.len;
         }
     }
 
@@ -256,7 +261,7 @@ pub fn loadProjectConfig(allocator: std.mem.Allocator, path: []const u8) !?Proje
     errdefer resolved.deinit(allocator);
 
     resolved.command = try allocator.dupe(u8, project.object.get("command").?.string);
-    resolved.root = try allocator.dupe(u8, matched_root);
+    resolved.root = try common.normalizePathAlloc(allocator, matched_root);
 
     if (project.object.get("name")) |name| {
         if (name == .string and name.string.len > 0 and !common.hasInvalidPayloadChars(name.string)) {
@@ -279,9 +284,15 @@ pub fn loadProjectConfig(allocator: std.mem.Allocator, path: []const u8) !?Proje
 
 fn projectRoot(pattern: []const u8) []const u8 {
     var root = pattern;
-    for ([_][]const u8{ "/.*", "/.-", "/*", "/?", ".*", ".-", "*", "?" }) |suffix| {
+    for ([_][]const u8{
+        "/.*", "/.-", "/*", "/?", "\\.*", "\\.-", "\\*", "\\?", ".*", ".-", "*", "?",
+    }) |suffix| {
         if (std.mem.endsWith(u8, root, suffix)) {
             root = root[0 .. root.len - suffix.len];
+            if (root.len == 0 and suffix[0] == '/') root = "/";
+            if (root.len == 2 and root[1] == ':' and (suffix[0] == '/' or suffix[0] == '\\')) {
+                root = pattern[0..3];
+            }
             break;
         }
     }
@@ -294,6 +305,7 @@ fn projectPatternMatches(path: []const u8, root: []const u8) bool {
     const normalized_root = trimRelativePrefix(root);
     if (std.mem.eql(u8, normalized_path, normalized_root)) return true;
     if (!std.mem.startsWith(u8, normalized_path, normalized_root)) return false;
+    if (std.mem.endsWith(u8, normalized_root, "/")) return true;
     return normalized_root.len > 0 and normalized_path.len > normalized_root.len and
         normalized_path[normalized_root.len] == '/';
 }
@@ -461,6 +473,49 @@ test "view resolves project cleanup and cwd overrides" {
     defer project.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("make clean", project.cleanup_command.?);
     try std.testing.expectEqualStrings("/tmp/repo/build", project.cwd.?);
+}
+
+test "view matches Windows-style project patterns" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        "{\"project\":{\"C:\\\\repo\\\\service\\\\.*\":{\"command\":\"dotnet run\"}},\"revision\":14}",
+        14,
+    );
+
+    var project = (try loadProjectConfig(std.testing.allocator, "C:\\repo\\service\\src\\main.cs")).?;
+    defer project.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("dotnet run", project.command.?);
+    try std.testing.expectEqualStrings("C:/repo/service", project.root.?);
+}
+
+test "view matches a filesystem-root project pattern" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        \\{"project":{"/.*":{"command":"make"}},"revision":15}
+    , 15);
+
+    var project = (try loadProjectConfig(std.testing.allocator, "/tmp/main.c")).?;
+    defer project.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("make", project.command.?);
+    try std.testing.expectEqualStrings("/", project.root.?);
+}
+
+test "view preserves a Windows drive root project pattern" {
+    defer store.reset();
+    clearCache();
+
+    try store.setSyncedConfigJson(
+        "{\"project\":{\"C:\\\\.*\":{\"command\":\"dotnet run\"}},\"revision\":16}",
+        16,
+    );
+
+    var project = (try loadProjectConfig(std.testing.allocator, "C:\\repo\\main.cs")).?;
+    defer project.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("C:/", project.root.?);
 }
 
 test "view ignores fractional and overflowing timeout values" {

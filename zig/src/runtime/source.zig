@@ -114,10 +114,7 @@ fn prepareInlineSourceWithKey(
     );
     errdefer allocator.free(scratch_path);
 
-    try std.Io.Dir.cwd().writeFile(io, .{
-        .sub_path = scratch_path,
-        .data = selection_text,
-    });
+    try writeScratchFileAtomic(io, scratch_path, selection_text);
     const prune_counter = scratch_prune_counter.fetchAdd(1, .monotonic);
     if (prune_counter % scratch_prune_interval == 0) {
         pruneScratchRootBestEffort(io, allocator, scratch_root, scratch_path, scratch_max_entries) catch {};
@@ -126,6 +123,17 @@ fn prepareInlineSourceWithKey(
     return .{
         .execution_path = scratch_path,
     };
+}
+
+fn writeScratchFileAtomic(io: std.Io, scratch_path: []const u8, data: []const u8) !void {
+    var atomic_file = try std.Io.Dir.cwd().createFileAtomic(io, scratch_path, .{ .replace = true });
+    defer atomic_file.deinit(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = atomic_file.file.writer(io, &buffer);
+    try file_writer.interface.writeAll(data);
+    try file_writer.interface.flush();
+    try atomic_file.replace(io);
 }
 
 fn stableSourceKeyAlloc(allocator: std.mem.Allocator, source_path: []const u8, buffer_id: ?u32) ![]u8 {
@@ -434,6 +442,55 @@ test "prepareSource reuses selection scratch path for identical contents" {
     const contents = try readFileForTestAlloc(allocator, second.execution_path, 4096);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("console.log('same')\n", contents);
+}
+
+test "prepareSource atomically replaces an existing scratch symlink" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("ZIGNITE_RUN_CACHE_DIR", root);
+
+    var first = try prepareSource(std.testing.io, allocator, &environment, .{
+        .source_path = "/tmp/example/selection.ts",
+        .filetype = "typescript",
+        .input_kind = .selection,
+        .selection_text = "safe content\n",
+    });
+    const scratch_name = std.fs.path.basename(first.execution_path);
+    defer first.deinit(allocator);
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "sentinel",
+        .data = "sentinel content\n",
+    });
+    try tmp.dir.deleteFile(std.testing.io, scratch_name);
+    try tmp.dir.symLink(std.testing.io, "sentinel", scratch_name, .{});
+
+    var second = try prepareSource(std.testing.io, allocator, &environment, .{
+        .source_path = "/tmp/example/selection.ts",
+        .filetype = "typescript",
+        .input_kind = .selection,
+        .selection_text = "safe content\n",
+    });
+    defer second.deinit(allocator);
+
+    const scratch_contents = try readFileForTestAlloc(allocator, second.execution_path, 4096);
+    defer allocator.free(scratch_contents);
+    try std.testing.expectEqualStrings("safe content\n", scratch_contents);
+
+    const sentinel_path = try std.fs.path.join(allocator, &.{ root, "sentinel" });
+    defer allocator.free(sentinel_path);
+    const sentinel_contents = try readFileForTestAlloc(allocator, sentinel_path, 4096);
+    defer allocator.free(sentinel_contents);
+    try std.testing.expectEqualStrings("sentinel content\n", sentinel_contents);
 }
 
 test "prepareSource uses different selection scratch paths for different contents" {

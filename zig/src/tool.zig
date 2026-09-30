@@ -3,6 +3,12 @@ const builtin = @import("builtin");
 
 const path_delimiter: u8 = if (builtin.os.tag == .windows) ';' else ':';
 
+const CommandWrapper = enum {
+    command,
+    exec,
+    env,
+};
+
 pub fn findMissingToolWithIO(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -135,6 +141,7 @@ const CommandScanner = struct {
     command_active: bool = false,
     wrapper_pending: bool = false,
     wrapper_skip_next: bool = false,
+    wrapper: ?CommandWrapper = null,
 
     fn next(self: *CommandScanner) ?[]const u8 {
         while (self.index < self.command.len) {
@@ -153,8 +160,8 @@ const CommandScanner = struct {
                                 self.wrapper_pending = true;
                                 continue;
                             }
-                            if (isWrapperOption(word)) {
-                                self.wrapper_skip_next = isWrapperOptionWithArgument(word);
+                            if (isWrapperOption(self.wrapper, word)) {
+                                self.wrapper_skip_next = isWrapperOptionWithArgument(self.wrapper, word);
                                 self.wrapper_pending = true;
                                 continue;
                             }
@@ -163,6 +170,7 @@ const CommandScanner = struct {
                     }
                 }
                 self.wrapper_skip_next = false;
+                self.wrapper = null;
                 self.skipToCommandSeparator();
                 self.command_active = false;
                 continue;
@@ -179,7 +187,8 @@ const CommandScanner = struct {
             if (isAssignmentWord(word)) continue;
 
             self.command_active = true;
-            self.wrapper_pending = isCommandWrapper(word);
+            self.wrapper = commandWrapper(word);
+            self.wrapper_pending = self.wrapper != null;
             return word;
         }
         return null;
@@ -276,16 +285,28 @@ fn isCommandSeparator(ch: u8) bool {
     return ch == '&' or ch == '|' or ch == ';' or ch == '\n' or ch == '\r';
 }
 
-fn isCommandWrapper(word: []const u8) bool {
-    return std.mem.eql(u8, word, "command") or std.mem.eql(u8, word, "exec");
+fn commandWrapper(word: []const u8) ?CommandWrapper {
+    if (std.mem.eql(u8, word, "command")) return .command;
+    if (std.mem.eql(u8, word, "exec")) return .exec;
+    if (std.mem.eql(u8, word, "env")) return .env;
+    return null;
 }
 
-fn isWrapperOption(word: []const u8) bool {
-    return word.len > 1 and word[0] == '-';
+fn isWrapperOption(wrapper: ?CommandWrapper, word: []const u8) bool {
+    if (word.len > 1 and word[0] == '-') return true;
+    return wrapper == .env and std.mem.eql(u8, word, "-");
 }
 
-fn isWrapperOptionWithArgument(word: []const u8) bool {
-    return std.mem.eql(u8, word, "-a") or std.mem.eql(u8, word, "--argv0");
+fn isWrapperOptionWithArgument(wrapper: ?CommandWrapper, word: []const u8) bool {
+    if (std.mem.eql(u8, word, "-a") or std.mem.eql(u8, word, "--argv0")) return true;
+    if (wrapper != .env) return false;
+    return std.mem.eql(u8, word, "-u") or
+        std.mem.eql(u8, word, "--unset") or
+        std.mem.eql(u8, word, "-C") or
+        std.mem.eql(u8, word, "--chdir") or
+        std.mem.eql(u8, word, "-S") or
+        std.mem.eql(u8, word, "--split-string") or
+        std.mem.eql(u8, word, "--env0-from");
 }
 
 fn isAssignmentWord(word: []const u8) bool {
@@ -442,6 +463,44 @@ test "findMissingTool skips environment assignments" {
     )).?;
     defer allocator.free(missing);
     try std.testing.expectEqualStrings("dart", missing);
+}
+
+test "findMissingTool scans past env wrapper options and assignments" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var executable_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const executable_len = try std.process.executablePath(std.testing.io, &executable_buffer);
+    try tmp.dir.symLink(std.testing.io, executable_buffer[0..executable_len], "env", .{});
+
+    const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(root);
+
+    var environment = std.process.Environ.Map.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", root);
+
+    for ([_][]const u8{
+        "env FOO=bar zignite-missing-tool",
+        "env -u FOO zignite-missing-tool",
+        "env --unset FOO zignite-missing-tool",
+        "env -C /tmp zignite-missing-tool",
+        "env --chdir /tmp zignite-missing-tool",
+    }) |command_text| {
+        const missing = (try findMissingToolWithIO(
+            std.testing.io,
+            allocator,
+            &environment,
+            root,
+            command_text,
+            &.{},
+        )).?;
+        defer allocator.free(missing);
+        try std.testing.expectEqualStrings("zignite-missing-tool", missing);
+    }
 }
 
 test "findMissingTool ignores generated path artifacts after an external command" {

@@ -116,7 +116,7 @@ test "collectTailLineViews handles input with only empty lines" {
     try std.testing.expect(result.truncated);
 }
 
-test "collectTailLineViews skips empty lines but counts bytes" {
+test "collectTailLineViews skips empty lines without consuming budget" {
     const allocator = std.testing.allocator;
     var result = try collectTailLineViews(allocator, "a\n\nb\n", 100);
     defer result.deinit(allocator);
