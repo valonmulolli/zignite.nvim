@@ -104,7 +104,7 @@ pub fn runDaemon(allocator: std.mem.Allocator, io: std.Io) !void {
         defer allocator.free(begin_owned);
         const begin_line = frame.stripTrailingCR(begin_owned);
 
-        if (!std.mem.startsWith(u8, begin_line, PROJECT_DAEMON_REQ_BEGIN)) {
+        if (!frame.hasMarkerPrefix(begin_line, PROJECT_DAEMON_REQ_BEGIN)) {
             continue;
         }
         handleDaemonFrame(allocator, io, reader, stdout, begin_line) catch |err| {

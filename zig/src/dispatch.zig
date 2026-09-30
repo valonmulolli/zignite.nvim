@@ -146,7 +146,7 @@ pub fn handleDaemonLine(
     stdout: anytype,
     line: []const u8,
 ) !bool {
-    if (std.mem.startsWith(u8, line, QUICKFIX_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, QUICKFIX_REQ_BEGIN)) {
         quickfix.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
             if (err == error.UnexpectedEof) return err;
             if (frame.parseRequestId(line, QUICKFIX_REQ_BEGIN)) |request_id| {
@@ -156,7 +156,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, DETECT_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, DETECT_REQ_BEGIN)) {
         detect.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -168,7 +168,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, PROJECT_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, PROJECT_REQ_BEGIN)) {
         project.handleDaemonFrame(allocator, io, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -180,7 +180,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, CONFIG_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, CONFIG_REQ_BEGIN)) {
         config.handleDaemonFrame(allocator, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -192,7 +192,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, BUILD_RESOLVE_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, BUILD_RESOLVE_REQ_BEGIN)) {
         build_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -204,7 +204,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, BUILD_ACTION_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, BUILD_ACTION_REQ_BEGIN)) {
         build_action.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -216,7 +216,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, RUN_RESOLVE_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, RUN_RESOLVE_REQ_BEGIN)) {
         run_resolve.handleDaemonFrame(allocator, io, environ_map, reader, stdout, line) catch |err| {
             try frame.handleDispatchError(
                 err,
@@ -228,7 +228,7 @@ pub fn handleDaemonLine(
         };
         return true;
     }
-    if (std.mem.startsWith(u8, line, HEALTH_REQ_BEGIN)) {
+    if (frame.hasMarkerPrefix(line, HEALTH_REQ_BEGIN)) {
         if (frame.parseRequestId(line, HEALTH_REQ_BEGIN)) |request_id| {
             try stdout.print("{s} {d}\n{s} {d}\n", .{
                 HEALTH_RES_BEGIN, request_id,
@@ -278,6 +278,25 @@ test "handleDaemonLine returns false for unrecognised lines" {
     const handled = try handleDaemonLine(allocator, std.testing.io, null, &reader, &out.writer, "garbage line");
 
     try std.testing.expect(!handled);
+}
+
+test "handleDaemonLine does not dispatch marker-name prefixes" {
+    const allocator = std.testing.allocator;
+    var reader = TestReader{ .lines = &.{} };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    const handled = try handleDaemonLine(
+        allocator,
+        std.testing.io,
+        null,
+        &reader,
+        &out.writer,
+        "@@ZHLT_REQ_BEGINNING 1",
+    );
+
+    try std.testing.expect(!handled);
+    try std.testing.expectEqualStrings("", out.written());
 }
 
 test "hasFlag ignores child argv payload" {

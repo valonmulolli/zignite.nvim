@@ -76,6 +76,14 @@ pub fn stripTrailingCR(line: []const u8) []const u8 {
     return common.stripTrailingCR(line);
 }
 
+/// Matches a protocol marker only when it is a complete token. A raw prefix
+/// match would classify markers such as `@@ZHLT_REQ_BEGINNING` as requests.
+pub fn hasMarkerPrefix(line: []const u8, marker: []const u8) bool {
+    if (!std.mem.startsWith(u8, line, marker)) return false;
+    if (line.len == marker.len) return true;
+    return line[marker.len] == ' ' or line[marker.len] == '\t';
+}
+
 pub fn isFrameEndLine(line: []const u8, marker_name: []const u8, request_id: u64) bool {
     var it = std.mem.tokenizeScalar(u8, line, ' ');
     const marker = it.next() orelse return false;
@@ -470,6 +478,13 @@ pub const TestReader = struct {
 test "stripTrailingCR trims only trailing carriage return" {
     try std.testing.expectEqualStrings("line", stripTrailingCR("line\r"));
     try std.testing.expectEqualStrings("line", stripTrailingCR("line"));
+}
+
+test "hasMarkerPrefix rejects marker names with a suffix" {
+    try std.testing.expect(hasMarkerPrefix("@@ZHLT_REQ_BEGIN 7", "@@ZHLT_REQ_BEGIN"));
+    try std.testing.expect(hasMarkerPrefix("@@ZHLT_REQ_BEGIN\t7", "@@ZHLT_REQ_BEGIN"));
+    try std.testing.expect(hasMarkerPrefix("@@ZHLT_REQ_BEGIN", "@@ZHLT_REQ_BEGIN"));
+    try std.testing.expect(!hasMarkerPrefix("@@ZHLT_REQ_BEGINNING 7", "@@ZHLT_REQ_BEGIN"));
 }
 
 test "isFrameEndLine validates marker and request id" {
