@@ -7,6 +7,7 @@ pub enum BackendError {
     Io(std::io::Error),
     Process(crate::process::ProcessError),
     Protocol(ProtocolError),
+    Config(crate::config::ConfigError),
     Cli(CliError),
     UnsupportedMode(String),
 }
@@ -17,6 +18,7 @@ impl fmt::Display for BackendError {
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
             Self::Process(error) => write!(formatter, "process error: {error}"),
             Self::Protocol(error) => write!(formatter, "protocol error: {error}"),
+            Self::Config(error) => write!(formatter, "config error: {error}"),
             Self::Cli(error) => write!(formatter, "{error}"),
             Self::UnsupportedMode(mode) => write!(formatter, "unsupported mode: {mode}"),
         }
@@ -40,6 +42,12 @@ impl From<ProtocolError> for BackendError {
 impl From<crate::process::ProcessError> for BackendError {
     fn from(error: crate::process::ProcessError) -> Self {
         Self::Process(error)
+    }
+}
+
+impl From<crate::config::ConfigError> for BackendError {
+    fn from(error: crate::config::ConfigError) -> Self {
+        Self::Config(error)
     }
 }
 
