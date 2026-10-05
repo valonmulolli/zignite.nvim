@@ -99,10 +99,14 @@ local function get_plugin_path()
 end
 
 M.IS_WINDOWS = is_windows()
-M.ZIG_EXECUTABLE = join_path(
-	join_path(join_path(join_path(get_plugin_path(), "zig"), "zig-out"), "bin"),
-	"zignite" .. (M.IS_WINDOWS and ".exe" or "")
-)
+local configured_backend = os.getenv("ZIGNITE_BACKEND")
+if type(configured_backend) ~= "string" or configured_backend == "" then
+	configured_backend = join_path(
+		join_path(join_path(join_path(get_plugin_path(), "rust"), "target"), "release"),
+		"zignite" .. (M.IS_WINDOWS and ".exe" or "")
+	)
+end
+M.BACKEND_EXECUTABLE = configured_backend
 M.MARKER_HEALTH = "@@ZHLT_"
 
 ---@param executable string
@@ -125,7 +129,7 @@ end
 
 ---@return boolean
 function M.has_backend()
-	return has_executable_backend(M.ZIG_EXECUTABLE)
+	return has_executable_backend(M.BACKEND_EXECUTABLE)
 end
 
 ---@param require_chanclose boolean|nil

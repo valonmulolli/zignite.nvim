@@ -1,7 +1,7 @@
 ---@type table
 local M = {}
 
---- Known protocol delimiter prefixes from the Zig backend daemon.
+--- Known protocol delimiter prefixes from the native backend daemon.
 --- Values containing these should not be embedded in payload lines
 --- that lack a leading tab prefix (defense-in-depth against injection).
 local PROTOCOL_DELIMITERS = {
