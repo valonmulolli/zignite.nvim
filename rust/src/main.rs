@@ -40,11 +40,26 @@ fn run() -> Result<ExitCode, BackendError> {
         Mode::DetectDaemon => run_detect_daemon_mode(),
         Mode::ProjectParse => run_project_parse_mode(&cli.options),
         Mode::ProjectParseDaemon => run_project_parse_daemon_mode(),
+        Mode::BuildResolve => run_build_resolve_mode(&cli.options),
+        Mode::BuildAction => run_build_action_mode(&cli.options),
         Mode::Command => run_command_mode(&cli.argv, &cli.options),
         Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
         Mode::RunResolve => run_run_resolve_mode(&cli.options),
-        mode => Err(BackendError::UnsupportedMode(format!("{mode:?}"))),
     }
+}
+
+fn run_build_resolve_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::build::run_resolve_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_build_action_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::build::run_action_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_config_sync_mode(options: &[String]) -> Result<ExitCode, BackendError> {
