@@ -46,8 +46,8 @@ local function build_config_payload(request_id, params)
 end
 
 local config_client = backend_client.new({
-	executable = backend_client.ZIG_EXECUTABLE,
-	worker_argv = { backend_client.ZIG_EXECUTABLE, "--daemon" },
+	executable = backend_client.BACKEND_EXECUTABLE,
+	worker_argv = { backend_client.BACKEND_EXECUTABLE, "--daemon" },
 	protocol = CONFIG_PROTOCOL,
 	worker_wait_ms = CONFIG_SYNC_WAIT_MS,
 	request_timeout_ms = CONFIG_SYNC_WAIT_MS,
@@ -231,7 +231,7 @@ local function sync_once(options, revision)
 	end
 
 	local argv = {
-		backend_client.ZIG_EXECUTABLE,
+		backend_client.BACKEND_EXECUTABLE,
 		"--config-sync",
 		"--revision=" .. tostring(revision),
 	}

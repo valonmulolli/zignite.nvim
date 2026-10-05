@@ -4,7 +4,7 @@ local backend_client = require("zignite.rpc.transport")
 local M = {}
 
 local QUICKFIX_WORKER_REQUEST_TIMEOUT_MS = 3000
-local QUICKFIX_BACKEND = backend_client.ZIG_EXECUTABLE
+local QUICKFIX_BACKEND = backend_client.BACKEND_EXECUTABLE
 local QUICKFIX_FLAG_SPECS = {
 	{ key = "max_lines", cli = "max-lines" },
 	{ key = "max_bytes", cli = "max-bytes" },
@@ -243,7 +243,7 @@ end
 ---@return boolean
 function M.prefers_backend(quickfix_opts)
 	local processor = tostring(quickfix_opts.processor or "auto"):lower()
-	if processor == "zig" then
+	if processor == "rust" or processor == "zig" then
 		return true
 	end
 	if processor == "lua" then

@@ -17,7 +17,7 @@ M.defaults = {
 	-- Default output mode: "float", "tab", "split", "vsplit"
 	mode = "float",
 
-	-- Filetype runner overrides. Builtin defaults now live in the Zig backend;
+	-- Filetype runner overrides. Builtin defaults now live in the native backend;
 	-- use this table only when you want to override them locally.
 	-- Available variables:
 	--   $file              - Full absolute path
@@ -28,17 +28,17 @@ M.defaults = {
 	--   $dirName           - Just the directory name (not full path)
 	runners = {},
 
-	-- Project-level command overrides. Builtin defaults now live in the Zig backend;
+	-- Project-level command overrides. Builtin defaults now live in the native backend;
 	-- use this table only when you want to override or extend them locally.
 	build_commands = {},
 
 	-- Auto-detection toggles for build command picker/RunBuild.
 	-- Keep defaults enabled for "smart by default" behavior.
 	detect = {
-		zig = true, -- Detect Zig subcommands via the Zig backend
-		go = true, -- Detect Go subcommands via the Zig backend
-		rust = true, -- Detect Cargo subcommands via the Zig backend
-		odin = true, -- Detect Odin subcommands via the Zig backend
+		zig = true, -- Detect Zig subcommands via the native backend
+		go = true, -- Detect Go subcommands via the native backend
+		rust = true, -- Detect Cargo subcommands via the native backend
+		odin = true, -- Detect Odin subcommands via the native backend
 		c_cpp_make = true, -- Parse Makefile targets for c/cpp
 		js_package_scripts = true, -- Parse package.json scripts for javascript/typescript
 		java_kotlin_project = true, -- Infer Maven/Gradle tasks for java/kotlin projects
@@ -58,19 +58,19 @@ M.defaults = {
 	enable_animations = true, -- Enable/disable animations and spinners
 
 	-- Execution configuration
-	timeout = nil, -- Timeout in milliseconds (e.g., 10000 for 10s). nil = no timeout. Only works with Zig backend.
+	timeout = nil, -- Timeout in milliseconds (e.g., 10000 for 10s). nil = no timeout.
 
 	-- Quickfix behavior on command errors
 	quickfix = {
 		enabled = true,              -- Populate quickfix when command exits with non-zero status
-		processor = "auto",          -- "auto", "lua", or "zig"; auto prefers zig when the backend is available
-		zig_min_lines = 300,         -- Legacy threshold kept for compatibility; auto now prefers zig backend directly
+		processor = "auto",          -- "auto", "lua", or "rust"; "zig" remains a compatibility alias
+		zig_min_lines = 300,         -- Legacy option name kept for compatibility
 		max_lines = 1000,            -- Tail limit for large outputs (performance guard)
 		max_bytes = 262144,          -- Byte cap for quickfix payload
 		strip_ansi = true,           -- Remove ANSI escape codes from quickfix lines
 		strip_ansi_max_lines = 400,  -- Strip ANSI only on the most recent N lines
-		parse_diagnostics = true,    -- Canonicalize parseable diagnostics in zig processor mode
-		zig_worker = true,           -- Reuse a persistent zig quickfix worker to reduce process spawn overhead
+		parse_diagnostics = true,    -- Canonicalize parseable diagnostics in native processor mode
+		zig_worker = true,           -- Legacy option name; reuse the persistent native worker
 		async_strip = true,          -- Strip ANSI in scheduled chunks to reduce UI stutter
 		strip_chunk_size = 200,      -- Lines processed per chunk when async_strip=true
 	},

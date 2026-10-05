@@ -136,7 +136,7 @@ local function build_once_argv(params)
 		return nil
 	end
 	local argv = common_path_request.compose_once_argv(
-		backend_client.ZIG_EXECUTABLE,
+		backend_client.BACKEND_EXECUTABLE,
 		"--run-resolve",
 		filepath,
 		filetype,
@@ -164,8 +164,8 @@ local function one_shot_input()
 end
 
 local resolve_client = backend_client.new({
-	executable = backend_client.ZIG_EXECUTABLE,
-	worker_argv = { backend_client.ZIG_EXECUTABLE, "--daemon" },
+	executable = backend_client.BACKEND_EXECUTABLE,
+	worker_argv = { backend_client.BACKEND_EXECUTABLE, "--daemon" },
 	protocol = RUN_RESOLVE_PROTOCOL,
 	worker_wait_ms = RUN_RESOLVE_SYNC_WAIT_MS,
 	request_timeout_ms = RUN_RESOLVE_ASYNC_TIMEOUT_MS,

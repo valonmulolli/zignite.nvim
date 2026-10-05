@@ -100,7 +100,7 @@ end
 ---@return string
 local function choose_quickfix_processor(quickfix_opts)
 	if quickfix_rpc.prefers_backend(quickfix_opts) then
-		return "zig"
+		return "backend"
 	end
 	return "lua"
 end
@@ -177,7 +177,7 @@ function M.populate_from_buffer(buf, quickfix_opts)
 
 	local processor = choose_quickfix_processor(quickfix_opts)
 
-	if processor == "zig" then
+	if processor == "backend" then
 		local raw_lines, force_truncated = collect_backend_quickfix_lines(buf, quickfix_opts)
 		quickfix_rpc.run_async(raw_lines, quickfix_opts, force_truncated, set_quickfix_lines, function()
 			populate_quickfix_from_lua_buffer(buf, quickfix_opts)

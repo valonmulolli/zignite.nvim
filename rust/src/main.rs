@@ -1,0 +1,251 @@
+use std::ffi::OsString;
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::process::ExitCode;
+use std::time::Duration;
+
+use zignite::cli::{parse_env_args, Mode};
+use zignite::config::{apply_config_sync, ConfigState};
+use zignite::daemon::{run_daemon, DaemonState};
+use zignite::detect::{detect_tool, parse_tool};
+use zignite::error::BackendError;
+use zignite::process::{run_backend_command, shell_command, CommandSpec, TimeoutPolicy};
+use zignite::quickfix::{process_quickfix, read_bounded, write_processed};
+use zignite::runtime::{resolve_runner, serialize_runner};
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<ExitCode, BackendError> {
+    let cli = parse_env_args()?;
+    match cli.mode {
+        Mode::Daemon => {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let mut reader = BufReader::new(stdin.lock());
+            let mut writer = BufWriter::new(stdout.lock());
+            run_daemon(&mut reader, &mut writer, &mut DaemonState::default())?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Mode::ConfigSync => run_config_sync_mode(&cli.options),
+        Mode::Quickfix => run_quickfix_mode(&cli.options),
+        Mode::QuickfixDaemon => run_quickfix_daemon_mode(),
+        Mode::Detect => run_detect_mode(&cli.options),
+        Mode::DetectDaemon => run_detect_daemon_mode(),
+        Mode::ProjectParse => run_project_parse_mode(&cli.options),
+        Mode::ProjectParseDaemon => run_project_parse_daemon_mode(),
+        Mode::BuildResolve => run_build_resolve_mode(&cli.options),
+        Mode::BuildAction => run_build_action_mode(&cli.options),
+        Mode::Command => run_command_mode(&cli.argv, &cli.options),
+        Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
+        Mode::RunResolve => run_run_resolve_mode(&cli.options),
+    }
+}
+
+fn run_build_resolve_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::build::run_resolve_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_build_action_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::build::run_action_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_config_sync_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let revision = option_value(options, "--revision=")
+        .ok_or(zignite::error::CliError::MissingValue("--revision="))?
+        .parse::<u64>()
+        .map_err(|_| zignite::error::CliError::InvalidValue("--revision=".to_owned()))?;
+    let mut json = String::new();
+    io::stdin().read_to_string(&mut json)?;
+    let mut state = ConfigState::default();
+    let warnings = apply_config_sync(&mut state, revision, &json)?;
+    for warning in warnings {
+        if warning.bytes().any(|byte| byte < 0x20) {
+            continue;
+        }
+        println!("WARN\t{warning}");
+    }
+    println!("REVISION\t{revision}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_quickfix_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let options = zignite::quickfix::parse_options(options)
+        .map_err(zignite::error::CliError::InvalidValue)?;
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let input = read_bounded(&mut reader).map_err(zignite::error::CliError::InvalidValue)?;
+    let result = process_quickfix(&input, options, false);
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    write_processed(&mut writer, &result)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_quickfix_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::quickfix::run_daemon(&mut reader, &mut writer)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_detect_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let value = option_value(options, "--tool=")
+        .ok_or(zignite::error::CliError::MissingValue("--tool="))?;
+    let tool = parse_tool(value)
+        .map_err(|error| zignite::error::CliError::InvalidValue(error.to_string()))?;
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    detect_tool(tool)
+        .map_err(BackendError::from)
+        .and_then(|commands| {
+            for command in commands {
+                writeln!(writer, "{}\t{}", command.name, command.command)?;
+            }
+            writer.flush().map_err(BackendError::from)
+        })?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_detect_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::detect::run_daemon(&mut reader, &mut writer)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_project_parse_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::project::run_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_project_parse_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::project::run_daemon(&mut reader, &mut writer)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_run_resolve_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let mut state = ConfigState::default();
+    if option_value(options, "--config-stdin=").is_some()
+        || options.iter().any(|value| value == "--config-stdin")
+    {
+        let revision = option_value(options, "--config-revision=")
+            .ok_or(zignite::error::CliError::MissingValue("--config-revision="))?
+            .parse::<u64>()
+            .map_err(|_| zignite::error::CliError::InvalidValue("--config-revision=".to_owned()))?;
+        let mut json = String::new();
+        io::stdin().read_to_string(&mut json)?;
+        apply_config_sync(&mut state, revision, &json)?;
+    }
+    let path = option_value(options, "--path=").unwrap_or_default();
+    let filetype = option_value(options, "--filetype=")
+        .ok_or(zignite::error::CliError::MissingValue("--filetype="))?;
+    let context_path = option_value(options, "--context-path=");
+    let resolved = resolve_runner(&state, path, filetype, None, context_path)
+        .map_err(zignite::error::CliError::InvalidValue)?;
+    for line in serialize_runner(&resolved, state.revision()) {
+        println!("{line}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_argv_mode(argv: &[String], options: &[String]) -> Result<ExitCode, BackendError> {
+    let _program = argv
+        .first()
+        .ok_or(zignite::error::CliError::MissingValue("--argv <program>"))?;
+    let spec = CommandSpec {
+        argv: argv.iter().map(OsString::from).collect(),
+        cwd: None,
+        env: Vec::new(),
+    };
+    let timeout = parse_timeout(options)?;
+    let cleanup = option_value(options, "--cleanup=").map(shell_command);
+    let policy = TimeoutPolicy {
+        timeout,
+        grace: Duration::from_millis(100),
+    };
+    let result = run_backend_command(&spec, policy, None, cleanup.as_ref())?;
+    io::stdout().write_all(&result.stdout)?;
+    io::stderr().write_all(&result.stderr)?;
+    if result.timed_out {
+        eprintln!(
+            "[Zignite] Process timed out after {}ms",
+            timeout.unwrap_or_default().as_millis()
+        );
+    }
+
+    if result.status.success() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::from(
+            result.status.code().unwrap_or(1).clamp(1, 255) as u8,
+        ))
+    }
+}
+
+fn run_command_mode(command: &[String], options: &[String]) -> Result<ExitCode, BackendError> {
+    let command = command
+        .first()
+        .ok_or(zignite::error::CliError::MissingValue("<full command>"))?;
+    let timeout = parse_timeout(options)?;
+    let cleanup = option_value(options, "--cleanup=").map(shell_command);
+    let policy = TimeoutPolicy {
+        timeout,
+        grace: Duration::from_millis(100),
+    };
+    let result = run_backend_command(&shell_command(command), policy, None, cleanup.as_ref())?;
+    io::stdout().write_all(&result.stdout)?;
+    io::stderr().write_all(&result.stderr)?;
+    if result.timed_out {
+        eprintln!(
+            "[Zignite] Process timed out after {}ms",
+            timeout.unwrap_or_default().as_millis()
+        );
+    }
+
+    if result.status.success() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::from(
+            result.status.code().unwrap_or(1).clamp(1, 255) as u8,
+        ))
+    }
+}
+
+fn parse_timeout(options: &[String]) -> Result<Option<Duration>, BackendError> {
+    let Some(value) = option_value(options, "--timeout=") else {
+        return Ok(None);
+    };
+    let milliseconds = value
+        .parse::<u64>()
+        .map_err(|_| zignite::error::CliError::InvalidValue(value.to_owned()))?;
+    Ok(Some(Duration::from_millis(milliseconds)))
+}
+
+fn option_value<'a>(options: &'a [String], prefix: &str) -> Option<&'a str> {
+    options
+        .iter()
+        .find_map(|option| option.strip_prefix(prefix))
+}

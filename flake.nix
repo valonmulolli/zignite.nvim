@@ -1,5 +1,5 @@
 {
-  description = "zignite.nvim - asynchronous Neovim code runner with Zig backend";
+  description = "zignite.nvim - asynchronous Neovim code runner with Rust backend";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -21,12 +21,12 @@
           lua-tests = pkgs.stdenvNoCC.mkDerivation {
             name = "zignite-lua-tests";
             src = ./.;
-            nativeBuildInputs = [ pkgs.lua5_4 ];
+            nativeBuildInputs = [ pkgs.lua5_4 pkgs.lua54Packages.dkjson ];
             dontConfigure = true;
             dontBuild = true;
             doCheck = true;
             checkPhase = ''
-              lua test/runner.lua
+              lua test/runner.lua .
             '';
             installPhase = ''
               mkdir -p $out
@@ -36,7 +36,9 @@
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
+            cargo
             lua5_4
+            rustc
             zig
             stylua
             nil
