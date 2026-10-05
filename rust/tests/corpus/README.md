@@ -1,25 +1,26 @@
 # Backend Compatibility Corpus
 
-This document freezes the behavior that the Rust backend must preserve during the
-migration. It is a compatibility record, not a new production protocol.
+This document freezes the behavior that the Rust backend preserved during the
+migration. It is an archival compatibility record, not a production build guide.
 
 ## Baseline
 
 The baseline was collected from commit `26fcb04` in the isolated rewrite
-worktree on 2026-10-05.
+worktree on 2026-10-05, before the Zig backend was removed.
 
 | Command | Result | Notes |
 |---|---|---|
-| `(cd zig && zig build test)` | exit 0 | The test executable emits the existing `[Zignite] Process timed out after 50ms` diagnostic while exercising timeout behavior. This is expected test output, not a failed build. |
-| `(cd zig && zig build -Doptimize=ReleaseFast)` | exit 0 | Release backend builds successfully with Zig 0.16.0. |
-| `lua5.4 zig/test/runner.lua .` | exit 0 | `Test Results: 7 passed, 0 failed`; the runner reports all Lua and integration suites passed. |
+| Legacy `(cd zig && zig build test)` | exit 0 | Pre-rewrite Zig test baseline. The test executable emits the existing `[Zignite] Process timed out after 50ms` diagnostic while exercising timeout behavior. |
+| Legacy `(cd zig && zig build -Doptimize=ReleaseFast)` | exit 0 | Pre-rewrite Zig backend release baseline. |
+| Legacy `lua5.4 zig/test/runner.lua .` | exit 0 | Pre-relocation Lua baseline: `Test Results: 7 passed, 0 failed`. |
 
-The baseline is intentionally preserved before any Rust source exists.
+The legacy command paths are historical and are not expected to run in the
+current Rust-only tree. Current verification uses `cargo` and `lua test/runner.lua`.
 
 ## CLI Modes
 
-The current executable advertises these interfaces in `zig/src/main.zig` and
-`zig/src/dispatch.zig`:
+The legacy executable advertised these interfaces in `zig/src/main.zig` and
+`zig/src/dispatch.zig`; the Rust executable preserves them:
 
 - `--argv <program> [args...]`, with optional `--timeout=MS` and `--cleanup=CMD`
 - `--daemon`
@@ -115,7 +116,7 @@ or differential tests as the relevant modules land:
 - CRLF input and exact marker matching
 - marker-name prefix rejection, such as `@@ZHLT_REQ_BEGINNING`
 
-## Process Behavior Already Tested by Zig
+## Process Behavior Already Tested by the Legacy Backend
 
 The current Zig unit tests cover:
 
@@ -131,9 +132,8 @@ recycled PID or an unowned process identifier.
 
 ## Project Fixture Manifest
 
-The fixtures remain under `zig/test_fixtures/` while the Zig compatibility
-tests still run. They will move to `test_fixtures/` when the Zig backend and
-its test package are removed:
+The fixtures now live under `test_fixtures/` and are shared by Rust project
+tests and the Lua integration harness:
 
 | Fixture root | Primary project-system coverage |
 |---|---|
@@ -158,10 +158,10 @@ fixture may be used by more than one detection or build-resolution test.
 
 ## Baseline Ownership
 
-- Zig currently owns CLI parsing, process supervision, protocol framing,
+- The legacy Zig backend owned CLI parsing, process supervision, protocol framing,
   configuration, runtime resolution, quickfix processing, detection, project
   parsing, and build actions.
-- Lua currently owns Neovim UI and the test harness, and communicates with the
+- Lua owns Neovim UI and the test harness, and communicates with the
   backend through the marker protocol.
 - Rust must replace the first group without changing the second group's public
   Neovim behavior.

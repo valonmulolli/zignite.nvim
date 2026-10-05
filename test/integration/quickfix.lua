@@ -55,7 +55,7 @@ local function test_quickfix_on_error_lua_processor()
     assert(qf.lines[1] == "[zignite] quickfix output truncated", "Quickfix should include truncation notice")
     assert(not qf.lines[2]:match("\27"), "Quickfix line should be ANSI-stripped")
     assert(not qf.lines[3]:match("\27"), "Quickfix line should be ANSI-stripped")
-    assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn zig quickfix backend")
+    assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn native quickfix backend")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -67,13 +67,13 @@ local function test_quickfix_on_error_lua_processor()
     print("✓ Quickfix Lua processor test passed")
 end
 
--- Test explicit zig processor path is used for quickfix generation.
+-- Test explicit native processor path is used for quickfix generation.
 local function test_quickfix_zig_processor()
     config.setup({
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 2,
             max_bytes = 1024,
             strip_ansi = true,
@@ -111,13 +111,13 @@ local function test_quickfix_zig_processor()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(count_quickfix_daemon_jobs() > 0, "Zig processor should start quickfix daemon worker")
-    assert(count_quickfix_backend_jobs() > 0, "Zig processor should spawn quickfix backend")
-    assert(#quickfix_results > 0, "Quickfix should be populated on zig processor path")
+    assert(count_quickfix_daemon_jobs() > 0, "Native processor should start quickfix daemon worker")
+    assert(count_quickfix_backend_jobs() > 0, "Native processor should spawn quickfix backend")
+    assert(#quickfix_results > 0, "Quickfix should be populated on native processor path")
     local qf = quickfix_results[#quickfix_results]
-    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Zig quickfix should include truncation notice")
-    assert(qf.lines[2] == "error-2", "Zig processor should strip ANSI from retained lines")
-    assert(qf.lines[3] == "error-3", "Zig processor should strip ANSI from retained lines")
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Native quickfix should include truncation notice")
+    assert(qf.lines[2] == "error-2", "Native processor should strip ANSI from retained lines")
+    assert(qf.lines[3] == "error-3", "Native processor should strip ANSI from retained lines")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -126,7 +126,7 @@ local function test_quickfix_zig_processor()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix zig processor test passed")
+    print("✓ Quickfix native processor test passed")
 end
 
 -- Test explicit zig one-shot quickfix path works when the daemon worker is disabled.
@@ -135,7 +135,7 @@ local function test_quickfix_zig_one_shot_processor()
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             zig_worker = false,
             max_lines = 2,
             max_bytes = 1024,
@@ -174,7 +174,7 @@ local function test_quickfix_zig_one_shot_processor()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the Zig backend")
+    assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the native backend")
     assert(#quickfix_results > 0, "One-shot quickfix path should populate quickfix output")
     local qf = quickfix_results[#quickfix_results]
     assert(qf.lines[1] == "[zignite] quickfix output truncated", "One-shot quickfix should include truncation notice")
@@ -197,7 +197,7 @@ local function test_quickfix_backend_availability_resets_on_setup()
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 2,
             max_bytes = 1024,
             strip_ansi = true,
@@ -271,13 +271,13 @@ local function test_quickfix_backend_availability_resets_on_setup()
     print("✓ Quickfix backend reset test passed")
 end
 
--- Test zig quickfix processor keeps newest lines when max_bytes truncates input.
+-- Test native quickfix processor keeps newest lines when max_bytes truncates input.
 local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
     config.setup({
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 10,
             max_bytes = 12,
             strip_ansi = false,
@@ -312,11 +312,11 @@ local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(#quickfix_results > 0, "Zig quickfix should populate results under byte cap")
+    assert(#quickfix_results > 0, "Native quickfix should populate results under byte cap")
     local qf = quickfix_results[#quickfix_results]
-    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Zig quickfix should include truncation notice")
-    assert(qf.lines[2] == "newest-line", "Zig quickfix should keep newest line under byte cap")
-    assert(qf.lines[3] == nil, "Zig quickfix should drop older lines once byte cap is reached")
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Native quickfix should include truncation notice")
+    assert(qf.lines[2] == "newest-line", "Native quickfix should keep newest line under byte cap")
+    assert(qf.lines[3] == nil, "Native quickfix should drop older lines once byte cap is reached")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -402,7 +402,7 @@ local function test_quickfix_auto_prefers_zig_backend()
     )
 
     init.run_code(0, "float")
-    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use the zig processor path")
+    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use the native processor path")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -411,16 +411,16 @@ local function test_quickfix_auto_prefers_zig_backend()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix auto zig-preference test passed")
+    print("✓ Quickfix auto native-preference test passed")
 end
 
--- Test zig quickfix processor falls back to Lua when zig backend fails.
+-- Test native quickfix processor falls back to Lua when native backend fails.
 local function test_quickfix_zig_fallback()
     config.setup({
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 2,
             strip_ansi = true,
             strip_ansi_max_lines = 2,
@@ -475,7 +475,7 @@ local function test_quickfix_zig_protocol_error_fallback()
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 2,
             max_bytes = 1024,
             strip_ansi = true,
@@ -533,7 +533,7 @@ local function test_quickfix_zig_diagnostic_parser()
         mode = "float",
         quickfix = {
             enabled = true,
-            processor = "zig",
+            processor = "rust",
             max_lines = 5,
             strip_ansi = false,
             parse_diagnostics = true,

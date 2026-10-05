@@ -325,7 +325,7 @@ You can use these variables in your custom runner commands:
 
 ### "Zig executable not found"
 
-Run `zig build -Doptimize=ReleaseFast` inside the plugin's `zig/` directory manually.
+Run `cargo build --manifest-path rust/Cargo.toml --release` from the plugin root manually.
 
 ### "No runner configured"
 
@@ -360,7 +360,7 @@ The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ k
 ### Run tests (Lua frontend + Rust backend)
 
 ```sh
-lua zig/test/runner.lua
+lua test/runner.lua
 cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 cargo build --manifest-path rust/Cargo.toml --release --locked
 ```

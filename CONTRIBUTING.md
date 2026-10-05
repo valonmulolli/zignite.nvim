@@ -17,7 +17,7 @@ Run these before committing:
 
 ```sh
 ~/.luarocks/bin/luacheck lua --codes
-lua zig/test/runner.lua
+lua test/runner.lua
 cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 ```
 

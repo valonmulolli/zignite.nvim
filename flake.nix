@@ -26,7 +26,7 @@
             dontBuild = true;
             doCheck = true;
             checkPhase = ''
-              lua zig/test/runner.lua .
+              lua test/runner.lua .
             '';
             installPhase = ''
               mkdir -p $out

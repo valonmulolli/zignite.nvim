@@ -14,9 +14,9 @@ jobs:
 
       - name: Reject generated artifacts
         run: |
-          if git ls-files | grep -E '(^|/)(target|\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)' >/dev/null; then
+          if git ls-files | grep -E '(^|/)target(/|$)' >/dev/null; then
             echo "Generated build artifacts must not be tracked:"
-            git ls-files | grep -E '(^|/)(target|\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)'
+            git ls-files | grep -E '(^|/)target(/|$)'
             exit 1
           fi
 
@@ -68,4 +68,4 @@ jobs:
       - name: Run Lua and integration tests
         env:
           ZIGNITE_LUA: lua5.4
-        run: lua5.4 zig/test/runner.lua .
+        run: lua5.4 test/runner.lua .
