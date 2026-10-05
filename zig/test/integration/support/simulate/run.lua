@@ -5,7 +5,7 @@ local util = require("integration.support.simulate.util")
 ---@type table
 local M = {}
 
-local SIMULATED_ZIGNITE_EXECUTABLE = "zig/zig-out/bin/zignite"
+local SIMULATED_BACKEND_EXECUTABLE = "rust/target/release/zignite"
 
 local TEMP_FILE_EXTENSION_MAP = {
 	c = "c",
@@ -291,7 +291,7 @@ function M.build_system_argv(final_command, argv, cleanup_command)
 		end
 		return direct_argv
 	end
-	local system_argv = { SIMULATED_ZIGNITE_EXECUTABLE }
+	local system_argv = { SIMULATED_BACKEND_EXECUTABLE }
 	if timeout ~= nil then
 		system_argv[#system_argv + 1] = "--timeout=" .. timeout
 	end

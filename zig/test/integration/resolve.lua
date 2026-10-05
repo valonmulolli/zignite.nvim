@@ -179,7 +179,7 @@ local function test_run_code_uses_backend_execution_path_for_file_runs()
 		assert(request.selection_text == nil, "expected file runs to omit inline source payload")
 		return {
 			execution_path = "/tmp/zignite-run/backend-owned.py",
-			system_argv = { "zig/zig-out/bin/zignite", "--argv", "python3", "-u", "/tmp/zignite-run/backend-owned.py" },
+			system_argv = { "rust/target/release/zignite", "--argv", "python3", "-u", "/tmp/zignite-run/backend-owned.py" },
 			filetype = "python",
 			name = "python",
 		}
@@ -296,7 +296,7 @@ local function test_run_code_supports_unsaved_buffers_via_backend_buffer()
 		captured_request = request
 		return {
 			execution_path = "/tmp/zignite-run/backend-buffer.zig",
-			system_argv = { "zig/zig-out/bin/zignite", "--argv", "zig", "run", "/tmp/zignite-run/backend-buffer.zig" },
+				system_argv = { "rust/target/release/zignite", "--argv", "zig", "run", "/tmp/zignite-run/backend-buffer.zig" },
 			filetype = "zig",
 			name = "zig",
 		}
@@ -373,7 +373,7 @@ local function test_run_code_saved_zig_buffer_with_wrong_extension_accepts_backe
 			"saved zig RunFile should forward the original editor path to the backend")
 		return {
 			execution_path = "/tmp/zignite-run/backend-materialized.zig",
-			system_argv = { "zig/zig-out/bin/zignite", "--argv", "zig", "run", "/tmp/zignite-run/backend-materialized.zig" },
+				system_argv = { "rust/target/release/zignite", "--argv", "zig", "run", "/tmp/zignite-run/backend-materialized.zig" },
 			filetype = "zig",
 			name = "zig",
 		}
@@ -666,7 +666,7 @@ local function test_run_resolve_falls_back_when_config_sync_fails()
 				filetype = "python",
 				command = "python3 /tmp/main.py",
 				argv = { "python3", "/tmp/main.py" },
-				system_argv = { "zig/zig-out/bin/zignite", "--argv", "python3", "/tmp/main.py" },
+				system_argv = { "rust/target/release/zignite", "--argv", "python3", "/tmp/main.py" },
 				config_revision = config.revision,
 			}),
 		}
@@ -709,7 +709,7 @@ local function test_build_action_sync_falls_back_to_once_request()
 				ok = true,
 				exec_command = "echo fallback-action",
 				exec_argv = { "echo", "fallback-action" },
-				system_argv = { "zig/zig-out/bin/zignite", "--argv", "echo", "fallback-action" },
+				system_argv = { "rust/target/release/zignite", "--argv", "echo", "fallback-action" },
 				config_revision = config.revision,
 			}),
 		}

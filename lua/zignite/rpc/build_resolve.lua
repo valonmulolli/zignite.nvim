@@ -84,7 +84,7 @@ end
 local function compose_once_argv(backend_flag, params)
 	local p = unpack_build_params(params)
 	local argv = common_path_request.compose_once_argv(
-		backend_client.ZIG_EXECUTABLE,
+		backend_client.BACKEND_EXECUTABLE,
 		backend_flag,
 		p.path,
 		p.filetype,
@@ -109,8 +109,8 @@ local function one_shot_input()
 end
 
 local resolve_client = backend_client.new({
-	executable = backend_client.ZIG_EXECUTABLE,
-	worker_argv = { backend_client.ZIG_EXECUTABLE, "--daemon" },
+		executable = backend_client.BACKEND_EXECUTABLE,
+		worker_argv = { backend_client.BACKEND_EXECUTABLE, "--daemon" },
 	protocol = BUILD_RESOLVE_PROTOCOL,
 	worker_wait_ms = BUILD_RESOLVE_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_RESOLVE_ASYNC_TIMEOUT_MS,
@@ -125,8 +125,8 @@ local resolve_client = backend_client.new({
 })
 
 local action_client = backend_client.new({
-	executable = backend_client.ZIG_EXECUTABLE,
-	worker_argv = { backend_client.ZIG_EXECUTABLE, "--daemon" },
+		executable = backend_client.BACKEND_EXECUTABLE,
+		worker_argv = { backend_client.BACKEND_EXECUTABLE, "--daemon" },
 	protocol = BUILD_ACTION_PROTOCOL,
 	worker_wait_ms = BUILD_ACTION_SYNC_WAIT_MS,
 	request_timeout_ms = BUILD_ACTION_ASYNC_TIMEOUT_MS,

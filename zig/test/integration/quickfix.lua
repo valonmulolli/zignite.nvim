@@ -222,7 +222,7 @@ local function test_quickfix_backend_availability_resets_on_setup()
         return original_expand(expr)
     end
     vim.fn.executable = function(path)
-        if type(path) == "string" and path:match("zig/zig%-out/bin/zignite$") then
+        if type(path) == "string" and path:match("rust/target/release/zignite$") then
             return 0
         end
         if original_executable then
@@ -247,7 +247,7 @@ local function test_quickfix_backend_availability_resets_on_setup()
     reset_job_results()
     reset_quickfix_results()
     vim.fn.executable = function(path)
-        if type(path) == "string" and path:match("zig/zig%-out/bin/zignite$") then
+        if type(path) == "string" and path:match("rust/target/release/zignite$") then
             return 1
         end
         if original_executable then
@@ -375,8 +375,8 @@ local function test_quickfix_auto_prefers_zig_backend()
 
     assert(type(choose_quickfix_processor) == "function", "Quickfix test should be able to inspect processor selection")
     assert(
-        choose_quickfix_processor(config.options.quickfix, #small_lines) == "zig",
-        "Auto mode should prefer the Zig quickfix processor when the backend is available"
+        choose_quickfix_processor(config.options.quickfix, #small_lines) == "backend",
+        "Auto mode should prefer the native quickfix processor when the backend is available"
     )
 
     state.next_exit_code = 1
@@ -397,8 +397,8 @@ local function test_quickfix_auto_prefers_zig_backend()
     end
 
     assert(
-        choose_quickfix_processor(config.options.quickfix, #large_lines) == "zig",
-        "Auto mode should still select the Zig quickfix processor for larger outputs"
+        choose_quickfix_processor(config.options.quickfix, #large_lines) == "backend",
+        "Auto mode should still select the native quickfix processor for larger outputs"
     )
 
     init.run_code(0, "float")

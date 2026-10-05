@@ -46,7 +46,7 @@ function M.check()
 		vim.health.error("Failed to load zignite.rpc.transport, cannot determine backend path")
 		return
 	end
-	local backend = transport.ZIG_EXECUTABLE
+	local backend = transport.BACKEND_EXECUTABLE
 	if type(backend) ~= "string" or backend == "" then
 		vim.health.error("Backend path not configured")
 		return
@@ -54,7 +54,7 @@ function M.check()
 	local exists = vim.fn.filereadable(backend) == 1 or (vim.uv and vim.uv.fs_stat(backend) ~= nil)
 	if not exists then
 		vim.health.error(
-			("Backend binary not found: %s\nRun `zig build install` from the plugin root to build it"):format(backend)
+			("Backend binary not found: %s\nRun `cargo build --manifest-path rust/Cargo.toml --release` from the plugin root to build it"):format(backend)
 		)
 	else
 		local executable = vim.fn.executable(backend) == 1
