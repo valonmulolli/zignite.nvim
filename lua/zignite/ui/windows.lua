@@ -117,6 +117,16 @@ local function start_terminal_job(command, opts)
 	return job_id, nil
 end
 
+---@param job_opts table|nil
+---@return string|nil
+local function normalized_job_cwd(job_opts)
+	local cwd = type(job_opts) == "table" and job_opts.cwd or nil
+	if type(cwd) == "string" and cwd ~= "" then
+		return cwd
+	end
+	return nil
+end
+
 ---@param tracked_runner table
 ---@param buf integer
 ---@param on_exit_cb fun(exit_code: integer):nil
@@ -315,7 +325,7 @@ function M.run_in_float_terminal(command, on_exit_cb, title_name, job_opts)
 
 	local job_id, job_error = start_terminal_job(command, {
 		term = true,
-		cwd = job_opts and job_opts.cwd or nil,
+		cwd = normalized_job_cwd(job_opts),
 		on_exit = build_terminal_exit_handler(tracked_runner, buf, on_exit_cb, config.quickfix, {
 			after_exit = function(exit_code)
 				if vim.api.nvim_win_is_valid(win) then
@@ -370,7 +380,7 @@ function M.run_in_split_terminal(mode, command, on_exit_cb, job_opts, title_name
 
 	local job_id, job_error = start_terminal_job(command, {
 		term = true,
-		cwd = job_opts and job_opts.cwd or nil,
+		cwd = normalized_job_cwd(job_opts),
 		on_exit = build_terminal_exit_handler(tracked_runner, buf, on_exit_cb, config_opts.quickfix),
 	})
 	tracked_runner.job_id = job_id
