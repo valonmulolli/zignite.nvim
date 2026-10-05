@@ -7,6 +7,7 @@ use crate::protocol::{
     has_marker_prefix, parse_request_id, read_line_limited, write_response, RequestId,
     ResponseFrame, DEFAULT_MAX_LINE,
 };
+use crate::quickfix::{handle_frame as handle_quickfix_frame, QUICKFIX_REQ_BEGIN};
 use crate::runtime::{handle_run_frame, RUN_REQ_BEGIN};
 
 pub const HEALTH_REQ_BEGIN: &str = "@@ZHLT_REQ_BEGIN";
@@ -33,6 +34,10 @@ pub fn run_daemon<R: BufRead, W: Write>(
         }
         if has_marker_prefix(&line, RUN_REQ_BEGIN) {
             handle_run_frame(reader, writer, &line, &state.config)?;
+            continue;
+        }
+        if has_marker_prefix(&line, QUICKFIX_REQ_BEGIN) {
+            handle_quickfix_frame(reader, writer, &line)?;
             continue;
         }
         if let Some(id) = parse_request_id(&line, HEALTH_REQ_BEGIN) {
