@@ -1,10 +1,16 @@
+mod bazel;
 mod cargo;
+mod cmake;
 mod common;
 mod core;
 mod go;
+mod gradle;
 mod make;
+mod maven;
+mod meson;
 mod package_json;
 mod python;
+mod zig;
 
 use std::io::{BufRead, Write};
 
@@ -17,6 +23,7 @@ use crate::protocol::{
 pub use core::{
     find_project_root, walk_upward, Project, ProjectCommand, ProjectError, ProjectKind, ProjectRoot,
 };
+pub use zig::parse_steps as parse_zig_steps;
 
 pub const PROJECT_REQ_BEGIN: &str = "@@ZPRJ_REQ_BEGIN";
 pub const PROJECT_REQ_END: &str = "@@ZPRJ_REQ_END";
@@ -222,6 +229,8 @@ fn project_error_code(error: &ProjectError) -> String {
     match error {
         ProjectError::InvalidKind(_) => "InvalidProjectKind".to_owned(),
         ProjectError::InvalidOption(_) => "InvalidProjectOptions".to_owned(),
+        ProjectError::MissingTool { .. } => "MissingProjectTool".to_owned(),
+        ProjectError::CommandFailed { .. } => "ProjectCommandFailed".to_owned(),
         ProjectError::NotFound { .. } => "ProjectNotFound".to_owned(),
         ProjectError::UnreadableMarker { .. } => "UnreadableProjectMarker".to_owned(),
         ProjectError::InvalidFile { .. } => "InvalidProjectFile".to_owned(),
@@ -241,5 +250,11 @@ pub fn parse_project(
         ProjectKind::Cargo => cargo::parse(root, kind, match_path),
         ProjectKind::Go => go::parse(root, kind, match_path),
         ProjectKind::Python => python::parse(root, kind),
+        ProjectKind::CMake => cmake::parse(root, kind, match_path),
+        ProjectKind::Meson => meson::parse(root, kind, match_path),
+        ProjectKind::Bazel => bazel::parse(root, kind, match_path),
+        ProjectKind::Maven => maven::parse(root, kind),
+        ProjectKind::Gradle => gradle::parse(root, kind),
+        ProjectKind::Zig => zig::parse(root, kind),
     }
 }
