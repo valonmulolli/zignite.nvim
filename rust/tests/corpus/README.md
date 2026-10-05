@@ -131,8 +131,9 @@ recycled PID or an unowned process identifier.
 
 ## Project Fixture Manifest
 
-The shared fixtures live under `test_fixtures/` so both the Zig compatibility
-tests and the Rust backend can consume them:
+The fixtures remain under `zig/test_fixtures/` while the Zig compatibility
+tests still run. They will move to `test_fixtures/` when the Zig backend and
+its test package are removed:
 
 | Fixture root | Primary project-system coverage |
 |---|---|
