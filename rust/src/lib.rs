@@ -2,5 +2,8 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod error;
+pub mod filetype;
+pub mod paths;
 pub mod process;
 pub mod protocol;
+pub mod runtime;
