@@ -6,7 +6,6 @@ use zignite::project::{parse_project, ProjectCommand, ProjectError, ProjectKind}
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("zig")
         .join("test_fixtures")
         .join(name)
 }
