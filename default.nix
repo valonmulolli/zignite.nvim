@@ -7,6 +7,7 @@ in
 pkgs.rustPlatform.buildRustPackage {
   inherit pname version;
   src = ./.;
+  cargoRoot = "rust";
   cargoLock.lockFile = ./rust/Cargo.lock;
 
   doCheck = false;

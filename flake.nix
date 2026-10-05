@@ -21,7 +21,7 @@
           lua-tests = pkgs.stdenvNoCC.mkDerivation {
             name = "zignite-lua-tests";
             src = ./.;
-            nativeBuildInputs = [ pkgs.lua5_4 ];
+            nativeBuildInputs = [ pkgs.lua5_4 pkgs.lua54Packages.dkjson ];
             dontConfigure = true;
             dontBuild = true;
             doCheck = true;
