@@ -14,14 +14,14 @@ jobs:
 
       - name: Reject generated artifacts
         run: |
-          if git ls-files | grep -E '(^|/)(\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)' >/dev/null; then
+          if git ls-files | grep -E '(^|/)(target|\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)' >/dev/null; then
             echo "Generated build artifacts must not be tracked:"
-            git ls-files | grep -E '(^|/)(\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)'
+            git ls-files | grep -E '(^|/)(target|\.zig-cache|\.zignite-zig-cache|zig-cache|zig-out)(/|$)'
             exit 1
           fi
 
-  zig:
-    name: Zig (${{ matrix.os }})
+  rust:
+    name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -36,29 +36,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Zig 0.16.0
-        uses: mlugg/setup-zig@v2.2.1
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          version: 0.16.0
-          use-cache: false
+          toolchain: stable
 
-      - name: Run Windows process tests
-        if: matrix.os == 'windows-latest'
-        working-directory: zig
-        run: zig test src/command.zig --test-filter "windows timeout coordinator terminates descendants"
+      - name: Run tests
+        run: cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 
-      - name: Run Windows Zig project tests
-        if: matrix.os == 'windows-latest'
-        working-directory: zig
-        run: zig test tests.zig --test-filter "detectSteps"
+      - name: Build release
+        run: cargo build --manifest-path rust/Cargo.toml --release --locked
 
-      - name: Run Debug tests
-        working-directory: zig
-        run: zig build test -Doptimize=Debug
-
-      - name: Build ReleaseFast
-        working-directory: zig
-        run: zig build -Doptimize=ReleaseFast
+      - name: Check formatting and lints
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 
   lua:
     name: Lua integration

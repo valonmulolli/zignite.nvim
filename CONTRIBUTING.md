@@ -5,9 +5,9 @@
 This repo uses a split architecture:
 
 - Lua for Neovim integration, UI, prompting, and transport glue
-- Zig for backend parsing, command inference, detection, quickfix processing, and execution planning
+- Rust for backend parsing, command inference, detection, quickfix processing, and execution planning
 
-Before adding new logic, check whether it belongs in the Lua runtime layer or the Zig backend layer.
+Before adding new logic, check whether it belongs in the Lua runtime layer or the Rust backend layer.
 
 The detailed architecture overview lives in the [README architecture section](README.md#architecture).
 
@@ -18,16 +18,16 @@ Run these before committing:
 ```sh
 ~/.luarocks/bin/luacheck lua --codes
 lua zig/test/runner.lua
-cd zig && zig build test
+cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 ```
 
-If you changed shipped Zig code paths, also run:
+If you changed shipped Rust code paths, also run:
 
 ```sh
-cd zig && zig build
+cargo build --manifest-path rust/Cargo.toml --release --locked
 ```
 
-That catches executable-level issues that may not show up in `zig build test` alone.
+That catches executable-level issues that may not show up in `cargo test` alone.
 
 ## Where changes should go
 
@@ -35,19 +35,18 @@ That catches executable-level issues that may not show up in `zig build test` al
 
 Usually add it here:
 
-- `zig/src/project/<kind>/api.zig`
-- `zig/src/project/<kind>/*.zig`
+- `rust/src/project/<kind>.rs`
 
 Then wire:
 
-- `zig/src/project/core/emit/*.zig`
-- `zig/src/project/core/auto.zig` if source-path auto resolution is needed
+- `rust/src/project/core.rs`
+- `rust/src/project/common.rs` for shared project-root helpers
 
 ### New warmed system query
 
 Usually add it here:
 
-- `zig/src/build/system.zig`
+- `rust/src/build/system.rs`
 
 Then wire the Lua bridge side:
 
@@ -65,9 +64,9 @@ Usually add it here:
 
 ## Expectations
 
-- Prefer Zig for parsing and command inference
+- Prefer Rust for parsing and command inference
 - Prefer Lua for editor integration, prompting, and runtime behavior that depends on Neovim APIs
-- When a behavior can live in Zig without needing Neovim APIs, prefer pushing it into the backend
+- When a behavior can live in Rust without needing Neovim APIs, prefer pushing it into the backend
 - Keep public module surfaces stable unless there is a strong reason to break them
 - Add regression coverage for:
   - warmed cache behavior
@@ -78,7 +77,7 @@ Usually add it here:
 
 Examples of changes that fit the current direction:
 
-- moving command synthesis from Lua into Zig records
+- moving command synthesis from Lua into Rust records
 - adding system queries that warm cached command sets
 - simplifying Lua bridge code without breaking the public module surface
 - expanding real integration coverage for supported build systems

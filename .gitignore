@@ -6,6 +6,9 @@ zig-cache/
 .zignite-zig-cache/
 /zig/zig-out/
 
+# Rust build artifacts
+/rust/target/
+
 # Neovim plugin development
 *.swp
 *.swo

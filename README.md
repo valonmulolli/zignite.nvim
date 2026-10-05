@@ -2,16 +2,16 @@
 <br/>
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/>
-  <img src="https://img.shields.io/badge/Lua%20%2B%20Zig-blueviolet.svg" alt="Lua + Zig"/>
-  <img src="https://img.shields.io/badge/Powered%20by-Zig-orange.svg" alt="Powered by Zig"/>
+  <img src="https://img.shields.io/badge/Lua%20%2B%20Rust-blueviolet.svg" alt="Lua + Rust"/>
+  <img src="https://img.shields.io/badge/Powered%20by-Rust-orange.svg" alt="Powered by Rust"/>
   <a href="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml"><img src="https://github.com/valonmulolli/zignite.nvim/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"/></a>
   <br/>
-  <strong>Async code runner for Neovim. Powered by Zig for near-zero overhead execution with non-blocking output streaming.</strong>
+  <strong>Async code runner for Neovim. Powered by Rust for low-overhead execution with non-blocking output streaming.</strong>
 </p>
 
 ---
 
-Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Zig backend handles command execution, filetype normalization, build/run resolution, project parsing, quickfix processing, and command detection.
+Zignite.nvim is a code runner for Neovim focused on low-latency execution and interactive output. It uses terminal buffers in floats, splits, vsplits, and tabs, so programs keep stdin, ANSI colors, and real-time streaming. A Rust backend handles command execution, filetype normalization, build/run resolution, project parsing, quickfix processing, and command detection.
 
 ## Table of Contents
 
@@ -34,10 +34,10 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 
 - **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
 - **Full ANSI Colors**: Compiler errors and logs retain their rich coloring.
-- **Zig Backend**: Build resolution, runner resolution, command detection, project parsing, quickfix processing, and execution support run through a native backend.
-- **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Zig backend.
+- **Rust Backend**: Build resolution, runner resolution, command detection, project parsing, quickfix processing, and execution support run through a native backend.
+- **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Rust backend.
 - **Quickfix Integration**: Non-zero exits can populate the quickfix list so errors are easy to jump through.
-- **Unified Zig Daemon**: Reuses one backend daemon for config sync, build/run resolve, detection, project parsing, and quickfix processing to reduce repeat-run latency.
+- **Unified Rust Daemon**: Reuses one backend daemon for config sync, build/run resolve, detection, project parsing, and quickfix processing to reduce repeat-run latency.
 - **Build System Support**: Supports `cargo`, `zig build`, `npm`, `make`, CMake, Meson, Bazel, Maven, Gradle, Go modules/workspaces, and more.
 - **Interactive Command Picker**: Choose between `run`, `test`, `build`, `clean`, and detected project commands.
 - **Project Detection**: Detects project roots so project-aware commands run from the correct working directory.
@@ -47,22 +47,22 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 ## Requirements
 
 - Neovim >= 0.10
-- Zig `0.16.0`
+- Rust stable toolchain when installing from source with a plugin-manager build hook
 
-The backend targets Zig 0.16.0. Earlier versions will not compile.
+Zig is optional and is only needed when running Zig files or Zig projects.
 
 ## Architecture
 
 The current architecture is intentionally split:
 
 - Lua owns the Neovim frontend layer: setup, config, RPC transport, picker/window UI, and thin controller flow
-- Zig owns the backend layer: config interpretation, filetype normalization, build/run resolution, project parsing, system queries, detection, quickfix processing, and execution support
+- Rust owns the backend layer: config interpretation, filetype normalization, build/run resolution, project parsing, system queries, detection, quickfix processing, and execution support
 
 For contributors: `CONTRIBUTING.md`
 
 ## Installation
 
-The `build` step is required to compile the Zig backend.
+The `build` step is required to compile the Rust backend when installing from source.
 
 Example files in this repo:
 
@@ -73,7 +73,7 @@ Example files in this repo:
 ```lua
 {
     "valonmulolli/zignite.nvim",
-    build = "cd zig && zig build -Doptimize=ReleaseFast",
+    build = "cargo build --manifest-path rust/Cargo.toml --release",
     config = function()
         require("zignite").setup({})
     end,
@@ -107,7 +107,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
     callback = function(ev)
         if ev.data.spec.name == 'zignite.nvim' then
             -- :wait() ensures the build completes before the next statement
-            vim.system({ 'zig', 'build', '-Doptimize=ReleaseFast' }, { cwd = ev.data.path .. '/zig' }):wait()
+            vim.system({ 'cargo', 'build', '--manifest-path', 'rust/Cargo.toml', '--release' }, { cwd = ev.data.path }):wait()
         end
     end,
 })
@@ -119,7 +119,7 @@ vim.pack.add({
 
 **Nix / NixOS (flake)**
 
-This repo now exposes a flake package that builds the Zig backend during packaging.
+This repo now exposes a flake package that builds the Rust backend during packaging.
 
 `flake.nix` input:
 
@@ -187,7 +187,7 @@ The supported command-list interfaces are `zig --help`, `go help`, `cargo
 Perl, R, Julia, shell, Haskell, and Fortran tools expose compiler flags or
 project goals rather than a stable subcommand list, so those filetypes
 continue to use their existing runners and project/build-system detection.
-For Dart and Swift, the Zig backend also walks up from the source file to
+For Dart and Swift, the Rust backend also walks up from the source file to
 `pubspec.yaml` or `Package.swift` and runs project commands from that manifest
 directory.
 The Zig 0.16 `uninstall` build step is omitted because the standard library
@@ -236,7 +236,7 @@ detect = {
 ```
 
 Detection, build resolution, run resolution, config sync, and quickfix reuse a
-persistent Zig backend daemon (`--daemon`) for lower overhead. The plugin
+persistent Rust backend daemon (`--daemon`) for lower overhead. The plugin
 builds this backend during installation, and the resolver path expects it to be
 available.
 
@@ -329,7 +329,7 @@ Run `zig build -Doptimize=ReleaseFast` inside the plugin's `zig/` directory manu
 
 ### "No runner configured"
 
-The Zig backend auto-detects the correct build/run command for supported
+The Rust backend auto-detects the correct build/run command for supported
 filetypes. If nothing appears:
 
 - Check that your `build.zig`, `Cargo.toml`, `Makefile`, `CMakeLists.txt`,
@@ -346,7 +346,7 @@ filetypes. If nothing appears:
 
 ### Go `:RunFile` feels slow or hangs
 
-The Zig backend picks `go run .` by default (whole-module execution). For
+The Rust backend picks `go run .` by default (whole-module execution). For
 single-file feedback, use `:RunFile` which uses the configured runner
 (`go run $file`). Switch to `:RunBuild run` when you want full module execution.
 
@@ -357,22 +357,15 @@ The `{ "n", "<lhs>", "<rhs>", ... }` format is for `require("zignite").setup({ k
 
 ## Development
 
-### Run tests (Lua frontend + Zig integration suite)
+### Run tests (Lua frontend + Rust backend)
 
 ```sh
 lua zig/test/runner.lua
+cargo test --manifest-path rust/Cargo.toml --all-targets --locked
+cargo build --manifest-path rust/Cargo.toml --release --locked
 ```
 
-### Run backend benchmark
-
-```sh
-cd zig
-zig build bench          # defaults to 3000 iterations
-zig build bench-fast     # defaults to 1000 iterations
-zig build bench -- 10000
-```
-
-See `CONTRIBUTING.md` for benchmark details.
+The repository does not currently ship a standalone backend benchmark.
 
 ## License
 

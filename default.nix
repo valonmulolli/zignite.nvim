@@ -4,30 +4,35 @@ let
   pname = "zignite-nvim";
   version = "unstable";
 in
-pkgs.vimUtils.buildVimPlugin {
+pkgs.rustPlatform.buildRustPackage {
   inherit pname version;
   src = ./.;
+  cargoLock.lockFile = ./rust/Cargo.lock;
+
   doCheck = false;
 
-  nativeBuildInputs = [ pkgs.zig ];
+  buildPhase = ''
+    runHook preBuild
+    ${pkgs.cargo}/bin/cargo build --manifest-path rust/Cargo.toml --release --locked
+    runHook postBuild
+  '';
 
-  postInstall = ''
+  installPhase = ''
+    runHook preInstall
     plugin_dir="$out/share/vim-plugins/${pname}"
 
-    test -d "$plugin_dir/zig"
-    export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
-    export ZIG_LOCAL_CACHE_DIR="$TMPDIR/zig-local-cache"
+    mkdir -p "$plugin_dir"
+    cp -r lua plugin doc README.md LICENSE "$plugin_dir/"
+    mkdir -p "$plugin_dir/rust/target/release"
+    cp rust/target/release/zignite "$plugin_dir/rust/target/release/zignite"
+    chmod 0755 "$plugin_dir/rust/target/release/zignite"
 
-    (
-      cd "$plugin_dir/zig"
-      ${pkgs.zig}/bin/zig build -Doptimize=ReleaseFast
-    )
-
-    test -x "$plugin_dir/zig/zig-out/bin/zignite"
+    test -x "$plugin_dir/rust/target/release/zignite"
+    runHook postInstall
   '';
 
   meta = with pkgs.lib; {
-    description = "Asynchronous Neovim code runner with a Zig backend";
+    description = "Asynchronous Neovim code runner with a Rust backend";
     homepage = "https://github.com/valonmulolli/zignite.nvim";
     license = licenses.mit;
     maintainers = [ ];
