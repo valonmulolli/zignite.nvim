@@ -1,14 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+mod common;
 
+use common::TempProject;
 use zignite::project::{parse_project, parse_zig_steps, ProjectError, ProjectKind};
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("test_fixtures")
-        .join(name)
-}
 
 fn command(project: &zignite::project::Project, name: &str) -> String {
     project
@@ -21,16 +14,14 @@ fn command(project: &zignite::project::Project, name: &str) -> String {
 
 #[test]
 fn parses_cmake_target_with_quoted_comment_awareness() {
-    let root = std::env::temp_dir().join(format!("zignite-cmake-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create cmake project");
-    fs::write(
-        root.join("CMakeLists.txt"),
+    let root = TempProject::new("cmake");
+    root.write(
+        "CMakeLists.txt",
         "set(note \"# add_executable(fake src/fake.cpp)\")\n# add_executable(comment src/comment.cpp)\nadd_executable(real src/main.cpp)\n",
-    )
-    .expect("write cmake project");
+    );
+    let source = root.write("src/main.cpp", "int main() { return 0; }\n");
 
-    let project = parse_project(ProjectKind::CMake, &root, Some(&root.join("src/main.cpp")))
+    let project = parse_project(ProjectKind::CMake, root.path(), Some(&source))
         .expect("cmake project parses");
     assert_eq!(
         command(&project, "build"),
@@ -38,17 +29,18 @@ fn parses_cmake_target_with_quoted_comment_awareness() {
     );
     assert!(project.commands.iter().all(|item| item.name != "fake"));
     assert!(project.commands.iter().all(|item| item.name != "comment"));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn parses_meson_fixture_target() {
-    let project = parse_project(
-        ProjectKind::Meson,
-        &fixture("meson").join("meson.build"),
-        Some(&fixture("meson").join("src/main.cpp")),
-    )
-    .expect("meson project parses");
+fn parses_meson_target() {
+    let root = TempProject::new("meson");
+    let build = root.write(
+        "meson.build",
+        "project('demo', 'cpp')\nexecutable('demo-app', 'src/main.cpp')\n",
+    );
+    let source = root.write("src/main.cpp", "int main() { return 0; }\n");
+    let project =
+        parse_project(ProjectKind::Meson, &build, Some(&source)).expect("meson project parses");
     assert_eq!(
         command(&project, "build"),
         "meson compile -C build --target demo-app"
@@ -61,7 +53,17 @@ fn parses_meson_fixture_target() {
 
 #[test]
 fn parses_bazel_nested_build_targets_without_comment_injection() {
-    let source = fixture("bazel").join("app/main.cc");
+    let root = TempProject::new("bazel");
+    root.write(
+        "MODULE.bazel",
+        "bazel_dep(name = \"rules_cc\", version = \"0.0.9\")\n",
+    );
+    root.write(
+        "app/BUILD.bazel",
+        "cc_binary(name = \"main\", srcs = [\"main.cc\"])\n\ncc_test(name = \"main_test\", srcs = [\"main_test.cc\"])\n",
+    );
+    let source = root.write("app/main.cc", "int main() { return 0; }\n");
+    root.write("app/main_test.cc", "int main() { return 0; }\n");
     let project =
         parse_project(ProjectKind::Bazel, &source, Some(&source)).expect("bazel project parses");
     assert_eq!(command(&project, "build-main"), "bazel build //app:main");
@@ -73,17 +75,22 @@ fn parses_bazel_nested_build_targets_without_comment_injection() {
 
 #[test]
 fn parses_maven_and_gradle_project_commands() {
-    let maven = parse_project(ProjectKind::Maven, &fixture("maven").join("pom.xml"), None)
-        .expect("maven project parses");
+    let maven_root = TempProject::new("maven");
+    let pom = maven_root.write(
+        "pom.xml",
+        "<project><modelVersion>4.0.0</modelVersion><groupId>com.example</groupId><artifactId>demo</artifactId><version>1.0.0</version><build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>",
+    );
+    let maven = parse_project(ProjectKind::Maven, &pom, None).expect("maven project parses");
     assert_eq!(command(&maven, "build"), "mvn compile");
     assert_eq!(command(&maven, "run"), "mvn spring-boot:run");
 
-    let gradle = parse_project(
-        ProjectKind::Gradle,
-        &fixture("gradle").join("build.gradle.kts"),
-        None,
-    )
-    .expect("gradle project parses");
+    let gradle_root = TempProject::new("gradle");
+    let build = gradle_root.write(
+        "build.gradle.kts",
+        "plugins { id(\"application\"); id(\"org.springframework.boot\") version \"3.5.0\" }\n",
+    );
+    gradle_root.write("gradlew", "#!/bin/sh\n");
+    let gradle = parse_project(ProjectKind::Gradle, &build, None).expect("gradle project parses");
     assert_eq!(command(&gradle, "build"), "./gradlew build");
     assert_eq!(command(&gradle, "bootRun"), "./gradlew bootRun");
 }
@@ -97,14 +104,11 @@ fn parses_zig_steps_without_making_zig_a_backend_dependency() {
 
 #[test]
 fn malformed_complex_project_files_return_structured_errors() {
-    let root = std::env::temp_dir().join(format!("zignite-invalid-complex-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create project");
-    fs::write(root.join("pom.xml"), "<project>").expect("write malformed pom");
+    let root = TempProject::new("invalid-complex");
+    root.write("pom.xml", "<project>");
 
     assert!(matches!(
-        parse_project(ProjectKind::Maven, &root, None),
+        parse_project(ProjectKind::Maven, root.path(), None),
         Err(ProjectError::InvalidFile { .. })
     ));
-    let _ = fs::remove_dir_all(root);
 }

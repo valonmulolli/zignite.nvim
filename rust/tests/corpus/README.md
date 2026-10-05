@@ -130,31 +130,11 @@ The current Zig unit tests cover:
 The Rust process tests must retain these behaviors without relying solely on a
 recycled PID or an unowned process identifier.
 
-## Project Fixture Manifest
+## Project Parser Test Data
 
-The fixtures now live under `test_fixtures/` and are shared by Rust project
-tests and the Lua integration harness:
-
-| Fixture root | Primary project-system coverage |
-|---|---|
-| `bazel` | Bazel module/workspace/build discovery |
-| `bun` | Bun package scripts |
-| `cargo` | Cargo project commands |
-| `cmake` | CMake configure/build metadata |
-| `go` | Go module commands |
-| `go_work` | Go workspace commands |
-| `gradle` | Gradle task discovery |
-| `maven` | Maven task discovery |
-| `meson` | Meson setup/build metadata |
-| `node` | Node package scripts |
-| `python` | Python project metadata |
-| `python_conda` | Conda Python environment metadata |
-| `python_conda_yaml` | YAML Conda environment metadata |
-| `python_requirements` | Requirements-based Python metadata |
-| `yarn` | Yarn package scripts |
-
-The fixture manifest is intentionally separate from parser implementation. A
-fixture may be used by more than one detection or build-resolution test.
+Rust project integration tests create minimal project files in unique temporary
+directories through `rust/tests/common/mod.rs`. This keeps the test cases
+self-contained and avoids requiring a checked-in project fixture directory.
 
 ## Baseline Ownership
 

@@ -1,14 +1,9 @@
+mod common;
+
+use common::TempProject;
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use zignite::project::{parse_project, ProjectCommand, ProjectError, ProjectKind};
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("test_fixtures")
-        .join(name)
-}
 
 fn command<'a>(project: &'a zignite::project::Project, name: &str) -> &'a ProjectCommand {
     project
@@ -20,36 +15,34 @@ fn command<'a>(project: &'a zignite::project::Project, name: &str) -> &'a Projec
 
 #[test]
 fn parses_make_targets_without_recipe_or_variable_false_positives() {
-    let root = std::env::temp_dir().join(format!("zignite-make-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create make project");
-    fs::write(
-        root.join("Makefile"),
+    let root = TempProject::new("make");
+    let makefile = root.write(
+        "Makefile",
         "CC=gcc\n.PHONY: build test\nbuild test: all\n\t@true\nunsafe;touch:\n\t@true\n",
-    )
-    .expect("write Makefile");
+    );
 
-    let project = parse_project(ProjectKind::Make, &root.join("Makefile"), None)
-        .expect("make parse succeeds");
+    let project = parse_project(ProjectKind::Make, &makefile, None).expect("make parse succeeds");
     assert_eq!(command(&project, "build").command, "make build");
     assert_eq!(command(&project, "test").command, "make test");
     assert!(project.commands.iter().all(|item| item.name != "CC"));
     assert!(project.commands.iter().all(|item| !item.name.contains(";")));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn parses_package_scripts_and_lockfile_package_manager() {
-    let project = parse_project(
-        ProjectKind::PackageJson,
-        &fixture("node").join("package.json"),
-        None,
-    )
-    .expect("package project parses");
+    let root = TempProject::new("node");
+    let package_json = root.write(
+        "package.json",
+        r#"{"name":"demo-node-app","scripts":{"dev":"vite","build":"vite build","test":"vitest"}}"#,
+    );
+    root.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+
+    let project = parse_project(ProjectKind::PackageJson, &package_json, None)
+        .expect("package project parses");
 
     assert_eq!(
         project.root,
-        fs::canonicalize(fixture("node")).expect("canonical fixture")
+        fs::canonicalize(root.path()).expect("canonical temporary project")
     );
     assert_eq!(command(&project, "dev").command, "pnpm run dev");
     assert_eq!(command(&project, "test").command, "pnpm test");
@@ -57,7 +50,13 @@ fn parses_package_scripts_and_lockfile_package_manager() {
 
 #[test]
 fn parses_cargo_bins_and_matches_the_source_bin() {
-    let source = fixture("cargo").join("src/bin/api.rs");
+    let root = TempProject::new("cargo");
+    root.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    root.write("src/main.rs", "fn main() {}\n");
+    let source = root.write("src/bin/api.rs", "fn main() {}\n");
     let project =
         parse_project(ProjectKind::Cargo, &source, Some(&source)).expect("cargo project parses");
 
@@ -67,7 +66,9 @@ fn parses_cargo_bins_and_matches_the_source_bin() {
 
 #[test]
 fn parses_go_module_package_commands() {
-    let source = fixture("go").join("cmd/api/main.go");
+    let root = TempProject::new("go");
+    root.write("go.mod", "module github.com/example/demo\n\ngo 1.24.0\n");
+    let source = root.write("cmd/api/main.go", "package main\n\nfunc main() {}\n");
     let project =
         parse_project(ProjectKind::Go, &source, Some(&source)).expect("go project parses");
 
@@ -79,7 +80,16 @@ fn parses_go_module_package_commands() {
 
 #[test]
 fn parses_go_workspace_and_selects_the_matching_module() {
-    let source = fixture("go_work").join("service/cmd/api/main.go");
+    let root = TempProject::new("go-work");
+    root.write("go.work", "go 1.24.0\n\nuse ./service\n");
+    root.write(
+        "service/go.mod",
+        "module github.com/example/workspace-service\n\ngo 1.24.0\n",
+    );
+    let source = root.write(
+        "service/cmd/api/main.go",
+        "package main\n\nfunc main() {}\n",
+    );
     let project =
         parse_project(ProjectKind::Go, &source, Some(&source)).expect("go workspace parses");
 
@@ -99,13 +109,15 @@ fn parses_go_workspace_and_selects_the_matching_module() {
 }
 
 #[test]
-fn parses_python_uv_fixture() {
-    let project = parse_project(
-        ProjectKind::Python,
-        &fixture("python").join("app/main.py"),
-        None,
-    )
-    .expect("python project parses");
+fn parses_python_uv_project() {
+    let root = TempProject::new("python");
+    root.write(
+        "pyproject.toml",
+        "[project]\nname = \"demo-python-app\"\nversion = \"0.1.0\"\n\n[tool.uv]\nversion = 1\n",
+    );
+    root.write("uv.lock", "version = 1\n");
+    let source = root.write("app/main.py", "print('hello')\n");
+    let project = parse_project(ProjectKind::Python, &source, None).expect("python project parses");
 
     assert_eq!(command(&project, "run").command, "uv run -m main");
     assert_eq!(command(&project, "test").command, "uv run pytest");
@@ -114,14 +126,11 @@ fn parses_python_uv_fixture() {
 
 #[test]
 fn malformed_project_files_return_structured_errors() {
-    let root = std::env::temp_dir().join(format!("zignite-invalid-project-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create project");
-    fs::write(root.join("package.json"), "{not json").expect("write malformed json");
+    let root = TempProject::new("invalid-project");
+    root.write("package.json", "{not json");
 
     assert!(matches!(
-        parse_project(ProjectKind::PackageJson, &root, None),
+        parse_project(ProjectKind::PackageJson, root.path(), None),
         Err(ProjectError::InvalidFile { .. })
     ));
-    let _ = fs::remove_dir_all(root);
 }
