@@ -6,6 +6,7 @@ use std::time::Duration;
 use zignite::cli::{parse_env_args, Mode};
 use zignite::config::{apply_config_sync, ConfigState};
 use zignite::daemon::{run_daemon, DaemonState};
+use zignite::detect::{detect_tool, parse_tool};
 use zignite::error::BackendError;
 use zignite::process::{run_backend_command, shell_command, CommandSpec, TimeoutPolicy};
 use zignite::quickfix::{process_quickfix, read_bounded, write_processed};
@@ -35,6 +36,8 @@ fn run() -> Result<ExitCode, BackendError> {
         Mode::ConfigSync => run_config_sync_mode(&cli.options),
         Mode::Quickfix => run_quickfix_mode(&cli.options),
         Mode::QuickfixDaemon => run_quickfix_daemon_mode(),
+        Mode::Detect => run_detect_mode(&cli.options),
+        Mode::DetectDaemon => run_detect_daemon_mode(),
         Mode::Command => run_command_mode(&cli.argv, &cli.options),
         Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
         Mode::RunResolve => run_run_resolve_mode(&cli.options),
@@ -80,6 +83,33 @@ fn run_quickfix_daemon_mode() -> Result<ExitCode, BackendError> {
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
     zignite::quickfix::run_daemon(&mut reader, &mut writer)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_detect_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let value = option_value(options, "--tool=")
+        .ok_or(zignite::error::CliError::MissingValue("--tool="))?;
+    let tool = parse_tool(value)
+        .map_err(|error| zignite::error::CliError::InvalidValue(error.to_string()))?;
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    detect_tool(tool)
+        .map_err(BackendError::from)
+        .and_then(|commands| {
+            for command in commands {
+                writeln!(writer, "{}\t{}", command.name, command.command)?;
+            }
+            writer.flush().map_err(BackendError::from)
+        })?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_detect_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::detect::run_daemon(&mut reader, &mut writer)?;
     Ok(ExitCode::SUCCESS)
 }
 

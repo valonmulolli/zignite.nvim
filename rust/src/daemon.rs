@@ -2,6 +2,7 @@ use std::io::BufRead;
 use std::io::Write;
 
 use crate::config::{handle_config_frame, ConfigState, CONFIG_REQ_BEGIN};
+use crate::detect::{handle_frame as handle_detect_frame, DETECT_REQ_BEGIN};
 use crate::error::BackendError;
 use crate::protocol::{
     has_marker_prefix, parse_request_id, read_line_limited, write_response, RequestId,
@@ -38,6 +39,10 @@ pub fn run_daemon<R: BufRead, W: Write>(
         }
         if has_marker_prefix(&line, QUICKFIX_REQ_BEGIN) {
             handle_quickfix_frame(reader, writer, &line)?;
+            continue;
+        }
+        if has_marker_prefix(&line, DETECT_REQ_BEGIN) {
+            handle_detect_frame(reader, writer, &line)?;
             continue;
         }
         if let Some(id) = parse_request_id(&line, HEALTH_REQ_BEGIN) {
