@@ -88,6 +88,11 @@ fn records_use_safe_templates_and_skip_unsafe_names() {
         "@@ZDET_RES_END".to_owned(),
     ];
     let records = command_records(Tool::Zig, &names);
+    let quoted_name = if cfg!(windows) {
+        "zig \"custom;touch\""
+    } else {
+        "zig 'custom;touch'"
+    };
 
     assert_eq!(
         records,
@@ -98,7 +103,7 @@ fn records_use_safe_templates_and_skip_unsafe_names() {
             },
             DetectedCommand {
                 name: "custom;touch".to_owned(),
-                command: "zig 'custom;touch'".to_owned(),
+                command: quoted_name.to_owned(),
             },
         ]
     );
