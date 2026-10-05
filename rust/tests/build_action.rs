@@ -46,15 +46,14 @@ fn named_action_materializes_command_and_records_last_command() {
         Some(canonical_root.to_str().expect("utf8 root"))
     );
     assert_eq!(
-        plan.exec_argv,
-        vec![
-            "cargo",
-            "metadata",
-            "--manifest-path",
-            path.to_str().expect("utf8 path"),
-            "--no-deps"
-        ]
+        &plan.exec_argv[..3],
+        ["cargo", "metadata", "--manifest-path"]
     );
+    assert_eq!(
+        fs::canonicalize(&plan.exec_argv[3]).expect("canonicalized command manifest"),
+        fs::canonicalize(&path).expect("canonical manifest")
+    );
+    assert_eq!(plan.exec_argv[4], "--no-deps");
 
     let last = resolve_action(
         &config,
