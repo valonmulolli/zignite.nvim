@@ -112,7 +112,18 @@ fn rust_backend_build_action_returns_direct_execution_record() {
     assert_eq!(json["resolved_command_name"], "custom");
     assert_eq!(json["exec_argv"][0], "echo");
     assert_eq!(json["exec_argv"][1], "custom");
-    assert_eq!(json["system_argv"][0], "echo");
+    #[cfg(unix)]
+    assert_eq!(json["system_argv"], json["exec_argv"]);
+    #[cfg(windows)]
+    {
+        assert_eq!(
+            Path::new(json["system_argv"][0].as_str().expect("backend executable"))
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("zignite.exe")
+        );
+        assert_eq!(json["system_argv"][1], "echo custom");
+    }
     let _ = fs::remove_dir_all(root);
 }
 
