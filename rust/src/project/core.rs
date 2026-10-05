@@ -12,6 +12,12 @@ pub enum ProjectKind {
     Cargo,
     Go,
     Python,
+    CMake,
+    Meson,
+    Bazel,
+    Maven,
+    Gradle,
+    Zig,
 }
 
 impl ProjectKind {
@@ -22,6 +28,12 @@ impl ProjectKind {
             Self::Cargo => "cargo",
             Self::Go => "go",
             Self::Python => "python",
+            Self::CMake => "cmake",
+            Self::Meson => "meson",
+            Self::Bazel => "bazel",
+            Self::Maven => "maven",
+            Self::Gradle => "gradle",
+            Self::Zig => "zig",
         }
     }
 
@@ -32,6 +44,12 @@ impl ProjectKind {
             "cargo" => Ok(Self::Cargo),
             "go" | "go-mod" | "go-work" => Ok(Self::Go),
             "python" | "pyproject" | "python-auto" => Ok(Self::Python),
+            "cmake" => Ok(Self::CMake),
+            "meson" => Ok(Self::Meson),
+            "bazel" | "bazel-workspace" => Ok(Self::Bazel),
+            "maven" | "pom" => Ok(Self::Maven),
+            "gradle" => Ok(Self::Gradle),
+            "zig" | "zig-auto" => Ok(Self::Zig),
             _ => Err(ProjectError::InvalidKind(value.to_owned())),
         }
     }
@@ -49,6 +67,18 @@ impl ProjectKind {
                 "environment.yaml",
                 "requirements.txt",
             ],
+            Self::CMake => &["CMakeLists.txt"],
+            Self::Meson => &["meson.build"],
+            Self::Bazel => &[
+                "MODULE.bazel",
+                "WORKSPACE.bazel",
+                "WORKSPACE",
+                "BUILD.bazel",
+                "BUILD",
+            ],
+            Self::Maven => &["pom.xml"],
+            Self::Gradle => &["build.gradle", "build.gradle.kts"],
+            Self::Zig => &["build.zig"],
         }
     }
 }
@@ -92,6 +122,8 @@ impl Project {
 pub enum ProjectError {
     InvalidKind(String),
     InvalidOption(String),
+    MissingTool { tool: String },
+    CommandFailed { tool: String },
     NotFound { kind: ProjectKind, start: PathBuf },
     UnreadableMarker { path: PathBuf },
     InvalidFile { path: PathBuf, message: String },
@@ -103,6 +135,10 @@ impl fmt::Display for ProjectError {
         match self {
             Self::InvalidKind(value) => write!(formatter, "invalid project kind: {value}"),
             Self::InvalidOption(value) => write!(formatter, "invalid project option: {value}"),
+            Self::MissingTool { tool } => {
+                write!(formatter, "required project tool missing: {tool}")
+            }
+            Self::CommandFailed { tool } => write!(formatter, "project tool failed: {tool}"),
             Self::NotFound { kind, start } => {
                 write!(
                     formatter,
@@ -186,6 +222,24 @@ pub fn find_project_root(
                 Ok(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+            }
+        }
+    }
+    if kind == ProjectKind::Bazel {
+        for candidate in &candidates {
+            for marker_name in ["MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE"] {
+                let marker = candidate.join(marker_name);
+                match fs::metadata(&marker) {
+                    Ok(metadata) if metadata.is_file() => {
+                        return Ok(Some(ProjectRoot {
+                            root: candidate.clone(),
+                            marker,
+                        }));
+                    }
+                    Ok(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+                }
             }
         }
     }
