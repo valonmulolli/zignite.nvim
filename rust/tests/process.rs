@@ -118,11 +118,10 @@ fn process_reports_missing_executable() {
 fn process_forwards_working_directory_and_environment() {
     let directory = unique_temp_path("cwd");
     fs::create_dir(&directory).expect("create temporary directory");
+    #[cfg(unix)]
     let mut spec = shell("printf '%s:%s' \"$PWD\" \"$ZIGNITE_TEST_VALUE\"");
     #[cfg(windows)]
-    {
-        spec = shell("echo %CD%:%ZIGNITE_TEST_VALUE%");
-    }
+    let mut spec = shell("echo %CD%:%ZIGNITE_TEST_VALUE%");
     spec.cwd = Some(directory.clone());
     spec.env.push((
         OsString::from("ZIGNITE_TEST_VALUE"),

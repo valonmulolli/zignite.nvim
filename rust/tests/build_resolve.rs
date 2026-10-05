@@ -31,9 +31,10 @@ fn resolve_build_merges_config_project_and_builtin_commands() {
     let output = resolve_build(&config, &root.join("main.cpp"), "cpp", None)
         .expect("resolve build commands");
     assert_eq!(output.filetype, "cpp");
+    let canonical_root = fs::canonicalize(&root).expect("canonical root");
     assert_eq!(
         output.root.as_deref(),
-        Some(root.to_str().expect("utf8 root"))
+        Some(canonical_root.to_str().expect("utf8 root"))
     );
     assert_eq!(output.system.as_deref(), Some("make"));
     assert_eq!(output.config_revision, 7);

@@ -167,10 +167,8 @@ fn zig_project_manifest_selects_project_run_command() {
 
     assert_eq!(resolved.source, RunnerSource::Project);
     assert_eq!(resolved.command.as_deref(), Some("zig build run"));
-    assert_eq!(
-        resolved.cwd.as_deref(),
-        Some(root.to_string_lossy().as_ref())
-    );
+    let canonical_root = fs::canonicalize(&root).expect("canonical root");
+    assert_eq!(resolved.cwd.as_deref(), canonical_root.to_str());
     fs::remove_dir_all(root).expect("remove runtime fixture");
 }
 
