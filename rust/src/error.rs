@@ -6,6 +6,7 @@ use crate::protocol::ProtocolError;
 pub enum BackendError {
     Io(std::io::Error),
     Process(crate::process::ProcessError),
+    Detection(crate::detect::DetectionError),
     Protocol(ProtocolError),
     Config(crate::config::ConfigError),
     Cli(CliError),
@@ -17,6 +18,7 @@ impl fmt::Display for BackendError {
         match self {
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
             Self::Process(error) => write!(formatter, "process error: {error}"),
+            Self::Detection(error) => write!(formatter, "detection error: {error}"),
             Self::Protocol(error) => write!(formatter, "protocol error: {error}"),
             Self::Config(error) => write!(formatter, "config error: {error}"),
             Self::Cli(error) => write!(formatter, "{error}"),
@@ -42,6 +44,12 @@ impl From<ProtocolError> for BackendError {
 impl From<crate::process::ProcessError> for BackendError {
     fn from(error: crate::process::ProcessError) -> Self {
         Self::Process(error)
+    }
+}
+
+impl From<crate::detect::DetectionError> for BackendError {
+    fn from(error: crate::detect::DetectionError) -> Self {
+        Self::Detection(error)
     }
 }
 
