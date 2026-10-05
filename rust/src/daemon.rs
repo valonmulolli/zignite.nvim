@@ -1,6 +1,7 @@
 use std::io::BufRead;
 use std::io::Write;
 
+use crate::config::{handle_config_frame, ConfigState, CONFIG_REQ_BEGIN};
 use crate::error::BackendError;
 use crate::protocol::{
     has_marker_prefix, parse_request_id, read_line_limited, write_response, RequestId,
@@ -15,14 +16,20 @@ pub const HEALTH_RES_END: &str = "@@ZHLT_RES_END";
 #[derive(Debug, Default)]
 pub struct DaemonState {
     pub config_revision: Option<u64>,
+    pub config: ConfigState,
 }
 
 pub fn run_daemon<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
-    _state: &mut DaemonState,
+    state: &mut DaemonState,
 ) -> Result<(), BackendError> {
     while let Some(line) = read_line_limited(reader, DEFAULT_MAX_LINE)? {
+        if has_marker_prefix(&line, CONFIG_REQ_BEGIN) {
+            handle_config_frame(reader, writer, &line, &mut state.config)?;
+            state.config_revision = Some(state.config.revision());
+            continue;
+        }
         if let Some(id) = parse_request_id(&line, HEALTH_REQ_BEGIN) {
             write_response(
                 writer,
