@@ -13,13 +13,17 @@ fn root(name: &str) -> std::path::PathBuf {
 #[test]
 fn named_action_materializes_command_and_records_last_command() {
     let root = root("named");
-    let path = root.join("main.go");
-    fs::write(&path, "package main\n").expect("write source");
+    let path = root.join("Cargo.toml");
+    fs::write(
+        &path,
+        "[package]\nname = \"zignite-action-test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write manifest");
     let mut config = ConfigState::default();
     apply_config_sync(
         &mut config,
         4,
-        r#"{"build_commands":{"go":{"run":"go run $file"}}}"#,
+        r#"{"build_commands":{"rust":{"metadata":"cargo metadata --manifest-path $file --no-deps"}}}"#,
     )
     .expect("sync config");
     let mut state = BuildState::default();
@@ -28,32 +32,38 @@ fn named_action_materializes_command_and_records_last_command() {
         &config,
         &mut state,
         &path,
-        "go",
+        "rust",
         ActionKind::Named,
-        Some("run"),
+        Some("metadata"),
         None,
     )
     .expect("resolve named action");
     assert!(plan.ok);
-    assert_eq!(plan.resolved_command_name.as_deref(), Some("run"));
+    assert_eq!(plan.resolved_command_name.as_deref(), Some("metadata"));
     assert_eq!(plan.cwd.as_deref(), Some(root.to_str().expect("utf8 root")));
     assert_eq!(
         plan.exec_argv,
-        vec!["go", "run", path.to_str().expect("utf8 path")]
+        vec![
+            "cargo",
+            "metadata",
+            "--manifest-path",
+            path.to_str().expect("utf8 path"),
+            "--no-deps"
+        ]
     );
 
     let last = resolve_action(
         &config,
         &mut state,
         &path,
-        "go",
+        "rust",
         ActionKind::Last,
         None,
         None,
     )
     .expect("resolve last action");
     assert!(last.ok);
-    assert_eq!(last.resolved_command_name.as_deref(), Some("run"));
+    assert_eq!(last.resolved_command_name.as_deref(), Some("metadata"));
 
     let _ = fs::remove_dir_all(root);
 }
