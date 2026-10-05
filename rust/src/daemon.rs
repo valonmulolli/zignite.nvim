@@ -7,6 +7,7 @@ use crate::protocol::{
     has_marker_prefix, parse_request_id, read_line_limited, write_response, RequestId,
     ResponseFrame, DEFAULT_MAX_LINE,
 };
+use crate::runtime::{handle_run_frame, RUN_REQ_BEGIN};
 
 pub const HEALTH_REQ_BEGIN: &str = "@@ZHLT_REQ_BEGIN";
 pub const HEALTH_RES_BEGIN: &str = "@@ZHLT_RES_BEGIN";
@@ -28,6 +29,10 @@ pub fn run_daemon<R: BufRead, W: Write>(
         if has_marker_prefix(&line, CONFIG_REQ_BEGIN) {
             handle_config_frame(reader, writer, &line, &mut state.config)?;
             state.config_revision = Some(state.config.revision());
+            continue;
+        }
+        if has_marker_prefix(&line, RUN_REQ_BEGIN) {
+            handle_run_frame(reader, writer, &line, &state.config)?;
             continue;
         }
         if let Some(id) = parse_request_id(&line, HEALTH_REQ_BEGIN) {

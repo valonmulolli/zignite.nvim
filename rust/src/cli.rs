@@ -15,6 +15,7 @@ pub enum Mode {
     BuildResolve,
     BuildAction,
     RunResolve,
+    Command,
     Argv,
 }
 
@@ -57,7 +58,9 @@ where
             index += 1;
             continue;
         }
-        return Err(CliError::UnknownArgument(argument.clone()));
+        mode = set_mode(mode, Mode::Command)?;
+        argv.push(argument.clone());
+        break;
     }
 
     let mode = mode.ok_or(CliError::MissingMode)?;
@@ -90,4 +93,27 @@ fn set_mode(current: Option<Mode>, next: Mode) -> Result<Option<Mode>, CliError>
         return Err(CliError::MultipleModes);
     }
     Ok(Some(next))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, Mode};
+
+    #[test]
+    fn parses_a_shell_command_after_process_options() {
+        let cli = parse_args(["--timeout=50", "printf hello"]).expect("command parses");
+
+        assert_eq!(cli.mode, Mode::Command);
+        assert_eq!(cli.options, vec!["--timeout=50"]);
+        assert_eq!(cli.argv, vec!["printf hello"]);
+    }
+
+    #[test]
+    fn argv_mode_keeps_child_flags_out_of_backend_options() {
+        let cli = parse_args(["--argv", "printf", "--timeout=child"]).expect("argv parses");
+
+        assert_eq!(cli.mode, Mode::Argv);
+        assert!(cli.options.is_empty());
+        assert_eq!(cli.argv, vec!["printf", "--timeout=child"]);
+    }
 }
