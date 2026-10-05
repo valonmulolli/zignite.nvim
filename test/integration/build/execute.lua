@@ -455,6 +455,24 @@ local function test_execution_modes_start_runner_jobs()
     print("✓ Runner output mode matrix test passed")
 end
 
+local function test_non_string_backend_cwd_is_omitted()
+    config.setup({
+        quickfix = { enabled = false },
+        float = { startinsert = false },
+    })
+    reset_job_results()
+
+    init.execute_command({ "printf", "cwd-test" }, "float", "cwd-test", {
+        cwd = vim.NIL or {},
+    })
+
+    assert(#job_results == 1, "runner should start when backend cwd is JSON null")
+    assert(job_results[1].opts.cwd == nil, "jobstart should omit non-string backend cwd values")
+
+    reset_job_results()
+    print("✓ Non-string backend cwd test passed")
+end
+
 test_run_build_last_behavior()
 test_run_build_last_ignores_stale_command()
 test_build_resolve_exposes_backend_last_command_name()
@@ -465,3 +483,4 @@ test_run_live_javascript_uses_detected_live_alias()
 test_run_code_visual_uses_backend_managed_execution_path()
 test_run_code_rejects_cross_buffer_visual_selection()
 test_execution_modes_start_runner_jobs()
+test_non_string_backend_cwd_is_omitted()
