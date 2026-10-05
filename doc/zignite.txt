@@ -1,4 +1,4 @@
-*zignite.txt*    Fast code runner for Neovim with Zig backend
+*zignite.txt*    Fast code runner for Neovim with Rust backend
 
 ==============================================================================
 CONTENTS                                                    *zignite-contents*
@@ -16,7 +16,7 @@ CONTENTS                                                    *zignite-contents*
 INTRODUCTION                                            *zignite-introduction*
 
 Zignite.nvim is a blazingly fast, asynchronous code runner for Neovim,
-powered by a Zig backend for maximum performance.
+powered by a Rust backend for maximum performance.
 
 Features:
   • Execute code files instantly in Interactive Terminal
@@ -86,9 +86,9 @@ SAFETY & ERROR HANDLING~
     if they exceed the configured time limit.
   • Quickfix: Automatically parses errors and populates the Quickfix
     list, allowing you to jump to the error quickly.
-  • Persistent worker: Reuses a Zig quickfix daemon to reduce repeated
+  • Persistent worker: Reuses a Rust quickfix daemon to reduce repeated
     quickfix processing latency on failed runs.
-  • Persistent backend daemon: Reuses one Zig daemon for config sync,
+  • Persistent backend daemon: Reuses one Rust daemon for config sync,
     build/run resolution, detection, project parsing, and quickfix.
 
 ==============================================================================
@@ -158,7 +158,7 @@ COMMANDS                                                    *zignite-commands*
       • javascript/typescript: package.json scripts
       • java/kotlin: Maven/Gradle project tasks, with smarter runnable task
         detection (`exec:java`, `spring-boot:run`, `run`, `bootRun`) when the
-        Zig backend is available
+        Rust backend is available
       • bazel workspaces: `bazel-*` commands with target prompts
 	    (configured names take precedence)
 	    Auto-detection is enabled by default and can be disabled per detector via
@@ -167,7 +167,7 @@ COMMANDS                                                    *zignite-commands*
 	    asynchronously in-place (`detect_runtime.async_picker = true`).
 	    `:RunBuild`, `:RunLive`, and `:RunBuild` completion also prefer
 	    configured/cached commands first to avoid blocking on detection.
-	    When the Zig backend is available, picker resolution and refreshes run
+When the Rust backend is available, picker resolution and refreshes run
 	    through the unified backend daemon.
 	    `zig fetch` prompts for URL/path input when selected. You can paste a
 	    plain GitHub repo URL or `owner/repo`, and Zignite expands it to the
@@ -355,25 +355,25 @@ QUICKFIX CONFIGURATION~
 Configure quickfix generation on failed runs: >lua
     quickfix = {
         enabled = true,
-        processor = "auto",         -- auto | lua | zig
+        processor = "auto",         -- auto | lua | rust (zig is a legacy alias)
         zig_min_lines = 300,        -- legacy compatibility threshold
         max_lines = 1000,
         max_bytes = 262144,
         strip_ansi = true,
         strip_ansi_max_lines = 400,
-        parse_diagnostics = true,   -- zig processor canonicalization
-        zig_worker = true,          -- persistent zig worker for lower latency
+        parse_diagnostics = true,   -- native processor canonicalization
+        zig_worker = true,          -- legacy option name for the Rust worker
         async_strip = true,         -- lua processor fallback
         strip_chunk_size = 200,
     }
 <
 
 Quickfix processor behavior:
-  • processor = "auto": prefer Zig quickfix processing when the backend is
+  • processor = "auto": prefer Rust quickfix processing when the backend is
     available, with immediate Lua fallback on backend failure.
-  • processor = "zig": always use Zig quickfix processing (with Lua
+  • processor = "rust": always use Rust quickfix processing (with Lua
     fallback on backend failure).
-  • zig_worker = true: keep a persistent Zig daemon process to reduce
+  • zig_worker = true: keep a persistent Rust daemon process to reduce
     per-run spawn overhead.
 
 DETECTION RUNTIME~
@@ -607,25 +607,19 @@ Check if build commands are configured for your filetype: >
     :lua print(vim.inspect(require("zignite.config").options.build_commands))
 <
 
-ZIG BACKEND NOT FOUND~
-Build the Zig backend: >
-    cd /path/to/zignite.nvim/zig
-    zig build
+RUST BACKEND NOT FOUND~
+Build the Rust backend: >
+    cd /path/to/zignite.nvim
+    cargo build --manifest-path rust/Cargo.toml --release
 <
 
-Run the backend benchmark: >
-    cd /path/to/zignite.nvim/zig
-    zig build bench
-    zig build bench-fast
-    zig build bench -- 10000
-<
-The default bench run uses 3000 iterations. `bench-fast` uses 1000.
+Zig is only required when running Zig files or Zig projects.
 
 QUICKFIX LATENCY IS HIGH~
 Tune quickfix limits to reduce processing cost: >
     quickfix = {
       processor = "auto",
-      zig_worker = true,
+      zig_worker = true, -- legacy option name for the Rust worker
       max_lines = 800,
       max_bytes = 196608,
       strip_ansi_max_lines = 300,

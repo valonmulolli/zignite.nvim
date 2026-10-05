@@ -5,13 +5,13 @@
 --
 -- Important architecture rule:
 --   Lua owns Neovim setup, keymaps, UI, and user overrides.
---   Zig owns builtin runners, build-system detection, and command resolution.
+--   Rust owns builtin runners, build-system detection, and command resolution.
 --
 -- Keep `runners` and `build_commands` empty unless you intentionally want to
--- override or extend the Zig backend defaults.
+-- override or extend the Rust backend defaults.
 --
 -- Plugin manager build step:
---   build = "cd zig && zig build -Doptimize=ReleaseFast"
+--   build = "cargo build --manifest-path rust/Cargo.toml --release"
 -- ============================================================================
 
 require("zignite").setup({
@@ -38,7 +38,7 @@ require("zignite").setup({
   -- ==========================================================================
   -- BACKEND OVERRIDES
   -- ==========================================================================
-  -- Builtin single-file runners live in Zig. Leave this empty for the default
+  -- Builtin single-file runners live in Rust. Leave this empty for the default
   -- behavior for Zig, Go, Rust, C/C++, Python, JavaScript, TypeScript, etc.
   runners = {
     -- Example override:
@@ -54,7 +54,7 @@ require("zignite").setup({
     -- },
   },
 
-  -- Builtin project/build commands live in Zig. Leave this empty so the backend
+  -- Builtin project/build commands live in Rust. Leave this empty so the backend
   -- can pick the real project system: zig build, go modules/workspaces, Cargo,
   -- package.json scripts, Make, CMake, Meson, Bazel, Maven, Gradle, and more.
   build_commands = {
@@ -93,7 +93,7 @@ require("zignite").setup({
   -- ==========================================================================
   quickfix = {
     enabled = true,
-    processor = "auto", -- "auto", "lua", or "zig"; auto prefers Zig.
+  processor = "auto", -- "auto", "lua", or "rust"; "zig" remains a compatibility alias.
     zig_min_lines = 300,
     max_lines = 1000,
     max_bytes = 262144,
