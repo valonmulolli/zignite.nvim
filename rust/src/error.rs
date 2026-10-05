@@ -10,6 +10,7 @@ pub enum BackendError {
     Project(crate::project::ProjectError),
     Protocol(ProtocolError),
     Config(crate::config::ConfigError),
+    Build(crate::build::BuildError),
     Cli(CliError),
     UnsupportedMode(String),
 }
@@ -23,6 +24,7 @@ impl fmt::Display for BackendError {
             Self::Project(error) => write!(formatter, "project error: {error}"),
             Self::Protocol(error) => write!(formatter, "protocol error: {error}"),
             Self::Config(error) => write!(formatter, "config error: {error}"),
+            Self::Build(error) => write!(formatter, "build error: {error}"),
             Self::Cli(error) => write!(formatter, "{error}"),
             Self::UnsupportedMode(mode) => write!(formatter, "unsupported mode: {mode}"),
         }

@@ -1,6 +1,10 @@
 use std::io::BufRead;
 use std::io::Write;
 
+use crate::build::{
+    handle_action_frame, handle_resolve_frame, BuildState, BUILD_ACTION_REQ_BEGIN,
+    BUILD_RESOLVE_REQ_BEGIN,
+};
 use crate::config::{handle_config_frame, ConfigState, CONFIG_REQ_BEGIN};
 use crate::detect::{handle_frame as handle_detect_frame, DETECT_REQ_BEGIN};
 use crate::error::BackendError;
@@ -21,6 +25,7 @@ pub const HEALTH_RES_END: &str = "@@ZHLT_RES_END";
 pub struct DaemonState {
     pub config_revision: Option<u64>,
     pub config: ConfigState,
+    pub build: BuildState,
 }
 
 pub fn run_daemon<R: BufRead, W: Write>(
@@ -48,6 +53,14 @@ pub fn run_daemon<R: BufRead, W: Write>(
         }
         if has_marker_prefix(&line, PROJECT_REQ_BEGIN) {
             handle_project_frame(reader, writer, &line)?;
+            continue;
+        }
+        if has_marker_prefix(&line, BUILD_RESOLVE_REQ_BEGIN) {
+            handle_resolve_frame(reader, writer, &line, &state.config, &mut state.build)?;
+            continue;
+        }
+        if has_marker_prefix(&line, BUILD_ACTION_REQ_BEGIN) {
+            handle_action_frame(reader, writer, &line, &state.config, &mut state.build)?;
             continue;
         }
         if let Some(id) = parse_request_id(&line, HEALTH_REQ_BEGIN) {
