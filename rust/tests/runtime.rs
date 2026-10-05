@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Cursor;
 
 use zignite::config::{apply_config_sync, ConfigState};
+use zignite::paths::quote_shell_arg;
 use zignite::runtime::materialize::materialize_runner;
 use zignite::runtime::types::{ResolvedRunner, RunnerSource};
 use zignite::runtime::{handle_run_frame, resolve_runner, zig_classifier};
@@ -22,7 +23,7 @@ fn configured_runner_wins_and_materializes_file_variables() {
     assert_eq!(resolved.source, RunnerSource::Config);
     assert_eq!(
         resolved.command.as_deref(),
-        Some("python3 -u '/tmp/example dir/main.py'")
+        Some(format!("python3 -u {}", quote_shell_arg("/tmp/example dir/main.py")).as_str())
     );
     assert_eq!(
         resolved.argv,
@@ -47,7 +48,15 @@ fn materialization_does_not_confuse_dir_name_with_dir() {
 
     assert_eq!(
         runner.command.as_deref(),
-        Some("python3 '/tmp/example dir'/'main.py' 'example dir'")
+        Some(
+            format!(
+                "python3 {}/{} {}",
+                quote_shell_arg("/tmp/example dir"),
+                quote_shell_arg("main.py"),
+                quote_shell_arg("example dir")
+            )
+            .as_str()
+        )
     );
 }
 
@@ -66,7 +75,14 @@ fn object_runner_command_array_remains_a_shell_sequence() {
 
     assert_eq!(
         resolved.command.as_deref(),
-        Some("javac '/tmp/Main.java' && java 'Main'")
+        Some(
+            format!(
+                "javac {} && java {}",
+                quote_shell_arg("/tmp/Main.java"),
+                quote_shell_arg("Main")
+            )
+            .as_str()
+        )
     );
     assert_eq!(
         resolved.argv,
@@ -87,9 +103,10 @@ fn builtin_runner_is_used_when_config_has_no_runner() {
         .expect("builtin runner resolves");
 
     assert_eq!(resolved.source, RunnerSource::Builtin);
+    let python = if cfg!(windows) { "python" } else { "python3" };
     assert_eq!(
         resolved.command.as_deref(),
-        Some("python3 -u '/tmp/main.py'")
+        Some(format!("{python} -u {}", quote_shell_arg("/tmp/main.py")).as_str())
     );
 }
 
@@ -217,7 +234,11 @@ fn run_frame_returns_json_and_legacy_runner_records() {
         .as_array()
         .expect("system argv is an array");
     assert_eq!(system_argv.len(), 2);
-    assert_eq!(system_argv[1], "python3 -u '/tmp/main.py'");
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    assert_eq!(
+        system_argv[1],
+        format!("{python} -u {}", quote_shell_arg("/tmp/main.py"))
+    );
 }
 
 #[test]
