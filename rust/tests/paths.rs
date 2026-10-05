@@ -38,8 +38,10 @@ fn filetype_policy_applies_aliases_and_manifest_names() {
 
 #[test]
 fn shell_quoting_does_not_allow_spaces_to_split_a_path() {
-    assert_eq!(
-        quote_shell_arg("/tmp/example dir/main.go"),
+    let expected = if cfg!(windows) {
+        "\"/tmp/example dir/main.go\""
+    } else {
         "'/tmp/example dir/main.go'"
-    );
+    };
+    assert_eq!(quote_shell_arg("/tmp/example dir/main.go"), expected);
 }
