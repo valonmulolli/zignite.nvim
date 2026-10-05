@@ -25,13 +25,7 @@ pub fn alias(value: &str) -> &str {
 }
 
 pub fn detect_key(filetype: &str) -> &str {
-    match alias(filetype) {
-        "rust" => "rust",
-        "zig" => "zig",
-        "go" => "go",
-        "odin" => "odin",
-        value => value,
-    }
+    alias(filetype)
 }
 
 fn filename_filetype(path: &str) -> Option<&'static str> {
