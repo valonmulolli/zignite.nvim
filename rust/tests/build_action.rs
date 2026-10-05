@@ -40,7 +40,11 @@ fn named_action_materializes_command_and_records_last_command() {
     .expect("resolve named action");
     assert!(plan.ok);
     assert_eq!(plan.resolved_command_name.as_deref(), Some("metadata"));
-    assert_eq!(plan.cwd.as_deref(), Some(root.to_str().expect("utf8 root")));
+    let canonical_root = fs::canonicalize(&root).expect("canonical root");
+    assert_eq!(
+        plan.cwd.as_deref(),
+        Some(canonical_root.to_str().expect("utf8 root"))
+    );
     assert_eq!(
         plan.exec_argv,
         vec![
