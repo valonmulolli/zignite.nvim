@@ -6,4 +6,5 @@ pub mod filetype;
 pub mod paths;
 pub mod process;
 pub mod protocol;
+pub mod quickfix;
 pub mod runtime;

@@ -8,6 +8,7 @@ use zignite::config::{apply_config_sync, ConfigState};
 use zignite::daemon::{run_daemon, DaemonState};
 use zignite::error::BackendError;
 use zignite::process::{run_backend_command, shell_command, CommandSpec, TimeoutPolicy};
+use zignite::quickfix::{process_quickfix, read_bounded, write_processed};
 use zignite::runtime::{resolve_runner, serialize_runner};
 
 fn main() -> ExitCode {
@@ -32,6 +33,8 @@ fn run() -> Result<ExitCode, BackendError> {
             Ok(ExitCode::SUCCESS)
         }
         Mode::ConfigSync => run_config_sync_mode(&cli.options),
+        Mode::Quickfix => run_quickfix_mode(&cli.options),
+        Mode::QuickfixDaemon => run_quickfix_daemon_mode(),
         Mode::Command => run_command_mode(&cli.argv, &cli.options),
         Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
         Mode::RunResolve => run_run_resolve_mode(&cli.options),
@@ -55,6 +58,28 @@ fn run_config_sync_mode(options: &[String]) -> Result<ExitCode, BackendError> {
         println!("WARN\t{warning}");
     }
     println!("REVISION\t{revision}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_quickfix_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let options = zignite::quickfix::parse_options(options)
+        .map_err(zignite::error::CliError::InvalidValue)?;
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let input = read_bounded(&mut reader).map_err(zignite::error::CliError::InvalidValue)?;
+    let result = process_quickfix(&input, options, false);
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    write_processed(&mut writer, &result)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_quickfix_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::quickfix::run_daemon(&mut reader, &mut writer)?;
     Ok(ExitCode::SUCCESS)
 }
 
