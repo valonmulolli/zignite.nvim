@@ -38,6 +38,8 @@ fn run() -> Result<ExitCode, BackendError> {
         Mode::QuickfixDaemon => run_quickfix_daemon_mode(),
         Mode::Detect => run_detect_mode(&cli.options),
         Mode::DetectDaemon => run_detect_daemon_mode(),
+        Mode::ProjectParse => run_project_parse_mode(&cli.options),
+        Mode::ProjectParseDaemon => run_project_parse_daemon_mode(),
         Mode::Command => run_command_mode(&cli.argv, &cli.options),
         Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
         Mode::RunResolve => run_run_resolve_mode(&cli.options),
@@ -110,6 +112,22 @@ fn run_detect_daemon_mode() -> Result<ExitCode, BackendError> {
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
     zignite::detect::run_daemon(&mut reader, &mut writer)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_project_parse_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    zignite::project::run_mode(&mut writer, options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_project_parse_daemon_mode() -> Result<ExitCode, BackendError> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = BufWriter::new(stdout.lock());
+    zignite::project::run_daemon(&mut reader, &mut writer)?;
     Ok(ExitCode::SUCCESS)
 }
 

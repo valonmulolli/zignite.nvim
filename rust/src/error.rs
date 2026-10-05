@@ -7,6 +7,7 @@ pub enum BackendError {
     Io(std::io::Error),
     Process(crate::process::ProcessError),
     Detection(crate::detect::DetectionError),
+    Project(crate::project::ProjectError),
     Protocol(ProtocolError),
     Config(crate::config::ConfigError),
     Cli(CliError),
@@ -19,6 +20,7 @@ impl fmt::Display for BackendError {
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
             Self::Process(error) => write!(formatter, "process error: {error}"),
             Self::Detection(error) => write!(formatter, "detection error: {error}"),
+            Self::Project(error) => write!(formatter, "project error: {error}"),
             Self::Protocol(error) => write!(formatter, "protocol error: {error}"),
             Self::Config(error) => write!(formatter, "config error: {error}"),
             Self::Cli(error) => write!(formatter, "{error}"),
@@ -50,6 +52,12 @@ impl From<crate::process::ProcessError> for BackendError {
 impl From<crate::detect::DetectionError> for BackendError {
     fn from(error: crate::detect::DetectionError) -> Self {
         Self::Detection(error)
+    }
+}
+
+impl From<crate::project::ProjectError> for BackendError {
+    fn from(error: crate::project::ProjectError) -> Self {
+        Self::Project(error)
     }
 }
 
