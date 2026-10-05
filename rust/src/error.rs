@@ -5,6 +5,7 @@ use crate::protocol::ProtocolError;
 #[derive(Debug)]
 pub enum BackendError {
     Io(std::io::Error),
+    Process(crate::process::ProcessError),
     Protocol(ProtocolError),
     Cli(CliError),
     UnsupportedMode(String),
@@ -14,6 +15,7 @@ impl fmt::Display for BackendError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
+            Self::Process(error) => write!(formatter, "process error: {error}"),
             Self::Protocol(error) => write!(formatter, "protocol error: {error}"),
             Self::Cli(error) => write!(formatter, "{error}"),
             Self::UnsupportedMode(mode) => write!(formatter, "unsupported mode: {mode}"),
@@ -32,6 +34,12 @@ impl From<std::io::Error> for BackendError {
 impl From<ProtocolError> for BackendError {
     fn from(error: ProtocolError) -> Self {
         Self::Protocol(error)
+    }
+}
+
+impl From<crate::process::ProcessError> for BackendError {
+    fn from(error: crate::process::ProcessError) -> Self {
+        Self::Process(error)
     }
 }
 
