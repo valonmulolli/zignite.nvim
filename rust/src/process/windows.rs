@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
@@ -20,12 +20,12 @@ impl ProcessTree {
         if job.is_null() {
             return Err(io::Error::last_os_error());
         }
-        let mut limits: JOBOBJECT_BASIC_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        limits.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if unsafe {
             SetInformationJobObject(
                 job,
-                JobObjectBasicLimitInformation,
+                JobObjectExtendedLimitInformation,
                 &limits as *const _ as *const _,
                 std::mem::size_of_val(&limits) as u32,
             )
