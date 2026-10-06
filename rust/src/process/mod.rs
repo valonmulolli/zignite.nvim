@@ -305,7 +305,7 @@ fn wait_for_child(
         if watch_signals && terminal_stop_requested() {
             // Neovim escalates jobstop() to SIGKILL after a short grace period.
             // Finish the child tree cleanup before that can kill this supervisor.
-            tree.terminate(child, Duration::ZERO)
+            tree.terminate(child, Duration::from_millis(25))
                 .map_err(|error| ProcessError::Io(error.to_string()))?;
             let status = child
                 .wait()

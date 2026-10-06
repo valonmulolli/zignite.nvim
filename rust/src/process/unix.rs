@@ -59,7 +59,10 @@ fn signal_group(process_group: libc::pid_t, signal: libc::c_int) -> io::Result<b
     if error.raw_os_error() == Some(libc::ESRCH) {
         Ok(false)
     } else {
-        Err(error)
+        Err(io::Error::new(
+            error.kind(),
+            format!("signal {signal} to process group {process_group}: {error}"),
+        ))
     }
 }
 
