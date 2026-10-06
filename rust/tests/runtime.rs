@@ -192,6 +192,44 @@ fn zig_project_manifest_selects_project_run_command() {
 }
 
 #[test]
+fn configured_project_override_wins_for_matching_paths() {
+    let root = std::env::temp_dir().join(format!("zignite-runtime-project-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create project root");
+    let source = root.join("main.py");
+    fs::write(&source, "print('ok')\n").expect("write source");
+    let pattern = format!("{}.*", root.display());
+    let json = serde_json::json!({
+        "project": {
+            pattern: {
+                "name": "Custom Project",
+                "command": "python3 custom.py"
+            }
+        }
+    })
+    .to_string();
+    let mut config = ConfigState::default();
+    apply_config_sync(&mut config, 1, &json).expect("sync project override");
+
+    let resolved = resolve_runner(
+        &config,
+        &source.to_string_lossy(),
+        "python",
+        None,
+        Some(&source.to_string_lossy()),
+    )
+    .expect("resolve project runner");
+    assert_eq!(resolved.source, RunnerSource::Project);
+    assert_eq!(resolved.name.as_deref(), Some("Custom Project"));
+    assert_eq!(resolved.command.as_deref(), Some("python3 custom.py"));
+    assert_eq!(
+        resolved.cwd.as_deref(),
+        Some(root.to_string_lossy().as_ref())
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn zig_classifier_ignores_fake_declarations_in_comments_and_strings() {
     let source = r#"
         // fn main() void {}

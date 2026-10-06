@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use zignite::config::{
@@ -135,4 +136,56 @@ fn invalid_project_shape_returns_warnings() {
     assert!(warnings
         .iter()
         .any(|warning| warning.contains("project./tmp/good.name")));
+}
+
+#[test]
+fn project_override_matches_root_and_descendants_but_not_siblings() {
+    let root = std::env::temp_dir().join(format!("zignite-project-{}", std::process::id()));
+    let pattern = format!("{}.*", root.display());
+    let json = serde_json::json!({
+        "project": {
+            pattern: {"name": "Local", "command": "cargo run"}
+        }
+    })
+    .to_string();
+    let mut state = ConfigState::default();
+    apply_config_sync(&mut state, 1, &json).expect("project override config applies");
+
+    let project = state
+        .project_override(&root.join("src/main.rs"))
+        .expect("descendant path matches");
+    assert_eq!(project.name.as_deref(), Some("Local"));
+    assert_eq!(project.command, "cargo run");
+    assert_eq!(
+        project.cwd.as_deref(),
+        Some(root.to_string_lossy().as_ref())
+    );
+    assert!(state
+        .project_override(Path::new(&format!("{}-other/main.rs", root.display())))
+        .is_none());
+}
+
+#[test]
+fn exact_project_override_does_not_match_nested_paths() {
+    let root = std::env::temp_dir().join(format!("zignite-exact-project-{}", std::process::id()));
+    let json = serde_json::json!({
+        "project": {
+            root.to_string_lossy().to_string(): {"command": "cargo run"}
+        }
+    })
+    .to_string();
+    let mut state = ConfigState::default();
+    apply_config_sync(&mut state, 1, &json).expect("project override config applies");
+
+    assert!(state.project_override(&root).is_some());
+    assert!(state.project_override(&root.join("nested")).is_none());
+}
+
+#[test]
+fn filesystem_root_project_pattern_matches_descendants() {
+    let mut state = ConfigState::default();
+    apply_config_sync(&mut state, 1, r#"{"project":{"/.*":{"command":"make"}}}"#)
+        .expect("root project override config applies");
+
+    assert!(state.project_override(Path::new("/tmp/main.c")).is_some());
 }

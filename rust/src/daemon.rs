@@ -6,7 +6,7 @@ use crate::build::{
     BUILD_RESOLVE_REQ_BEGIN,
 };
 use crate::config::{handle_config_frame, ConfigState, CONFIG_REQ_BEGIN};
-use crate::detect::{handle_frame as handle_detect_frame, DETECT_REQ_BEGIN};
+use crate::detect::{detect_tool, handle_frame_with as handle_detect_frame_with, DETECT_REQ_BEGIN};
 use crate::error::BackendError;
 use crate::project::{handle_frame as handle_project_frame, PROJECT_REQ_BEGIN};
 use crate::protocol::{
@@ -48,7 +48,16 @@ pub fn run_daemon<R: BufRead, W: Write>(
             continue;
         }
         if has_marker_prefix(&line, DETECT_REQ_BEGIN) {
-            handle_detect_frame(reader, writer, &line)?;
+            handle_detect_frame_with(reader, writer, &line, |tool| {
+                if tool
+                    .config_key()
+                    .is_some_and(|key| state.config.detect_enabled(key) == Some(false))
+                {
+                    Ok(Vec::new())
+                } else {
+                    detect_tool(tool)
+                }
+            })?;
             continue;
         }
         if has_marker_prefix(&line, PROJECT_REQ_BEGIN) {

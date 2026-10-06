@@ -60,6 +60,9 @@ fn resolve_build_internal(
 
     add_builtins(&mut resolved.commands, &filetype);
     for (index, kind) in project_kinds(&filetype).iter().enumerate() {
+        if !project_detection_enabled(config, &filetype, *kind) {
+            continue;
+        }
         let Some(found_root) =
             find_project_root(project_root.map(Path::new).unwrap_or(path), *kind)
                 .ok()
@@ -76,6 +79,9 @@ fn resolve_build_internal(
             resolved.system = Some(project.kind.name().to_owned());
             resolved.build_ready =
                 add_project_defaults(&mut resolved.commands, *kind, &found_root.root);
+        }
+        if *kind == ProjectKind::Zig {
+            add_zig_project_defaults(&mut resolved.commands, &project.commands);
         }
         for command in project.commands {
             let name = command.name;
@@ -179,17 +185,23 @@ fn project_kinds(filetype: &str) -> &'static [ProjectKind] {
     }
 }
 
+fn project_detection_enabled(config: &ConfigState, filetype: &str, kind: ProjectKind) -> bool {
+    let key = match kind {
+        ProjectKind::Zig => "zig",
+        ProjectKind::Go => "go",
+        ProjectKind::Cargo => "rust",
+        ProjectKind::Bazel => "bazel_project",
+        ProjectKind::PackageJson => "js_package_scripts",
+        ProjectKind::Maven | ProjectKind::Gradle => "java_kotlin_project",
+        ProjectKind::Make if matches!(filetype, "c" | "cpp") => "c_cpp_make",
+        _ => return true,
+    };
+    config.detect_enabled(key) != Some(false)
+}
+
 fn add_builtins(commands: &mut Vec<CommandEntry>, filetype: &str) {
     let entries: &[(&str, &str)] = match filetype {
-        "zig" => &[
-            ("build", "zig build"),
-            ("run", "zig build run"),
-            ("test", "zig build test"),
-            ("check", "zig build check"),
-            ("release", "zig build -Doptimize=ReleaseFast"),
-            ("release-run", "zig build run -Doptimize=ReleaseFast"),
-            ("fetch", "zig fetch $zignite_args"),
-        ],
+        "zig" => &[("fetch", "zig fetch $zignite_args")],
         "rust" => &[
             ("build", "cargo build"),
             ("run", "cargo run"),
@@ -232,6 +244,32 @@ fn add_builtins(commands: &mut Vec<CommandEntry>, filetype: &str) {
         upsert(
             commands,
             CommandEntry::new(*name, *command, BuildSource::Builtin).with_filetype(filetype),
+        );
+    }
+}
+
+fn add_zig_project_defaults(
+    commands: &mut Vec<CommandEntry>,
+    project_commands: &[crate::project::ProjectCommand],
+) {
+    for (name, command) in [
+        ("build", "zig build"),
+        ("release", "zig build -Doptimize=ReleaseFast"),
+    ] {
+        upsert(
+            commands,
+            CommandEntry::new(name, command, BuildSource::Builtin).with_filetype("zig"),
+        );
+    }
+    if project_commands.iter().any(|command| command.name == "run") {
+        upsert(
+            commands,
+            CommandEntry::new(
+                "release-run",
+                "zig build run -Doptimize=ReleaseFast",
+                BuildSource::Builtin,
+            )
+            .with_filetype("zig"),
         );
     }
 }
@@ -387,4 +425,34 @@ fn insert_if_absent(commands: &mut Vec<CommandEntry>, entry: CommandEntry) {
 
 pub(crate) fn safe_payload(value: &str) -> bool {
     !value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_zig_project_defaults;
+    use crate::build::types::{BuildSource, CommandEntry};
+    use crate::project::ProjectCommand;
+
+    #[test]
+    fn zig_defaults_only_offer_release_run_when_a_run_step_exists() {
+        let mut commands = Vec::<CommandEntry>::new();
+        add_zig_project_defaults(&mut commands, &[]);
+        assert!(commands.iter().any(|command| command.name == "build"));
+        assert!(commands.iter().any(|command| command.name == "release"));
+        assert!(!commands.iter().any(|command| command.name == "release-run"));
+
+        add_zig_project_defaults(
+            &mut commands,
+            &[ProjectCommand {
+                name: "run".to_owned(),
+                command: "zig build run".to_owned(),
+            }],
+        );
+        let release_run = commands
+            .iter()
+            .find(|command| command.name == "release-run")
+            .expect("run step enables release-run");
+        assert_eq!(release_run.command, "zig build run -Doptimize=ReleaseFast");
+        assert_eq!(release_run.source, BuildSource::Builtin);
+    }
 }

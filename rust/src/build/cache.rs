@@ -11,11 +11,7 @@ impl CommandCache {
         if let Some(available) = self.tools.get(&key) {
             return *available;
         }
-        let available = std::process::Command::new(tool)
-            .current_dir(cwd)
-            .arg("--version")
-            .output()
-            .is_ok();
+        let available = crate::tool::executable_available(tool, Some(std::path::Path::new(cwd)));
         self.tools.insert(key, available);
         available
     }

@@ -2,7 +2,9 @@ use std::path::Path;
 
 use crate::config::ConfigState;
 use crate::paths::{dirname, quote_shell_arg};
-use crate::runtime::materialize::{substitute_variables_shell, tokenize_command};
+use crate::runtime::materialize::{
+    first_external_program, substitute_variables_shell, tokenize_command,
+};
 
 use super::resolve::resolve_build;
 use super::types::{ActionKind, ActionPlan, BuildState};
@@ -84,8 +86,8 @@ pub fn resolve_action(
         .root
         .clone()
         .unwrap_or_else(|| dirname(&path.to_string_lossy()).to_owned());
-    let tool = exec_argv.first().cloned();
-    if let Some(tool) = tool.as_deref().filter(|tool| !is_shell_builtin(tool)) {
+    let tool = first_external_program(&exec_command);
+    if let Some(tool) = tool.as_deref() {
         if !state.tool_available(tool, &cwd) {
             return Ok(ActionPlan {
                 ok: false,
@@ -201,10 +203,6 @@ fn system_argv(command: &str, argv: &[String], config: &ConfigState) -> Vec<Stri
         wrapped.extend(argv.iter().cloned());
     }
     wrapped
-}
-
-fn is_shell_builtin(tool: &str) -> bool {
-    matches!(tool, "cd" | "export" | "set" | "env")
 }
 
 fn failure(filetype: &str, revision: u64, reason: &str, message: String) -> ActionPlan {

@@ -78,6 +78,100 @@ pub fn tokenize_command(command: &str) -> Result<Vec<String>, String> {
     Ok(tokens)
 }
 
+pub(crate) fn first_external_program(command: &str) -> Option<String> {
+    let tokens = tokenize_command(command).ok()?;
+    let mut at_segment_start = true;
+    for token in tokens {
+        if matches!(token.as_str(), "&&" | "||" | ";" | "|" | "&") {
+            at_segment_start = true;
+            continue;
+        }
+        if !at_segment_start {
+            continue;
+        }
+        at_segment_start = false;
+        if is_shell_builtin(&token) {
+            continue;
+        }
+        return Some(token);
+    }
+    None
+}
+
+fn is_shell_builtin(command: &str) -> bool {
+    #[cfg(windows)]
+    {
+        return matches!(
+            command,
+            "call"
+                | "cd"
+                | "chcp"
+                | "cls"
+                | "color"
+                | "copy"
+                | "del"
+                | "dir"
+                | "echo"
+                | "endlocal"
+                | "erase"
+                | "exit"
+                | "for"
+                | "goto"
+                | "if"
+                | "md"
+                | "mkdir"
+                | "move"
+                | "path"
+                | "pause"
+                | "prompt"
+                | "rd"
+                | "ren"
+                | "rmdir"
+                | "set"
+                | "setlocal"
+                | "shift"
+                | "start"
+                | "title"
+                | "type"
+                | "ver"
+                | "vol"
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        matches!(
+            command,
+            "." | "["
+                | ":"
+                | "alias"
+                | "cd"
+                | "declare"
+                | "echo"
+                | "eval"
+                | "exec"
+                | "exit"
+                | "export"
+                | "false"
+                | "local"
+                | "printf"
+                | "pwd"
+                | "read"
+                | "return"
+                | "set"
+                | "shift"
+                | "source"
+                | "test"
+                | "true"
+                | "type"
+                | "ulimit"
+                | "umask"
+                | "unalias"
+                | "unset"
+                | "wait"
+        )
+    }
+}
+
 fn substitute(value: &str, path: &str, shell: bool, cwd_hint: Option<&str>) -> String {
     let dir = dirname(path);
     let root = cwd_hint.unwrap_or(dir);
@@ -215,4 +309,22 @@ fn append_shell_value(output: &mut String, value: &str, quote: Option<char>) {
 fn is_reserved_argv_command(command: &str) -> bool {
     let trimmed = command.trim_start();
     trimmed == "--argv" || trimmed.starts_with("--argv ") || trimmed.starts_with("--argv\t")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_external_program;
+
+    #[test]
+    fn executable_lookup_skips_shell_builtins_and_checks_later_commands() {
+        assert_eq!(
+            first_external_program("cd /tmp && echo ready && cargo test"),
+            Some("cargo".to_owned())
+        );
+        assert_eq!(first_external_program("echo ready"), None);
+        assert_eq!(
+            first_external_program("cargo test"),
+            Some("cargo".to_owned())
+        );
+    }
 }

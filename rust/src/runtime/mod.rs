@@ -4,7 +4,7 @@ pub mod types;
 pub mod zig_classifier;
 
 use std::io::{BufRead, Write};
-use std::process::Command;
+use std::path::Path;
 
 use crate::config::{ConfigState, RunnerConfig};
 use crate::filetype::filetype_from_path;
@@ -12,6 +12,7 @@ use crate::paths::{basename, dirname, extension, normalize_path};
 use crate::protocol::{
     parse_request_id, read_line_limited, write_response, ResponseFrame, DEFAULT_MAX_LINE,
 };
+use crate::tool::executable_available;
 use types::{ResolvedRunner, RunnerSource};
 
 pub const RUN_REQ_BEGIN: &str = "@@ZRUN_REQ_BEGIN";
@@ -38,7 +39,7 @@ pub fn resolve_runner(
 
     let mut resolved = if let Some(configured) = config.runner_config(&filetype) {
         from_config(configured, &filetype)
-    } else if let Some(project) = project_runner(context_path, &filetype) {
+    } else if let Some(project) = project_runner(config, context_path, &filetype) {
         project
     } else {
         builtin::runner(&filetype)
@@ -291,11 +292,28 @@ fn from_config(config: RunnerConfig, filetype: &str) -> ResolvedRunner {
     }
 }
 
-fn project_runner(context_path: Option<&str>, filetype: &str) -> Option<ResolvedRunner> {
+fn project_runner(
+    config: &ConfigState,
+    context_path: Option<&str>,
+    filetype: &str,
+) -> Option<ResolvedRunner> {
     let context = context_path?;
     let mut directory = std::path::Path::new(context);
     if !directory.is_dir() {
         directory = directory.parent()?;
+    }
+    if let Some(project) = config.project_override(directory) {
+        return Some(ResolvedRunner {
+            source: RunnerSource::Project,
+            filetype: filetype.to_owned(),
+            command: Some(project.command),
+            cleanup_command: project.cleanup_command,
+            cwd: project.cwd,
+            name: project
+                .name
+                .or_else(|| Some(format!("{} Project", capitalize(filetype)))),
+            ..ResolvedRunner::default()
+        });
     }
     for root in directory.ancestors() {
         let (manifest, command) = match filetype {
@@ -318,19 +336,17 @@ fn project_runner(context_path: Option<&str>, filetype: &str) -> Option<Resolved
 }
 
 fn missing_tool(runner: &ResolvedRunner) -> Option<String> {
-    let first = runner.argv.first().map(String::as_str).or_else(|| {
-        runner
-            .command
-            .as_deref()
-            .and_then(|command| command.split_whitespace().next())
-    })?;
-    if first.is_empty() || ["cd", "export", "set"].contains(&first) {
+    let first = match runner.command.as_deref() {
+        Some(command) => materialize::first_external_program(command),
+        None => runner.argv.first().cloned(),
+    }?;
+    if first.is_empty() || ["cd", "export", "set"].contains(&first.as_str()) {
         return None;
     }
-    if Command::new(first).arg("--version").output().is_err() {
-        Some(first.to_owned())
-    } else {
+    if executable_available(&first, runner.cwd.as_deref().map(Path::new)) {
         None
+    } else {
+        Some(first)
     }
 }
 

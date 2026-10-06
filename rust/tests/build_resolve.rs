@@ -56,20 +56,41 @@ fn resolve_build_merges_config_project_and_builtin_commands() {
 }
 
 #[test]
-fn resolve_build_emits_zig_builtins_without_a_build_file() {
+fn resolve_build_does_not_invent_zig_build_steps_without_a_build_file() {
     let root = project_root("builtin");
     let path = root.join("main.zig");
     fs::write(&path, "pub fn main() void {}\n").expect("write source");
 
     let output = resolve_build(&ConfigState::default(), &path, "zig", None)
         .expect("resolve builtin commands");
-    assert!(output.command("build").is_some());
+    assert!(output.command("build").is_none());
+    assert!(output.command("run").is_none());
+    assert!(output.command("test").is_none());
+    assert!(output.command("check").is_none());
     assert_eq!(
-        output.command("run").expect("run command").command,
-        "zig build run"
+        output.command("fetch").expect("fetch command").command,
+        "zig fetch $zignite_args"
     );
-    assert!(output.preferred_names.iter().any(|name| name == "run"));
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn build_detection_toggle_disables_matching_project_system() {
+    let root = project_root("disabled-go-detection");
+    let path = root.join("main.go");
+    fs::write(&path, "package main\n").expect("write source");
+    fs::write(root.join("go.mod"), "module example.com/demo\n").expect("write module");
+
+    let mut config = ConfigState::default();
+    apply_config_sync(&mut config, 1, r#"{"detect":{"go":false}}"#).expect("sync config");
+
+    let output = resolve_build(&config, &path, "go", None).expect("resolve Go commands");
+    assert_ne!(output.system.as_deref(), Some("go"));
+    assert!(output
+        .commands
+        .iter()
+        .all(|command| command.source != BuildSource::Project));
     let _ = fs::remove_dir_all(root);
 }
 

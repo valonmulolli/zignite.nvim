@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io::{BufRead, Write};
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -61,6 +62,14 @@ pub struct BuildCommand {
     pub command: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectConfig {
+    pub name: Option<String>,
+    pub command: String,
+    pub cleanup_command: Option<String>,
+    pub cwd: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct ConfigState {
     revision: u64,
@@ -111,8 +120,98 @@ impl ConfigState {
             .collect()
     }
 
+    pub fn project_override(&self, path: &Path) -> Option<ProjectConfig> {
+        let projects = self.root()?.get("project")?.as_object()?;
+        let path = path.to_string_lossy();
+
+        projects
+            .iter()
+            .filter_map(|(pattern, value)| {
+                let root = matched_project_root(pattern, &path)?;
+                let object = value.as_object()?;
+                let command = object.get("command")?.as_str()?;
+                if command.is_empty() || invalid_payload(command) {
+                    return None;
+                }
+                let name = object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty() && !invalid_payload(name))
+                    .map(str::to_owned);
+                let cleanup_command = object
+                    .get("cleanup_command")
+                    .and_then(Value::as_str)
+                    .filter(|command| !invalid_payload(command))
+                    .map(str::to_owned);
+                let cwd = object
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .filter(|cwd| !cwd.is_empty() && !invalid_payload(cwd))
+                    .map(str::to_owned)
+                    .or_else(|| (!root.is_empty()).then_some(root.clone()));
+                Some((
+                    root.len(),
+                    ProjectConfig {
+                        name,
+                        command: command.to_owned(),
+                        cleanup_command,
+                        cwd,
+                    },
+                ))
+            })
+            .max_by_key(|(specificity, _)| *specificity)
+            .map(|(_, project)| project)
+    }
+
     fn root(&self) -> Option<&Map<String, Value>> {
         self.value.as_ref()?.as_object()
+    }
+}
+
+fn matched_project_root(pattern: &str, path: &str) -> Option<String> {
+    let pattern = pattern.strip_prefix('^').unwrap_or(pattern);
+    let pattern = pattern.strip_suffix('$').unwrap_or(pattern);
+    let prefix = pattern.strip_suffix(".*");
+    let normalized_path = normalize_project_path(path);
+    let matched = match prefix {
+        Some(prefix) => {
+            let root = trim_project_separator(&normalize_project_path(prefix));
+            normalized_path == root
+                || if root.ends_with('/') {
+                    normalized_path.starts_with(&root)
+                } else {
+                    normalized_path
+                        .strip_prefix(&root)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                }
+        }
+        None => normalized_path == normalize_project_path(pattern),
+    };
+    if !matched {
+        return None;
+    }
+    let root = trim_project_separator(&normalize_project_path(prefix.unwrap_or(pattern)));
+    Some(root)
+}
+
+fn normalize_project_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.replace('\\', "/").to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_owned()
+    }
+}
+
+fn trim_project_separator(path: &str) -> String {
+    let is_root =
+        path == "/" || (path.len() == 3 && path.as_bytes()[1] == b':' && path.ends_with('/'));
+    if is_root {
+        path.to_owned()
+    } else {
+        path.trim_end_matches('/').to_owned()
     }
 }
 

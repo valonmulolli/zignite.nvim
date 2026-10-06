@@ -139,7 +139,15 @@ fn action_checks_relative_tools_from_the_project_directory() {
     {
         use std::os::unix::fs::PermissionsExt;
         let wrapper = root.join("tool");
-        fs::write(&wrapper, "#!/bin/sh\nprintf 'tool 1.0\\n'\n").expect("write tool");
+        let marker = root.join("version-probe-ran");
+        fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --version ] && touch '{}'\nexit 0\n",
+                marker.display()
+            ),
+        )
+        .expect("write tool");
         let mut permissions = fs::metadata(&wrapper).expect("tool metadata").permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&wrapper, permissions).expect("make tool executable");
@@ -164,7 +172,10 @@ fn action_checks_relative_tools_from_the_project_directory() {
     .expect("resolve relative tool");
 
     #[cfg(unix)]
-    assert!(plan.ok);
+    {
+        assert!(plan.ok);
+        assert!(!root.join("version-probe-ran").exists());
+    }
     #[cfg(windows)]
     assert_eq!(plan.reason.as_deref(), Some("missing_tool"));
     let _ = fs::remove_dir_all(root);

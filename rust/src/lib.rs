@@ -11,3 +11,4 @@ pub mod project;
 pub mod protocol;
 pub mod quickfix;
 pub mod runtime;
+pub(crate) mod tool;

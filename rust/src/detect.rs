@@ -87,6 +87,16 @@ pub fn parse_tool(value: &str) -> Result<Tool, DetectionError> {
 }
 
 impl Tool {
+    pub fn config_key(self) -> Option<&'static str> {
+        match self {
+            Self::Zig => Some("zig"),
+            Self::Go => Some("go"),
+            Self::Cargo => Some("rust"),
+            Self::Odin => Some("odin"),
+            Self::Dart | Self::Swift => None,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Zig => "zig",
