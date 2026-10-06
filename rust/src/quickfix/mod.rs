@@ -50,7 +50,7 @@ pub fn process_quickfix(
         if options.strip_max_lines >= final_count {
             start_index
         } else {
-            tail.lines.len() - options.strip_max_lines
+            tail.lines.len().saturating_sub(options.strip_max_lines)
         }
     } else {
         tail.lines.len()

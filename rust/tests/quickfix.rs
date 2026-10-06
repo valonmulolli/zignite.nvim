@@ -99,3 +99,21 @@ fn quickfix_preserves_empty_input_and_invalid_utf8_without_panicking() {
     let invalid = process_quickfix(b"bad \xff\n", QuickfixOptions::default(), false);
     assert_eq!(invalid.lines, vec!["bad �".to_owned()]);
 }
+
+#[test]
+fn quickfix_line_limits_larger_than_input_do_not_underflow() {
+    let result = process_quickfix(
+        b"one\ntwo\n",
+        QuickfixOptions {
+            max_lines: usize::MAX,
+            max_bytes: usize::MAX,
+            strip_ansi: true,
+            strip_max_lines: usize::MAX,
+            parse_diagnostics: false,
+        },
+        false,
+    );
+
+    assert_eq!(result.lines, vec!["one", "two"]);
+    assert!(!result.truncated);
+}
