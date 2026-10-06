@@ -190,8 +190,9 @@ fn matched_project_root(pattern: &str, path: &str) -> Option<String> {
     if !matched {
         return None;
     }
-    let root = trim_project_separator(&normalize_project_path(prefix.unwrap_or(pattern)));
-    Some(root)
+    Some(trim_project_separator_preserving_case(
+        prefix.unwrap_or(pattern),
+    ))
 }
 
 fn normalize_project_path(path: &str) -> String {
@@ -212,6 +213,19 @@ fn trim_project_separator(path: &str) -> String {
         path.to_owned()
     } else {
         path.trim_end_matches('/').to_owned()
+    }
+}
+
+fn trim_project_separator_preserving_case(path: &str) -> String {
+    let is_root = path == "/"
+        || path == "\\"
+        || (path.len() == 3
+            && path.as_bytes()[1] == b':'
+            && matches!(path.as_bytes()[2], b'/' | b'\\'));
+    if is_root {
+        path.to_owned()
+    } else {
+        path.trim_end_matches(['/', '\\']).to_owned()
     }
 }
 
