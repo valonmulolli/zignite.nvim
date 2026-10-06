@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 pub struct ProcessTree {
@@ -17,6 +19,21 @@ impl ProcessTree {
         let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if job.is_null() {
             return Err(io::Error::last_os_error());
+        }
+        let mut limits: JOBOBJECT_BASIC_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectBasicLimitInformation,
+                &limits as *const _ as *const _,
+                std::mem::size_of_val(&limits) as u32,
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            unsafe { CloseHandle(job) };
+            return Err(error);
         }
         let process = child.as_raw_handle() as HANDLE;
         if unsafe { AssignProcessToJobObject(job, process) } == 0 {

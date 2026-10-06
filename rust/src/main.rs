@@ -8,7 +8,7 @@ use zignite::config::{apply_config_sync, ConfigState};
 use zignite::daemon::{run_daemon, DaemonState};
 use zignite::detect::{detect_tool, parse_tool};
 use zignite::error::BackendError;
-use zignite::process::{run_backend_command, shell_command, CommandSpec, TimeoutPolicy};
+use zignite::process::{run_backend_terminal_command, shell_command, CommandSpec, TimeoutPolicy};
 use zignite::quickfix::{process_quickfix, read_bounded, write_processed};
 use zignite::runtime::{resolve_runner, serialize_runner};
 
@@ -186,9 +186,7 @@ fn run_argv_mode(argv: &[String], options: &[String]) -> Result<ExitCode, Backen
         timeout,
         grace: Duration::from_millis(100),
     };
-    let result = run_backend_command(&spec, policy, None, cleanup.as_ref())?;
-    io::stdout().write_all(&result.stdout)?;
-    io::stderr().write_all(&result.stderr)?;
+    let result = run_backend_terminal_command(&spec, policy, cleanup.as_ref())?;
     if result.timed_out {
         eprintln!(
             "[Zignite] Process timed out after {}ms",
@@ -215,9 +213,7 @@ fn run_command_mode(command: &[String], options: &[String]) -> Result<ExitCode, 
         timeout,
         grace: Duration::from_millis(100),
     };
-    let result = run_backend_command(&shell_command(command), policy, None, cleanup.as_ref())?;
-    io::stdout().write_all(&result.stdout)?;
-    io::stderr().write_all(&result.stderr)?;
+    let result = run_backend_terminal_command(&shell_command(command), policy, cleanup.as_ref())?;
     if result.timed_out {
         eprintln!(
             "[Zignite] Process timed out after {}ms",
