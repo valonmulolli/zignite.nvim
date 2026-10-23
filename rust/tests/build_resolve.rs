@@ -1,6 +1,6 @@
 use std::fs;
 
-use zignite::build::{resolve_build, BuildSource};
+use zignite::build::{resolve_action, resolve_build, ActionKind, BuildSource, BuildState};
 use zignite::config::{apply_config_sync, ConfigState};
 
 fn project_root(name: &str) -> std::path::PathBuf {
@@ -166,6 +166,69 @@ fn go_resolution_merges_make_targets_with_go_defaults() {
         "go mod tidy"
     );
     assert!(output.command("fmt").is_some());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn nested_go_commands_keep_the_module_working_directory_when_merged_with_make() {
+    let root = project_root("nested-go-make");
+    let module = root.join("services/api");
+    let source = module.join("cmd/api/main.go");
+    fs::create_dir_all(source.parent().expect("source parent")).expect("create Go package");
+    fs::write(&source, "package main\n").expect("write Go source");
+    fs::write(module.join("go.mod"), "module example.com/api\n").expect("write Go module");
+    fs::write(root.join("Makefile"), "all:\n\t@true\n").expect("write Makefile");
+    assert!(
+        zignite::project::find_project_root(&source, zignite::project::ProjectKind::Go)
+            .expect("search Go root")
+            .is_some(),
+        "nested Go module should be detected"
+    );
+    let parsed_go =
+        zignite::project::parse_project(zignite::project::ProjectKind::Go, &source, Some(&source))
+            .expect("parse nested Go module");
+    assert!(parsed_go
+        .commands
+        .iter()
+        .any(|command| command.name == "run"));
+
+    let output = resolve_build(&ConfigState::default(), &source, "go", None)
+        .expect("resolve nested Go project");
+    let canonical_root = fs::canonicalize(&root).expect("canonical repository root");
+    let canonical_module = fs::canonicalize(&module).expect("canonical Go module root");
+    assert_eq!(output.root.as_deref(), canonical_root.to_str());
+    assert_eq!(
+        output
+            .command("all")
+            .and_then(|command| command.cwd.as_deref()),
+        canonical_root.to_str()
+    );
+    assert_eq!(
+        output
+            .command("run")
+            .and_then(|command| command.cwd.as_deref()),
+        canonical_module.to_str(),
+        "resolved commands: {:?}",
+        output.commands
+    );
+    assert_eq!(
+        output
+            .command("run")
+            .map(|command| command.command.as_str()),
+        Some("go run ./cmd/api")
+    );
+
+    let action = resolve_action(
+        &ConfigState::default(),
+        &mut BuildState::default(),
+        &source,
+        "go",
+        ActionKind::Named,
+        Some("run"),
+        None,
+    )
+    .expect("resolve Go run action");
+    assert_eq!(action.cwd.as_deref(), canonical_module.to_str());
     let _ = fs::remove_dir_all(root);
 }
 

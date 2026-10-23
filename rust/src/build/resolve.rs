@@ -1,8 +1,8 @@
-use std::fs;
 use std::path::Path;
 
 use crate::config::ConfigState;
 use crate::filetype::{alias, filetype_from_path};
+use crate::project::common::{discovered_build_dir, shell_word};
 use crate::project::{find_project_root, parse_project, ProjectKind};
 use crate::runtime::materialize::substitute_variables_shell;
 
@@ -74,6 +74,7 @@ fn resolve_build_internal(
         let Ok(project) = parse_project(*kind, parse_start, Some(path)) else {
             continue;
         };
+        let command_cwd = project.root.to_string_lossy().into_owned();
         if index == 0 || resolved.root.is_none() {
             resolved.root = Some(found_root.root.to_string_lossy().into_owned());
             resolved.system = Some(project.kind.name().to_owned());
@@ -87,11 +88,12 @@ fn resolve_build_internal(
             let name = command.name;
             let command = command.command;
             let entry = CommandEntry::new(name.clone(), command.clone(), BuildSource::Project)
-                .with_filetype(&filetype);
+                .with_filetype(&filetype)
+                .with_cwd(command_cwd.clone());
             if index == 0 {
                 upsert(&mut resolved.commands, entry);
             } else {
-                insert_if_absent(&mut resolved.commands, entry);
+                insert_project_if_absent(&mut resolved.commands, entry);
             }
             if *kind == ProjectKind::PackageJson && name == "dev" {
                 insert_if_absent(
@@ -378,37 +380,6 @@ fn add_project_defaults(
     }
 }
 
-fn discovered_build_dir(root: &Path, marker: &str) -> (String, bool) {
-    for candidate in ["build", "build-debug", "build-release"] {
-        if root.join(candidate).join(marker).is_file() {
-            return (candidate.to_owned(), true);
-        }
-    }
-    let Ok(entries) = fs::read_dir(root) else {
-        return ("build".to_owned(), false);
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() && path.join(marker).is_file() {
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                return (name.to_owned(), true);
-            }
-        }
-    }
-    ("build".to_owned(), false)
-}
-
-fn shell_word(value: &str) -> String {
-    if value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || b"._/-:".contains(&byte))
-    {
-        value.to_owned()
-    } else {
-        crate::paths::quote_shell_arg(value)
-    }
-}
-
 pub(crate) fn upsert(commands: &mut Vec<CommandEntry>, entry: CommandEntry) {
     if let Some(existing) = commands.iter_mut().find(|item| item.name == entry.name) {
         *existing = entry;
@@ -419,6 +390,16 @@ pub(crate) fn upsert(commands: &mut Vec<CommandEntry>, entry: CommandEntry) {
 
 fn insert_if_absent(commands: &mut Vec<CommandEntry>, entry: CommandEntry) {
     if !commands.iter().any(|item| item.name == entry.name) {
+        commands.push(entry);
+    }
+}
+
+fn insert_project_if_absent(commands: &mut Vec<CommandEntry>, entry: CommandEntry) {
+    if let Some(existing) = commands.iter_mut().find(|item| item.name == entry.name) {
+        if existing.source == BuildSource::Builtin {
+            *existing = entry;
+        }
+    } else {
         commands.push(entry);
     }
 }

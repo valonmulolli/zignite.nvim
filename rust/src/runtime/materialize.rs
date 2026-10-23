@@ -89,6 +89,9 @@ pub(crate) fn first_external_program(command: &str) -> Option<String> {
         if !at_segment_start {
             continue;
         }
+        if is_environment_assignment(&token) {
+            continue;
+        }
         at_segment_start = false;
         if is_shell_builtin(&token) {
             continue;
@@ -96,6 +99,96 @@ pub(crate) fn first_external_program(command: &str) -> Option<String> {
         return Some(token);
     }
     None
+}
+
+pub(crate) fn requires_shell(command: &str, argv: &[String]) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_start = true;
+    for character in command.chars() {
+        if escaped {
+            escaped = false;
+            token_start = false;
+            continue;
+        }
+        if let Some(active) = quote {
+            if active == '\'' {
+                if character == active {
+                    quote = None;
+                }
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            } else if matches!(character, '$' | '`') {
+                return true;
+            }
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '\'' | '"' => quote = Some(character),
+            '&' | '|' | ';' | '<' | '>' | '`' | '$' | '*' | '?' | '[' | ']' | '(' | ')' | '{'
+            | '}' => return true,
+            '~' if token_start => return true,
+            '#' if token_start => return true,
+            value if value.is_whitespace() => token_start = true,
+            _ => token_start = false,
+        }
+    }
+
+    let assignment_count = argv
+        .iter()
+        .take_while(|token| is_environment_assignment(token))
+        .count();
+    assignment_count > 0
+        || argv
+            .first()
+            .is_some_and(|token| is_shell_context_builtin(token))
+}
+
+fn is_environment_assignment(value: &str) -> bool {
+    let Some((name, _)) = value.split_once('=') else {
+        return false;
+    };
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn is_shell_context_builtin(command: &str) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(command, "call" | "cd" | "set" | "setlocal" | "endlocal")
+    }
+    #[cfg(not(windows))]
+    {
+        matches!(
+            command,
+            "." | "alias"
+                | "cd"
+                | "declare"
+                | "eval"
+                | "exec"
+                | "export"
+                | "exit"
+                | "local"
+                | "read"
+                | "return"
+                | "set"
+                | "shift"
+                | "source"
+                | "ulimit"
+                | "umask"
+                | "unalias"
+                | "unset"
+                | "wait"
+        )
+    }
 }
 
 fn is_shell_builtin(command: &str) -> bool {
@@ -313,7 +406,7 @@ fn is_reserved_argv_command(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::first_external_program;
+    use super::{first_external_program, requires_shell, tokenize_command};
 
     #[test]
     fn executable_lookup_skips_shell_builtins_and_checks_later_commands() {
@@ -325,6 +418,37 @@ mod tests {
         assert_eq!(
             first_external_program("cargo test"),
             Some("cargo".to_owned())
+        );
+    }
+
+    #[test]
+    fn shell_detection_preserves_expansion_globs_and_assignments() {
+        for command in [
+            "printf '%s' \"$HOME\"",
+            "gcc *.c",
+            "CC=clang make",
+            "echo $(pwd)",
+        ] {
+            let argv = tokenize_command(command).expect("valid command");
+            assert!(
+                requires_shell(command, &argv),
+                "expected shell for {command}"
+            );
+        }
+        let command = "cd /tmp";
+        let argv = tokenize_command(command).expect("valid command");
+        assert!(requires_shell(command, &argv));
+
+        let command = "zig run '/tmp/main file.zig'";
+        let argv = tokenize_command(command).expect("valid command");
+        assert!(!requires_shell(command, &argv));
+    }
+
+    #[test]
+    fn executable_lookup_skips_environment_assignments() {
+        assert_eq!(
+            first_external_program("CC=clang make build"),
+            Some("make".to_owned())
         );
     }
 }

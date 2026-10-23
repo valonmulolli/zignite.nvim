@@ -52,6 +52,77 @@ fn parses_meson_target() {
 }
 
 #[test]
+fn cmake_uses_the_source_matching_target_and_discovered_build_directory() {
+    let root = TempProject::new("cmake-target-selection");
+    root.write(
+        "CMakeLists.txt",
+        "project(demo)\nadd_executable(first src/first.cpp)\nadd_library(shared src/shared.cpp)\nadd_executable(second src/second.cpp)\n",
+    );
+    root.write("build-release/CMakeCache.txt", "");
+    let source = root.write("src/second.cpp", "int main() { return 0; }\n");
+
+    let project = parse_project(ProjectKind::CMake, root.path(), Some(&source))
+        .expect("CMake project parses");
+    assert_eq!(
+        command(&project, "build"),
+        "cmake --build build-release --target second"
+    );
+    assert_eq!(
+        command(&project, "run"),
+        "cmake --build build-release --target second && ./build-release/second"
+    );
+    assert_eq!(
+        command(&project, "build-first"),
+        "cmake --build build-release --target first"
+    );
+    assert!(project
+        .commands
+        .iter()
+        .all(|item| item.name != "run-shared"));
+}
+
+#[test]
+fn meson_uses_the_source_matching_target_and_discovered_build_directory() {
+    let root = TempProject::new("meson-target-selection");
+    root.write(
+        "meson.build",
+        "project('demo', 'cpp')\nexecutable('first', 'src/first.cpp')\nlibrary('shared', 'src/shared.cpp')\nexecutable('second', 'src/second.cpp')\n",
+    );
+    root.write("build-custom/build.ninja", "");
+    let source = root.write("src/second.cpp", "int main() { return 0; }\n");
+
+    let project = parse_project(ProjectKind::Meson, root.path(), Some(&source))
+        .expect("Meson project parses");
+    assert_eq!(
+        command(&project, "build"),
+        "meson compile -C build-custom --target second"
+    );
+    assert_eq!(
+        command(&project, "run"),
+        "meson compile -C build-custom --target second && ./build-custom/second"
+    );
+    assert!(project
+        .commands
+        .iter()
+        .all(|item| item.name != "run-shared"));
+}
+
+#[test]
+fn cmake_parser_preserves_unicode_before_and_inside_targets() {
+    let root = TempProject::new("cmake-unicode");
+    root.write(
+        "CMakeLists.txt",
+        "project(\"café\") # naïve comment\nadd_executable(café-app src/café.cpp)\n",
+    );
+    let source = root.write("src/café.cpp", "int main() { return 0; }\n");
+
+    let project = parse_project(ProjectKind::CMake, root.path(), Some(&source))
+        .expect("Unicode CMake project parses");
+    assert!(command(&project, "build").contains("café-app"));
+    assert!(command(&project, "build-café-app").contains("café-app"));
+}
+
+#[test]
 fn parses_bazel_nested_build_targets_without_comment_injection() {
     let root = TempProject::new("bazel");
     root.write(

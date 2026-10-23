@@ -244,7 +244,6 @@ local function sync_once(options, revision)
 	if tonumber(synced_revision) == nil then
 		return false
 	end
-	remember_synced_state(synced_revision)
 	notify_backend_warnings(lines, synced_revision)
 	return tonumber(synced_revision) == tonumber(revision)
 end

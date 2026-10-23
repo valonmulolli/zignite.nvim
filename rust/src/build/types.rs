@@ -14,6 +14,8 @@ pub enum BuildSource {
 pub struct CommandEntry {
     pub name: String,
     pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub display_command: String,
     pub requires_arguments: bool,
     pub argument_prompt: Option<String>,
@@ -32,6 +34,7 @@ impl CommandEntry {
         Self {
             name,
             command,
+            cwd: None,
             display_command,
             requires_arguments,
             argument_prompt,
@@ -45,6 +48,11 @@ impl CommandEntry {
             self.argument_prompt = Some(argument_prompt(filetype, &self.name));
             self.argument_help = Some(argument_help(filetype, &self.name));
         }
+        self
+    }
+
+    pub fn with_cwd(mut self, cwd: impl Into<String>) -> Self {
+        self.cwd = Some(cwd.into());
         self
     }
 }

@@ -21,12 +21,17 @@ fn read_line_limited_strips_crlf() {
 
 #[test]
 fn read_line_limited_rejects_oversized_lines() {
-    let mut reader = Cursor::new(b"12345\n".to_vec());
+    let mut reader = Cursor::new(b"12345\nremaining".to_vec());
 
     assert!(matches!(
         read_line_limited(&mut reader, 4),
         Err(ProtocolError::LineTooLong { limit: 4 })
     ));
+    assert_eq!(
+        reader.position(),
+        5,
+        "reader must not consume the full line"
+    );
 }
 
 #[test]

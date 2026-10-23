@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::config::ConfigState;
 use crate::paths::{dirname, quote_shell_arg};
 use crate::runtime::materialize::{
-    first_external_program, substitute_variables_shell, tokenize_command,
+    first_external_program, requires_shell, substitute_variables_shell, tokenize_command,
 };
 
 use super::resolve::resolve_build;
@@ -67,9 +67,10 @@ pub fn resolve_action(
             argument_prompt: entry.argument_prompt.clone(),
             argument_help: entry.argument_help.clone(),
             filetype: Some(filetype),
-            cwd: resolved
-                .root
+            cwd: entry
+                .cwd
                 .clone()
+                .or_else(|| resolved.root.clone())
                 .or_else(|| Some(dirname(&path.to_string_lossy()).to_owned())),
             name: Some(format!("{}: {}", requested_filetype, entry.name)),
             missing_tool: None,
@@ -82,9 +83,10 @@ pub fn resolve_action(
     let command = materialize_arguments(&entry.command, &filetype, &entry.name, command_args)?;
     let exec_command = substitute_variables_shell(&command, &path.to_string_lossy());
     let exec_argv = tokenize_command(&exec_command).map_err(super::BuildError::InvalidCommand)?;
-    let cwd = resolved
-        .root
+    let cwd = entry
+        .cwd
         .clone()
+        .or_else(|| resolved.root.clone())
         .unwrap_or_else(|| dirname(&path.to_string_lossy()).to_owned());
     let tool = first_external_program(&exec_command);
     if let Some(tool) = tool.as_deref() {
@@ -182,9 +184,7 @@ fn materialize_arguments(
 }
 
 fn system_argv(command: &str, argv: &[String], config: &ConfigState) -> Vec<String> {
-    let has_shell_syntax = command
-        .bytes()
-        .any(|byte| matches!(byte, b'&' | b'|' | b';' | b'<' | b'>' | b'`'));
+    let has_shell_syntax = requires_shell(command, argv);
     if cfg!(unix) && !has_shell_syntax && config.execution_timeout().is_none() {
         return argv.to_vec();
     }

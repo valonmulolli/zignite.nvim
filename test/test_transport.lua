@@ -5,7 +5,9 @@ local original_transport = package.loaded["zignite.rpc.transport"]
 
 local function make_fake_vim(response_lines, send_result, jobstart_error)
 	local jobs = {}
+	local timers = {}
 	local next_job_id = 1
+	local stopped_jobs = 0
 
 	local function joinpath(left, right)
 		return tostring(left):gsub("[/\\]+$", "") .. "/" .. tostring(right):gsub("^[/\\]+", "")
@@ -49,6 +51,7 @@ local function make_fake_vim(response_lines, send_result, jobstart_error)
 				return { -9 }
 			end,
 			jobstop = function()
+				stopped_jobs = stopped_jobs + 1
 				return 1
 			end,
 		},
@@ -65,15 +68,48 @@ local function make_fake_vim(response_lines, send_result, jobstart_error)
 			cwd = function()
 				return "."
 			end,
+			new_timer = function()
+				local timer = {}
+				function timer:start(_, _, callback)
+					self.callback = callback
+				end
+			function timer:stop()
+				self.callback = nil
+			end
+			function timer:close()
+				self.closed = true
+			end
+				timers[#timers + 1] = timer
+				return timer
+			end,
 		},
+		schedule_wrap = function(callback)
+			return callback
+		end,
 		wait = function(_, condition)
 			return condition()
 		end,
+		test = {
+			job_count = function()
+				return next_job_id - 1
+			end,
+			stopped_jobs = function()
+				return stopped_jobs
+			end,
+			fire_timers = function()
+				for _, timer in ipairs(timers) do
+					local callback = timer.callback
+					if callback then
+						callback()
+					end
+				end
+			end,
+		},
 	}
 end
 
-local function new_client(transport)
-	return transport.new({
+local function new_client(transport, overrides)
+	local options = {
 		executable = "zignite-test",
 		worker_argv = { "zignite-test-worker" },
 		protocol = {
@@ -88,7 +124,11 @@ local function new_client(transport)
 			build_once_argv = function()
 				return { "zignite-test-worker" }
 			end,
-		})
+	}
+	for key, value in pairs(overrides or {}) do
+		options[key] = value
+	end
+	return transport.new(options)
 end
 
 local function run_tests()
@@ -137,6 +177,24 @@ local function run_tests()
 		error("failed jobstart must not invoke the callback")
 	end) == false, "one-shot jobstart exceptions should return false")
 	jobstart_failure_transport.reset_all()
+
+	local timeout_vim = make_fake_vim({})
+	_G.vim = timeout_vim
+	package.loaded["zignite.rpc.transport"] = nil
+	local timeout_transport = require("zignite.rpc.transport")
+	local timeout_client = new_client(timeout_transport, { request_timeout_ms = 10 })
+	local timeout_callback_called = false
+	assert(timeout_client.async_request({}, function(lines)
+		timeout_callback_called = true
+		assert(lines == nil, "timed-out request should fail")
+	end), "timed request should be accepted")
+	assert(timeout_vim.test.job_count() == 1, "first request should start one worker")
+	timeout_vim.test.fire_timers()
+	assert(timeout_callback_called, "timeout should complete its callback")
+	assert(timeout_vim.test.stopped_jobs() == 1, "active timeout must stop its worker")
+	assert(timeout_client.async_request({}, function() end), "next request should be accepted")
+	assert(timeout_vim.test.job_count() == 2, "next request should use a fresh worker")
+	timeout_transport.reset_all()
 end
 
 local ok, err = xpcall(function()

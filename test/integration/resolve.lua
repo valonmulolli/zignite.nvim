@@ -479,16 +479,35 @@ local function test_config_sync_falls_back_to_one_shot_mode()
 	assert(type(ensure_synced_impl) == "function", "expected local ensure_synced function")
 	local sync_sync_impl = get_upvalue_by_name(ensure_synced_impl, "sync_sync")
 	local sync_once_impl = get_upvalue_by_name(ensure_synced_impl, "sync_once")
+	local has_current_sync = get_upvalue_by_name(ensure_synced_impl, "has_current_sync")
+	local last_synced_state = get_upvalue_by_name(has_current_sync, "last_synced_state")
 	local config_client = get_upvalue_by_name(sync_sync_impl, "config_client")
 	assert(type(config_client) == "table", "expected config client upvalue")
 	assert(type(sync_once_impl) == "function", "expected sync_once upvalue")
+	assert(type(has_current_sync) == "function", "expected current-sync checker")
+	assert(type(last_synced_state) == "table", "expected sync-state record")
 
 	local original_sync_request = config_client.sync_request
+	local original_has_live_worker = config_client.has_live_worker
+	local original_worker_generation = config_client.get_worker_generation
+	local original_reset = config_client.reset
 	local original_systemlist = vim.fn.systemlist
 	local original_shell_error = vim.v.shell_error
+	local original_revision = last_synced_state.revision
+	local original_generation = last_synced_state.worker_generation
+	local sync_attempts = 0
+	last_synced_state.revision = 0
 	config_client.sync_request = function()
+		sync_attempts = sync_attempts + 1
 		return nil
 	end
+	config_client.has_live_worker = function()
+		return true
+	end
+	config_client.get_worker_generation = function()
+		return 91
+	end
+	config_client.reset = function() end
 	vim.fn.systemlist = function(argv, input)
 		assert(argv[2] == "--config-sync", "expected one-shot config-sync fallback")
 		assert(type(input) == "string" and input ~= "", "expected config payload on stdin")
@@ -503,12 +522,28 @@ local function test_config_sync_falls_back_to_one_shot_mode()
 		project = {},
 		timeout = 1200,
 	}, 23)
+	local falsely_cached = has_current_sync(23)
+	local attempts_after_first_sync = sync_attempts
+	config_sync.ensure_synced({
+		build_commands = {},
+		detect = {},
+		runners = {},
+		project = {},
+		timeout = 1200,
+	}, 23)
 
 	config_client.sync_request = original_sync_request
+	config_client.has_live_worker = original_has_live_worker
+	config_client.get_worker_generation = original_worker_generation
+	config_client.reset = original_reset
 	vim.fn.systemlist = original_systemlist
 	vim.v.shell_error = original_shell_error
+	last_synced_state.revision = original_revision
+	last_synced_state.worker_generation = original_generation
 
 	assert(ok == true, "config sync should fall back to one-shot mode")
+	assert(falsely_cached == false, "one-shot sync must not mark a live daemon as configured")
+	assert(sync_attempts == attempts_after_first_sync + 2, "later sync must retry the persistent daemon")
 
 	reset_job_results()
 	print("✓ Config sync one-shot fallback test passed")

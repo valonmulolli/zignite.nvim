@@ -313,19 +313,12 @@ local start_next_request
 
 ---@param worker table
 ---@param request table
----@param reset_active_worker boolean
 ---@return nil
-local function abort_request(worker, request, reset_active_worker)
+local function abort_request(worker, request)
 	if worker.active_request == request then
-		if reset_active_worker then
-			-- Kill the worker to reset wedged state (sync timeouts)
-			stop_shared_worker(worker)
-		else
-			-- Just finalize this request, don't kill the worker
-			worker.active_request = nil
-			finalize_request(request, nil, true)
-			start_next_request(worker)
-		end
+		-- The daemon may still be writing this response. Reset the stream before
+		-- dispatching another request so its frame cannot be mistaken for a reply.
+		stop_shared_worker(worker)
 	elseif remove_queued_request(worker.queue, request) then
 		finalize_request(request, nil, true)
 	end
@@ -529,7 +522,6 @@ function M.new(opts)
 	local protocol = opts.protocol
 	local worker_wait_ms = tonumber(opts.worker_wait_ms) or 1200
 	local request_timeout_ms = tonumber(opts.request_timeout_ms) or 0
-	local reset_on_sync_timeout = opts.reset_on_sync_timeout == true
 
 	---@return boolean
 	function client.has_backend()
@@ -656,10 +648,7 @@ function M.new(opts)
 			return request.completed == true
 		end, 20)
 		if not ok_wait then
-			-- Some callers want sync timeouts to hard-reset the worker so later
-			-- requests do not inherit a wedged backend. Others prefer to leave the
-			-- in-flight request alone and let the worker recover naturally.
-			abort_request(worker, request, reset_on_sync_timeout)
+			abort_request(worker, request)
 			return nil
 		end
 		if request.failed then
@@ -681,8 +670,7 @@ function M.new(opts)
 			if request.completed then
 				return
 			end
-			-- Async timeouts: abort just this request, don't kill the worker
-			abort_request(worker, request, false)
+			abort_request(worker, request)
 		end)
 		return true
 	end
@@ -694,7 +682,7 @@ function M.new(opts)
 	---
 	---The health request uses a separate frame marker (`@@ZHLT_`) and its own
 	---protocol, so it will not interfere with in-flight build/resolve requests.
-	---On timeout, the request is aborted without killing the worker.
+	---On timeout, the worker is reset because its response may still be in flight.
 	---
 	---@param on_done fun(healthy: boolean) Called with `true` on pong, `false` on timeout/error.
 	---@param timeout_ms integer|nil Optional timeout in ms, defaults to 2000.
@@ -755,8 +743,7 @@ function M.new(opts)
 			if request.completed then
 				return
 			end
-			-- Don't kill the worker on ping timeout — the daemon may just be busy.
-			abort_request(worker, request, false)
+			abort_request(worker, request)
 		end)
 
 		return true

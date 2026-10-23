@@ -1,7 +1,7 @@
 mod bazel;
 mod cargo;
 mod cmake;
-mod common;
+pub(crate) mod common;
 mod core;
 mod go;
 mod gradle;

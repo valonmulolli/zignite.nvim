@@ -1,5 +1,5 @@
 use std::fmt;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 
 pub const DEFAULT_MAX_LINE: usize = 1024 * 1024;
 
@@ -46,7 +46,9 @@ pub fn read_line_limited<R: BufRead>(
     limit: usize,
 ) -> Result<Option<String>, ProtocolError> {
     let mut bytes = Vec::new();
+    let read_limit = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
     let read = reader
+        .take(read_limit)
         .read_until(b'\n', &mut bytes)
         .map_err(|error| ProtocolError::Io(error.to_string()))?;
     if read == 0 {
