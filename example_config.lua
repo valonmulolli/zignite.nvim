@@ -93,14 +93,12 @@ require("zignite").setup({
   -- ==========================================================================
   quickfix = {
     enabled = true,
-  processor = "auto", -- "auto", "lua", or "rust"; "zig" remains a compatibility alias.
-    zig_min_lines = 300,
+  processor = "auto", -- "auto", "lua", or "rust".
     max_lines = 1000,
     max_bytes = 262144,
     strip_ansi = true,
     strip_ansi_max_lines = 400,
     parse_diagnostics = true,
-    zig_worker = true,
     async_strip = true,
     strip_chunk_size = 200,
   },

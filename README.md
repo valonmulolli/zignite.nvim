@@ -34,7 +34,7 @@ Zignite.nvim is a code runner for Neovim focused on low-latency execution and in
 
 - **Interactive Terminal Output**: Runner windows are real terminals, so stdin-driven programs continue to work.
 - **Full ANSI Colors**: Compiler errors and logs retain their rich coloring.
-- **Rust Backend**: Build resolution, runner resolution, command detection, project parsing, quickfix processing, and execution support run through a native backend.
+- **Rust Backend**: Build resolution, runner resolution, command detection, project parsing, quickfix processing, and execution run through the Rust backend.
 - **Safety Timeouts**: Commands that exceed the configured timeout are terminated by the Rust backend.
 - **Quickfix Integration**: Non-zero exits can populate the quickfix list so errors are easy to jump through.
 - **Unified Rust Daemon**: Reuses one backend daemon for config sync, build/run resolve, detection, project parsing, and quickfix processing to reduce repeat-run latency.
@@ -189,9 +189,9 @@ project goals rather than a stable subcommand list, so those filetypes
 continue to use their existing runners and project/build-system detection.
 For Dart and Swift, the Rust backend also walks up from the source file to
 `pubspec.yaml` or `Package.swift` and runs project commands from that manifest
-directory.
-The Zig 0.16 `uninstall` build step is omitted because the standard library
-still panics when that step is executed.
+directory. Zig build steps are read from the current project's `build.zig`; only
+steps reported by Zig are offered, along with Zignite's `build` and `release`
+defaults.
 
 Use:
 
@@ -296,7 +296,7 @@ zig fetch --save git+https://github.com/<owner>/<repo>
 ### Quickfix Pipeline
 
 On non-zero exit, terminal output feeds into the quickfix list so you can jump
-through errors. The pipeline uses Zig processing when available, with an
+through errors. The Rust backend processes diagnostics when available, with an
 automatic Lua fallback.
 
 ```lua
@@ -323,7 +323,7 @@ You can use these variables in your custom runner commands:
 
 ## Troubleshooting
 
-### "Zig executable not found"
+### "Rust backend executable not found"
 
 Run `cargo build --manifest-path rust/Cargo.toml --release` from the plugin root manually.
 

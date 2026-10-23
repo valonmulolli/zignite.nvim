@@ -55,7 +55,7 @@ local function test_quickfix_on_error_lua_processor()
     assert(qf.lines[1] == "[zignite] quickfix output truncated", "Quickfix should include truncation notice")
     assert(not qf.lines[2]:match("\27"), "Quickfix line should be ANSI-stripped")
     assert(not qf.lines[3]:match("\27"), "Quickfix line should be ANSI-stripped")
-    assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn native quickfix backend")
+    assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn the Rust quickfix backend")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -67,8 +67,8 @@ local function test_quickfix_on_error_lua_processor()
     print("✓ Quickfix Lua processor test passed")
 end
 
--- Test explicit native processor path is used for quickfix generation.
-local function test_quickfix_zig_processor()
+-- Test explicit Rust processor path is used for quickfix generation.
+local function test_quickfix_rust_processor()
     config.setup({
         mode = "float",
         quickfix = {
@@ -111,13 +111,13 @@ local function test_quickfix_zig_processor()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(count_quickfix_daemon_jobs() > 0, "Native processor should start quickfix daemon worker")
-    assert(count_quickfix_backend_jobs() > 0, "Native processor should spawn quickfix backend")
-    assert(#quickfix_results > 0, "Quickfix should be populated on native processor path")
+    assert(count_quickfix_daemon_jobs() > 0, "Rust processor should start the quickfix daemon")
+    assert(count_quickfix_backend_jobs() > 0, "Rust processor should spawn the quickfix backend")
+    assert(#quickfix_results > 0, "Quickfix should be populated on the Rust processor path")
     local qf = quickfix_results[#quickfix_results]
-    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Native quickfix should include truncation notice")
-    assert(qf.lines[2] == "error-2", "Native processor should strip ANSI from retained lines")
-    assert(qf.lines[3] == "error-3", "Native processor should strip ANSI from retained lines")
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Rust quickfix should include truncation notice")
+    assert(qf.lines[2] == "error-2", "Rust processor should strip ANSI from retained lines")
+    assert(qf.lines[3] == "error-3", "Rust processor should strip ANSI from retained lines")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -126,11 +126,11 @@ local function test_quickfix_zig_processor()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix native processor test passed")
+    print("✓ Quickfix Rust processor test passed")
 end
 
--- Test explicit zig one-shot quickfix path works when the daemon worker is disabled.
-local function test_quickfix_zig_one_shot_processor()
+-- Test explicit Rust one-shot quickfix path works when daemon reuse is disabled.
+local function test_quickfix_rust_one_shot_processor()
     config.setup({
         mode = "float",
         quickfix = {
@@ -174,7 +174,7 @@ local function test_quickfix_zig_one_shot_processor()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the native backend")
+    assert(count_quickfix_backend_jobs() > 0, "One-shot quickfix path should still execute the Rust backend")
     assert(#quickfix_results > 0, "One-shot quickfix path should populate quickfix output")
     local qf = quickfix_results[#quickfix_results]
     assert(qf.lines[1] == "[zignite] quickfix output truncated", "One-shot quickfix should include truncation notice")
@@ -188,10 +188,10 @@ local function test_quickfix_zig_one_shot_processor()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix zig one-shot processor test passed")
+    print("✓ Quickfix Rust one-shot processor test passed")
 end
 
--- Test setup resets cached quickfix backend availability after the Zig binary becomes available.
+-- Test setup resets cached quickfix backend availability after the Rust binary becomes available.
 local function test_quickfix_backend_availability_resets_on_setup()
     local quickfix_config = {
         mode = "float",
@@ -271,8 +271,8 @@ local function test_quickfix_backend_availability_resets_on_setup()
     print("✓ Quickfix backend reset test passed")
 end
 
--- Test native quickfix processor keeps newest lines when max_bytes truncates input.
-local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
+-- Test Rust quickfix processor keeps newest lines when max_bytes truncates input.
+local function test_quickfix_rust_processor_keeps_tail_on_byte_cap()
     config.setup({
         mode = "float",
         quickfix = {
@@ -312,11 +312,11 @@ local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(#quickfix_results > 0, "Native quickfix should populate results under byte cap")
+    assert(#quickfix_results > 0, "Rust quickfix should populate results under byte cap")
     local qf = quickfix_results[#quickfix_results]
-    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Native quickfix should include truncation notice")
-    assert(qf.lines[2] == "newest-line", "Native quickfix should keep newest line under byte cap")
-    assert(qf.lines[3] == nil, "Native quickfix should drop older lines once byte cap is reached")
+    assert(qf.lines[1] == "[zignite] quickfix output truncated", "Rust quickfix should include truncation notice")
+    assert(qf.lines[2] == "newest-line", "Rust quickfix should keep newest line under byte cap")
+    assert(qf.lines[3] == nil, "Rust quickfix should drop older lines once byte cap is reached")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -325,11 +325,11 @@ local function test_quickfix_zig_processor_keeps_tail_on_byte_cap()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix zig byte-tail test passed")
+    print("✓ Quickfix Rust byte-tail test passed")
 end
 
--- Test auto processor routes to Lua below threshold and Zig above threshold.
-local function test_quickfix_auto_prefers_zig_backend()
+-- Auto mode prefers Rust quickfix processing for both small and large outputs.
+local function test_quickfix_auto_prefers_rust_backend()
     require("zignite.ui.quickfix").reset()
     local quickfix_module = require("zignite.ui.quickfix")
     local choose_quickfix_processor =
@@ -349,7 +349,6 @@ local function test_quickfix_auto_prefers_zig_backend()
         quickfix = {
             enabled = true,
             processor = "auto",
-            zig_min_lines = 5,
             max_lines = 5,
             strip_ansi = true,
             strip_ansi_max_lines = 5,
@@ -376,7 +375,7 @@ local function test_quickfix_auto_prefers_zig_backend()
     assert(type(choose_quickfix_processor) == "function", "Quickfix test should be able to inspect processor selection")
     assert(
         choose_quickfix_processor(config.options.quickfix, #small_lines) == "backend",
-        "Auto mode should prefer the native quickfix processor when the backend is available"
+        "Auto mode should prefer the Rust quickfix processor when the backend is available"
     )
 
     state.next_exit_code = 1
@@ -398,11 +397,11 @@ local function test_quickfix_auto_prefers_zig_backend()
 
     assert(
         choose_quickfix_processor(config.options.quickfix, #large_lines) == "backend",
-        "Auto mode should still select the native quickfix processor for larger outputs"
+        "Auto mode should still select the Rust quickfix processor for larger outputs"
     )
 
     init.run_code(0, "float")
-    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use the native processor path")
+    assert(count_quickfix_backend_jobs() > 0, "Auto mode should use the Rust processor path")
 
     state.next_exit_code = 0
     vim.fn.expand = original_expand
@@ -411,11 +410,11 @@ local function test_quickfix_auto_prefers_zig_backend()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix auto native-preference test passed")
+    print("✓ Quickfix auto Rust-preference test passed")
 end
 
--- Test native quickfix processor falls back to Lua when native backend fails.
-local function test_quickfix_zig_fallback()
+-- Test Rust quickfix processor falls back to Lua when the Rust backend fails.
+local function test_quickfix_rust_fallback()
     config.setup({
         mode = "float",
         quickfix = {
@@ -455,7 +454,7 @@ local function test_quickfix_zig_fallback()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(#quickfix_results > 0, "Lua fallback should populate quickfix after zig failure")
+    assert(#quickfix_results > 0, "Lua fallback should populate quickfix after Rust backend failure")
     local qf = quickfix_results[#quickfix_results]
     assert(not qf.lines[1]:match("\27"), "Lua fallback should still strip ANSI codes")
 
@@ -466,11 +465,11 @@ local function test_quickfix_zig_fallback()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix zig fallback test passed")
+    print("✓ Quickfix Rust fallback test passed")
 end
 
 -- Test worker-mode protocol errors fall back cleanly to Lua quickfix generation.
-local function test_quickfix_zig_protocol_error_fallback()
+local function test_quickfix_rust_protocol_error_fallback()
     config.setup({
         mode = "float",
         quickfix = {
@@ -524,11 +523,11 @@ local function test_quickfix_zig_protocol_error_fallback()
     reset_job_results()
     reset_quickfix_results()
 
-    print("✓ Quickfix zig protocol error fallback test passed")
+    print("✓ Quickfix Rust protocol error fallback test passed")
 end
 
--- Test zig diagnostic parser canonicalizes common compiler formats.
-local function test_quickfix_zig_diagnostic_parser()
+-- Test Rust diagnostic processing canonicalizes common compiler formats.
+local function test_quickfix_rust_diagnostic_parser()
     config.setup({
         mode = "float",
         quickfix = {
@@ -566,7 +565,7 @@ local function test_quickfix_zig_diagnostic_parser()
     state.next_exit_code = 1
     init.run_code(0, "float")
 
-    assert(#quickfix_results > 0, "Zig diagnostic parser should populate quickfix lines")
+    assert(#quickfix_results > 0, "Rust diagnostic parser should populate quickfix lines")
     local qf = quickfix_results[#quickfix_results]
     assert(qf.lines[1]:match("^src/main%.c:10:5:"), "GCC/Clang diagnostic should be canonicalized")
     assert(qf.lines[2]:match("^src/lib%.rs:7:3:"), "Rust arrow diagnostic should be canonicalized")
@@ -579,15 +578,15 @@ local function test_quickfix_zig_diagnostic_parser()
     reset_job_results()
     reset_quickfix_results()
 
-	print("✓ Quickfix zig diagnostic parser test passed")
+	print("✓ Quickfix Rust diagnostic parser test passed")
 end
 
 test_quickfix_on_error_lua_processor()
-test_quickfix_zig_processor()
-test_quickfix_zig_one_shot_processor()
+test_quickfix_rust_processor()
+test_quickfix_rust_one_shot_processor()
 test_quickfix_backend_availability_resets_on_setup()
-test_quickfix_zig_processor_keeps_tail_on_byte_cap()
-test_quickfix_auto_prefers_zig_backend()
-test_quickfix_zig_fallback()
-test_quickfix_zig_protocol_error_fallback()
-test_quickfix_zig_diagnostic_parser()
+test_quickfix_rust_processor_keeps_tail_on_byte_cap()
+test_quickfix_auto_prefers_rust_backend()
+test_quickfix_rust_fallback()
+test_quickfix_rust_protocol_error_fallback()
+test_quickfix_rust_diagnostic_parser()

@@ -39,7 +39,6 @@
             cargo
             lua5_4
             rustc
-            zig
             stylua
             nil
           ];
