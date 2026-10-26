@@ -16,19 +16,19 @@ const FORTRAN_COMMAND: &str =
 const TEMP_BINARY_CLEANUP: &str = "rm -f /tmp/$fileNameWithoutExt";
 #[cfg(windows)]
 const C_COMMAND: &str =
-    "gcc -pipe $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "gcc -pipe $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const CPP_COMMAND: &str =
-    "c++ -pipe $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "c++ -pipe $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const RUST_COMMAND: &str =
-    "rustc $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "rustc $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const FORTRAN_COMMAND: &str =
-    "gfortran $file -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "gfortran $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const TEMP_BINARY_CLEANUP: &str =
-    "if exist \"%TEMP%/zignite-$fileNameWithoutExt.exe\" del /Q \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "if exist \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" del /Q \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 
 #[cfg(unix)]
 const PYTHON_COMMAND: &str = "python3 -u $file";
@@ -52,10 +52,10 @@ const KOTLIN_COMMAND: &str =
 const KOTLIN_CLEANUP: &str = "rm -f /tmp/$fileNameWithoutExt.jar";
 #[cfg(windows)]
 const KOTLIN_COMMAND: &str =
-    "kotlinc $file -include-runtime -d \"%TEMP%/zignite-$fileNameWithoutExt.jar\" && java -jar \"%TEMP%/zignite-$fileNameWithoutExt.jar\"";
+    "kotlinc $file -include-runtime -d \"%TEMP%\\zignite-$fileNameWithoutExt.jar\" && java -jar \"%TEMP%\\zignite-$fileNameWithoutExt.jar\"";
 #[cfg(windows)]
 const KOTLIN_CLEANUP: &str =
-    "if exist \"%TEMP%/zignite-$fileNameWithoutExt.jar\" del /Q \"%TEMP%/zignite-$fileNameWithoutExt.jar\"";
+    "if exist \"%TEMP%\\zignite-$fileNameWithoutExt.jar\" del /Q \"%TEMP%\\zignite-$fileNameWithoutExt.jar\"";
 
 pub fn runner(filetype: &str) -> Option<BuiltinRunner> {
     if let Some(runner) = compiled_runner(filetype) {
@@ -113,7 +113,7 @@ fn compiled_runner(filetype: &str) -> Option<BuiltinRunner> {
 const HASKELL_COMMAND: &str = "ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt";
 #[cfg(windows)]
 const HASKELL_COMMAND: &str =
-    "ghc -o \"%TEMP%/zignite-$fileNameWithoutExt.exe\" $file && \"%TEMP%/zignite-$fileNameWithoutExt.exe\"";
+    "ghc -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" $file && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
 
 #[cfg(unix)]
 const JAVA_CLEANUP: &str = "rm -f $dir/$fileNameWithoutExt.class";

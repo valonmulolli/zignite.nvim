@@ -41,6 +41,27 @@ pub struct TimeoutPolicy {
     pub grace: Duration,
 }
 
+fn append_command_args(command: &mut Command, spec: &CommandSpec) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let is_cmd_command = spec.argv.len() == 3
+            && spec.argv[0]
+                .to_string_lossy()
+                .eq_ignore_ascii_case("cmd.exe")
+            && spec.argv[1]
+                .to_string_lossy()
+                .eq_ignore_ascii_case("/C");
+        if is_cmd_command {
+            command.arg(&spec.argv[1]).raw_arg(&spec.argv[2]);
+            return;
+        }
+    }
+
+    command.args(&spec.argv[1..]);
+}
+
 #[derive(Debug)]
 pub enum ProcessError {
     EmptyCommand,
@@ -82,7 +103,7 @@ fn run_argv_inner(
 ) -> Result<ProcessResult, ProcessError> {
     let program = spec.argv.first().ok_or(ProcessError::EmptyCommand)?;
     let mut command = Command::new(program);
-    command.args(&spec.argv[1..]);
+    append_command_args(&mut command, spec);
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
@@ -172,7 +193,7 @@ pub fn run_terminal_command(
 ) -> Result<ProcessResult, ProcessError> {
     let program = spec.argv.first().ok_or(ProcessError::EmptyCommand)?;
     let mut command = Command::new(program);
-    command.args(&spec.argv[1..]);
+    append_command_args(&mut command, spec);
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
