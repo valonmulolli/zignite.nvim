@@ -226,7 +226,7 @@ fn terminal_command_forwards_interactive_stdin() {
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1 {
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as libc::c_ulong, 0) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
