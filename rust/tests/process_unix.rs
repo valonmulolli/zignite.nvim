@@ -1,7 +1,11 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::process::Command;
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zignite::process::{
@@ -149,6 +153,131 @@ fn terminal_command_cleans_descendants_when_leader_exits() {
     assert!(!result.cancelled);
     std::thread::sleep(Duration::from_millis(300));
     assert!(!marker.exists(), "background descendant must be terminated");
+}
+
+#[test]
+fn interactive_terminal_helper() {
+    if std::env::var_os("ZIGNITE_INTERACTIVE_PTY_HELPER").is_none() {
+        return;
+    }
+
+    let spec = CommandSpec {
+        argv: vec![
+            "sh".into(),
+            "-c".into(),
+            "printf 'Enter: '; IFS= read -r value; printf 'Double %s is: %s\\n' \"$value\" \"$((value * 2))\"".into(),
+        ],
+        cwd: None,
+        env: Vec::new(),
+    };
+    let result = run_terminal_command(
+        &spec,
+        TimeoutPolicy {
+            timeout: Some(Duration::from_millis(750)),
+            grace: Duration::from_millis(50),
+        },
+    )
+    .expect("interactive terminal command should finish");
+
+    assert!(!result.timed_out, "terminal input was not delivered");
+    assert!(result.status.success());
+}
+
+#[test]
+fn terminal_command_forwards_interactive_stdin() {
+    let mut master_fd = -1;
+    let mut slave_fd = -1;
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master_fd,
+                &mut slave_fd,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0,
+        "openpty failed: {}",
+        io::Error::last_os_error()
+    );
+
+    let mut master = unsafe { File::from_raw_fd(master_fd) };
+    let slave = unsafe { File::from_raw_fd(slave_fd) };
+    let flags = unsafe { libc::fcntl(master.as_raw_fd(), libc::F_GETFL) };
+    assert_ne!(flags, -1, "fcntl(F_GETFL) failed");
+    assert_eq!(
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) },
+        0,
+        "fcntl(F_SETFL) failed"
+    );
+
+    let slave_stdin = slave.try_clone().expect("clone PTY slave");
+    let slave_stdout = slave.try_clone().expect("clone PTY slave");
+    let mut helper = Command::new(std::env::current_exe().expect("test executable path"));
+    helper
+        .args(["--exact", "interactive_terminal_helper", "--nocapture"])
+        .env("ZIGNITE_INTERACTIVE_PTY_HELPER", "1")
+        .stdin(Stdio::from(slave_stdin))
+        .stdout(Stdio::from(slave_stdout))
+        .stderr(Stdio::from(slave));
+    unsafe {
+        helper.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut helper = helper.spawn().expect("spawn PTY helper");
+
+    let prompt = read_until(
+        &mut master,
+        b"Enter: ",
+        Instant::now() + Duration::from_secs(3),
+    )
+    .expect("interactive command did not print its prompt");
+    master.write_all(b"2\n").expect("send terminal input");
+    let output = read_until(
+        &mut master,
+        b"Double 2 is: 4",
+        Instant::now() + Duration::from_secs(3),
+    )
+    .unwrap_or_else(|error| {
+        let _ = unsafe { libc::kill(-(helper.id() as libc::pid_t), libc::SIGKILL) };
+        let _ = helper.wait();
+        panic!("interactive input was not processed; prompt={prompt:?}, error={error}");
+    });
+
+    assert!(output
+        .windows(b"Double 2 is: 4".len())
+        .any(|part| part == b"Double 2 is: 4"));
+    let status = helper.wait().expect("wait for PTY helper");
+    assert!(status.success(), "PTY helper failed: {status}");
+}
+
+fn read_until(file: &mut File, expected: &[u8], deadline: Instant) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut chunk = [0; 1024];
+    loop {
+        if output.windows(expected.len()).any(|part| part == expected) {
+            return Ok(output);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        match file.read(&mut chunk) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => output.extend_from_slice(&chunk[..count]),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[test]

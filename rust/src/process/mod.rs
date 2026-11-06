@@ -50,9 +50,7 @@ fn append_command_args(command: &mut Command, spec: &CommandSpec) {
             && spec.argv[0]
                 .to_string_lossy()
                 .eq_ignore_ascii_case("cmd.exe")
-            && spec.argv[1]
-                .to_string_lossy()
-                .eq_ignore_ascii_case("/C");
+            && spec.argv[1].to_string_lossy().eq_ignore_ascii_case("/C");
         if is_cmd_command {
             command.arg(&spec.argv[1]).raw_arg(&spec.argv[2]);
             return;
@@ -217,6 +215,15 @@ pub fn run_terminal_command(
         Ok(tree) => tree,
         Err(error) => {
             let _ = child.kill();
+            let _ = child.wait();
+            return Err(ProcessError::Io(error.to_string()));
+        }
+    };
+    #[cfg(unix)]
+    let _terminal_foreground = match platform::TerminalForeground::new(&child) {
+        Ok(foreground) => foreground,
+        Err(error) => {
+            let _ = tree.terminate(&mut child, policy.grace);
             let _ = child.wait();
             return Err(ProcessError::Io(error.to_string()));
         }
