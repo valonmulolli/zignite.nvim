@@ -62,7 +62,7 @@ vim.api.nvim_create_user_command("RunCode", function(opts)
 		notify_invalid_mode(opts.fargs[1])
 		return
 	end
-	zignite().run_code(opts.range, mode)
+	zignite().run_code(opts.range, mode, opts.line1, opts.line2)
 end, { range = true, nargs = "?" })
 
 -- Create the :RunFile user command with optional mode

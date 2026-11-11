@@ -3,9 +3,11 @@
 local original_vim = _G.vim
 local original_transport = package.loaded["zignite.rpc.transport"]
 
-local function make_fake_vim(response_lines, send_result, jobstart_error)
+local function make_fake_vim(response_lines, send_result, jobstart_error, options)
+	options = options or {}
 	local jobs = {}
 	local timers = {}
+	local pending_responses = {}
 	local next_job_id = 1
 	local stopped_jobs = 0
 
@@ -33,18 +35,23 @@ local function make_fake_vim(response_lines, send_result, jobstart_error)
 				jobs[job_id] = opts
 				return job_id
 			end,
-			chansend = function(job_id)
+			chansend = function(job_id, payload)
 				if send_result ~= nil then
 					return send_result
 				end
 				local opts = jobs[job_id]
 				assert(opts and opts.on_stdout, "transport did not install stdout callback")
+				local lines = type(response_lines) == "function" and response_lines(payload) or response_lines
 				local data = {}
-				for _, line in ipairs(response_lines) do
+				for _, line in ipairs(lines) do
 					data[#data + 1] = line
 				end
 				data[#data + 1] = ""
-				opts.on_stdout(job_id, data)
+				if options.defer_response then
+					pending_responses[#pending_responses + 1] = { job_id = job_id, data = data }
+				else
+					opts.on_stdout(job_id, data)
+				end
 				return 1
 			end,
 			jobwait = function()
@@ -87,6 +94,9 @@ local function make_fake_vim(response_lines, send_result, jobstart_error)
 			return callback
 		end,
 		wait = function(_, condition)
+			if options.wait_result == false then
+				return false
+			end
 			return condition()
 		end,
 		test = {
@@ -103,6 +113,14 @@ local function make_fake_vim(response_lines, send_result, jobstart_error)
 						callback()
 					end
 				end
+			end,
+			deliver_response = function()
+				local response = table.remove(pending_responses, 1)
+				if not response then
+					return false
+				end
+				jobs[response.job_id].on_stdout(response.job_id, response.data)
+				return true
 			end,
 		},
 	}
@@ -195,6 +213,53 @@ local function run_tests()
 	assert(timeout_client.async_request({}, function() end), "next request should be accepted")
 	assert(timeout_vim.test.job_count() == 2, "next request should use a fresh worker")
 	timeout_transport.reset_all()
+
+	local delayed_vim = make_fake_vim(function(payload)
+		local request_id = assert(payload:match("@@ZTEST_REQ_BEGIN (%d+)"))
+		return {
+			"@@ZTEST_RES_BEGIN " .. request_id,
+			"\tRESULT\t" .. request_id,
+			"@@ZTEST_RES_END " .. request_id,
+		}
+	end, nil, nil, { defer_response = true, wait_result = false })
+	_G.vim = delayed_vim
+	package.loaded["zignite.rpc.transport"] = nil
+	local delayed_transport = require("zignite.rpc.transport")
+	local delayed_client = new_client(delayed_transport)
+	assert(delayed_client.sync_request({}) == nil, "sync wait should report timeout")
+	assert(delayed_vim.test.job_count() == 1, "sync wait timeout should keep the shared worker")
+	assert(delayed_vim.test.stopped_jobs() == 0, "sync wait timeout must not stop the daemon immediately")
+	local next_result
+	assert(delayed_client.async_request({}, function(lines)
+		next_result = lines
+	end), "next request should queue behind the timed-out request")
+	assert(delayed_vim.test.job_count() == 1, "queued request should reuse the same daemon")
+	assert(delayed_vim.test.deliver_response(), "late response for timed-out request should arrive")
+	assert(next_result == nil, "late response should not complete the next request")
+	assert(delayed_vim.test.deliver_response(), "queued request response should arrive")
+	assert(next_result and next_result[1] == "RESULT\t2", "queued request should receive its own response")
+	assert(delayed_vim.test.stopped_jobs() == 0, "successful recovery should preserve the daemon")
+	delayed_transport.reset_all()
+
+	local hard_timeout_vim = make_fake_vim(function(payload)
+		local request_id = assert(payload:match("@@ZTEST_REQ_BEGIN (%d+)"))
+		return {
+			"@@ZTEST_RES_BEGIN " .. request_id,
+			"\tRESULT\t" .. request_id,
+			"@@ZTEST_RES_END " .. request_id,
+		}
+	end, nil, nil, { defer_response = true, wait_result = false })
+	_G.vim = hard_timeout_vim
+	package.loaded["zignite.rpc.transport"] = nil
+	local hard_timeout_transport = require("zignite.rpc.transport")
+	local hard_timeout_client = new_client(hard_timeout_transport, {
+		sync_request_max_lifetime_ms = 10,
+	})
+	assert(hard_timeout_client.sync_request({}) == nil, "sync request should return at its wait deadline")
+	assert(hard_timeout_vim.test.stopped_jobs() == 0, "wait deadline should not immediately stop the worker")
+	hard_timeout_vim.test.fire_timers()
+	assert(hard_timeout_vim.test.stopped_jobs() == 1, "hard lifetime deadline should recover a stuck worker")
+	hard_timeout_transport.reset_all()
 end
 
 local ok, err = xpcall(function()

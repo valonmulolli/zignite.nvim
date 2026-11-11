@@ -56,33 +56,46 @@ local function test_track_max_runners()
 	local oldest
 	for i = 1, 50 do
 		local runner = registry.track(100 + i, 200 + i)
+		runner.job_id = 700 + i
 		if i == 1 then
 			oldest = runner
 		end
 	end
-	oldest.job_id = 77
 	assert(oldest ~= nil, "Should still return the oldest tracked runner")
 
-	-- Tracking 51st should evict oldest (win_id=101, buf_id=201)
+	-- Tracking 51st must not silently stop an active runner.
 	local new = registry.track(999, 888)
 	assert(new.win_id == 999, "Should return the new runner")
 	assert(new.buf_id == 888, "Should return the new runner buf_id")
 	assert(type(new.job_id) == "nil", "job_id should be nil")
 
-	-- The oldest runner (win_id=101) should have been evicted
-	-- win_close_calls should have 1 entry for the evicted runner
-	assert(#win_close_calls == 1, "Should have evicted the oldest runner via win_close")
-	assert(win_close_calls[1].win_id == 101, "Oldest runner's win_id 101 should be closed")
-	assert(win_close_calls[1].force == true, "Should close with force=true")
-
-	-- buf_delete_calls should also have 1 entry
-	assert(#buf_delete_calls == 1, "Should have evicted the oldest runner via buf_delete")
-	assert(buf_delete_calls[1].buf_id == 201, "Oldest runner's buf_id 201 should be deleted")
-	assert(buf_delete_calls[1].force == true, "Should delete with force=true")
-	assert(#jobstop_calls == 1, "Should stop the evicted runner job")
-	assert(jobstop_calls[1].job_id == 77, "Should stop the evicted runner's job")
+	assert(#win_close_calls == 0, "Active runner windows must remain open")
+	assert(#buf_delete_calls == 0, "Active runner buffers must remain intact")
+	assert(#jobstop_calls == 0, "Tracking another runner must not stop active jobs")
+	assert(oldest.job_id == 701, "The oldest active job must remain tracked")
 
 	print("✓ track(max runners eviction) passed")
+end
+
+local function test_track_evicts_completed_runner_before_active_runners()
+	reset_state()
+	local completed
+	for i = 1, 50 do
+		local runner = registry.track(200 + i, 300 + i)
+		if i == 1 then
+			completed = runner
+		else
+			runner.job_id = 1000 + i
+		end
+	end
+	registry.track(999, 888)
+
+	assert(#win_close_calls == 1, "one completed runner should be evicted at capacity")
+	assert(win_close_calls[1].win_id == 201, "the oldest completed runner should be evicted")
+	assert(#jobstop_calls == 0, "evicting a completed runner must not stop active jobs")
+	assert(completed.job_id == nil, "the completed runner remains inactive")
+	registry.close_all(true)
+	print("✓ track evicts completed runner before active runners")
 end
 
 local function test_track_job_id()
@@ -207,9 +220,31 @@ local function test_close_all_hide_keeps_active_job_discoverable()
 	print("✓ close_all(hide active job) passed")
 end
 
+local function test_clean_invalid_keeps_intentionally_hidden_job()
+	reset_state()
+	local runner = registry.track(10, 20)
+	runner.job_id = 42
+	registry.close_by_win_id(10, false)
+
+	_G.vim.api.nvim_win_is_valid = function()
+		return false
+	end
+	registry.clean_invalid()
+	_G.vim.api.nvim_win_is_valid = function(win_id)
+		return win_id > 0
+	end
+
+	assert(#jobstop_calls == 0, "clean_invalid must not stop an intentionally hidden job")
+	registry.close_all(true)
+	assert(#jobstop_calls == 1, "the hidden job must remain available to StopCode")
+	assert(jobstop_calls[1].job_id == 42, "StopCode must stop the hidden job")
+	print("✓ clean_invalid preserves hidden active job")
+end
+
 -- Run all tests
 test_track_single()
 test_track_max_runners()
+test_track_evicts_completed_runner_before_active_runners()
 test_track_job_id()
 test_close_by_win_id()
 test_close_by_win_id_with_job_stop()
@@ -217,5 +252,6 @@ test_clean_invalid()
 test_close_all()
 test_close_all_with_job_stop()
 test_close_all_hide_keeps_active_job_discoverable()
+test_clean_invalid_keeps_intentionally_hidden_job()
 
 print("All registry tests passed!")

@@ -414,6 +414,52 @@ local function test_run_code_rejects_cross_buffer_visual_selection()
     print("✓ Cross-buffer visual selection test passed")
 end
 
+local function test_run_code_uses_explicit_line_range_instead_of_stale_marks()
+	config.setup({})
+	vim.bo.filetype = "python"
+	local original_expand = vim.fn.expand
+	local original_getpos = vim.fn.getpos
+	local original_get_lines = vim.api.nvim_buf_get_lines
+	local original_execute_command = init.execute_command
+	local captured_command
+	local source_lines = { "first", "second", "third", "fourth" }
+
+	vim.fn.expand = function(expr)
+		if expr == "%:p" then return "/tmp/ranged/main.py" end
+		return original_expand(expr)
+	end
+	vim.fn.getpos = function(mark)
+		if mark == "'<" then return { vim.api.nvim_get_current_buf(), 1, 1, 0 } end
+		return { vim.api.nvim_get_current_buf(), 1, 1, 0 }
+	end
+	vim.api.nvim_buf_get_lines = function(buf, start_line, end_line, strict)
+		if buf == 0 and start_line == 2 and end_line == 4 then
+			return { "third", "fourth" }
+		end
+		return original_get_lines(buf, start_line, end_line, strict)
+	end
+	init.execute_command = function(command)
+		captured_command = command_to_string(command)
+	end
+
+	init.run_code(1, "float", 3, 4)
+
+	init.execute_command = original_execute_command
+	vim.api.nvim_buf_get_lines = original_get_lines
+	vim.fn.getpos = original_getpos
+	vim.fn.expand = original_expand
+
+	local execution_path = captured_command and captured_command:match("(/[^%s'\"]+%.py)")
+	assert(execution_path, "ranged run should resolve a Python execution file")
+	local handle = assert(io.open(execution_path, "r"), "ranged execution file should exist")
+	local source = handle:read("*a")
+	handle:close()
+	os.remove(execution_path)
+	assert(source == "third\nfourth", "numeric command range should override stale visual marks")
+	reset_job_results()
+	print("✓ RunCode explicit line range test passed")
+end
+
 local function test_execution_modes_start_runner_jobs()
     config.setup({
         singleton = false,
@@ -482,5 +528,6 @@ test_run_live_javascript_ignores_missing_default_scripts()
 test_run_live_javascript_uses_detected_live_alias()
 test_run_code_visual_uses_backend_managed_execution_path()
 test_run_code_rejects_cross_buffer_visual_selection()
+test_run_code_uses_explicit_line_range_instead_of_stale_marks()
 test_execution_modes_start_runner_jobs()
 test_non_string_backend_cwd_is_omitted()

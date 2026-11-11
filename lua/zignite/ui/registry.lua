@@ -2,6 +2,7 @@
 ---@field win_id integer
 ---@field buf_id integer
 ---@field job_id integer|nil
+---@field hidden boolean
 
 ---@type table
 local M = {}
@@ -36,17 +37,27 @@ local function close_runner_ui(runner)
 	end
 end
 
+---@return boolean
+local function evict_completed_runner()
+	for index, runner in ipairs(runners) do
+		if type(runner.job_id) ~= "number" or runner.job_id <= 0 then
+			table.remove(runners, index)
+			close_runner_ui(runner)
+			return true
+		end
+	end
+	return false
+end
+
 ---@param win_id integer
 ---@param buf_id integer
 ---@return ZigniteUiRunner
 function M.track(win_id, buf_id)
 	if #runners >= MAX_RUNNERS then
-		local oldest = table.remove(runners, 1)
-		stop_runner_job(oldest)
-		close_runner_ui(oldest)
+		evict_completed_runner()
 	end
 	---@type ZigniteUiRunner
-	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil }
+	local runner = { win_id = win_id, buf_id = buf_id, job_id = nil, hidden = false }
 	table.insert(runners, runner)
 	return runner
 end
@@ -68,6 +79,8 @@ local function close_at_index(index, stop_job)
 
 	if stop_job then
 		stop_runner_job(runner)
+	else
+		runner.hidden = type(runner.job_id) == "number" and runner.job_id > 0
 	end
 
 	close_runner_ui(runner)
@@ -96,7 +109,9 @@ function M.clean_invalid()
 	---@type ZigniteUiRunner[]
 	local valid = {}
 	for _, runner in ipairs(runners) do
-		if vim.api.nvim_win_is_valid(runner.win_id) then
+		if vim.api.nvim_win_is_valid(runner.win_id)
+			or (runner.hidden and type(runner.job_id) == "number" and runner.job_id > 0)
+		then
 			table.insert(valid, runner)
 		else
 			stop_runner_job(runner)

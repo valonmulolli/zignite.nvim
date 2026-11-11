@@ -16,6 +16,7 @@ function M.run_tests()
     local test_files = {
         "test_common_path_request",
         "test_config",
+        "test_config_sync",
         "test_input_guard",
         "test_json_result",
         "test_registry",

@@ -521,6 +521,7 @@ function M.new(opts)
 
 	local protocol = opts.protocol
 	local worker_wait_ms = tonumber(opts.worker_wait_ms) or 1200
+	local sync_request_max_lifetime_ms = tonumber(opts.sync_request_max_lifetime_ms) or 35000
 	local request_timeout_ms = tonumber(opts.request_timeout_ms) or 0
 
 	---@return boolean
@@ -643,12 +644,20 @@ function M.new(opts)
 		if not worker or not request then
 			return nil
 		end
+		if not request.completed then
+			request.timer = start_request_timer(sync_request_max_lifetime_ms, function()
+				if not request.completed then
+					abort_request(worker, request)
+				end
+			end)
+		end
 
 		local ok_wait = vim.wait(worker_wait_ms, function()
 			return request.completed == true
 		end, 20)
 		if not ok_wait then
-			abort_request(worker, request)
+			-- Keep the active request as the framing owner. Its late reply can be
+			-- drained safely before another queued request is sent.
 			return nil
 		end
 		if request.failed then

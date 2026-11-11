@@ -38,8 +38,16 @@ local function build_config_payload(request_id, params)
 	local lines = { string.format("%s %d %d", CONFIG_REQ_BEGIN, request_id, revision) }
 	local cursor = 1
 	while cursor <= #json_payload do
-		lines[#lines + 1] = "\t" .. json_payload:sub(cursor, cursor + CHUNK_SIZE - 1)
-		cursor = cursor + CHUNK_SIZE
+		local chunk_end = math.min(cursor + CHUNK_SIZE - 1, #json_payload)
+		while chunk_end < #json_payload do
+			local next_byte = json_payload:byte(chunk_end + 1)
+			if next_byte < 0x80 or next_byte > 0xBF then
+				break
+			end
+			chunk_end = chunk_end - 1
+		end
+		lines[#lines + 1] = "\t" .. json_payload:sub(cursor, chunk_end)
+		cursor = chunk_end + 1
 	end
 	lines[#lines + 1] = string.format("%s %d", CONFIG_REQ_END, request_id)
 	return table.concat(lines, "\n") .. "\n"

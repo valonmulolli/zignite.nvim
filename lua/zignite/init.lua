@@ -22,14 +22,45 @@ local function resolve_current_source_context(requested_filetype)
 	return vim.fn.expand("%:p"), filetype
 end
 
+---@param line1 integer|nil
+---@param line2 integer|nil
 ---@return string
-local function get_visual_selection()
+local function get_visual_selection(line1, line2)
 	local buf_num, start_line, start_col = table_unpack(vim.fn.getpos("'<"))
 	local end_buf_num, end_line, end_col = table_unpack(vim.fn.getpos("'>"))
-	if start_line == 0 or end_line == 0 or buf_num ~= end_buf_num or buf_num ~= vim.api.nvim_get_current_buf() then
+	local current_buf = vim.api.nvim_get_current_buf()
+	local explicit_range = type(line1) == "number"
+		and type(line2) == "number"
+		and line1 >= 1
+		and line2 >= line1
+	local marks_match_range = explicit_range
+		and buf_num == end_buf_num
+		and buf_num == current_buf
+		and start_line == line1
+		and end_line == line2
+	if explicit_range and not marks_match_range then
+		return table.concat(vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false), "\n")
+	end
+	if start_line == 0 or end_line == 0 or buf_num ~= end_buf_num or buf_num ~= current_buf then
 		return ""
 	end
-	local ok, text = pcall(vim.api.nvim_buf_get_text, 0, start_line - 1, start_col - 1, end_line - 1, end_col, {})
+	local visual_mode = type(vim.fn.visualmode) == "function" and vim.fn.visualmode() or ""
+	if visual_mode == "V" then
+		return table.concat(vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false), "\n")
+	end
+	local first_line = vim.api.nvim_buf_get_lines(0, start_line - 1, start_line, false)[1] or ""
+	local last_line = vim.api.nvim_buf_get_lines(0, end_line - 1, end_line, false)[1] or ""
+	local start_byte = math.min(math.max(start_col - 1, 0), #first_line)
+	local end_byte = math.min(math.max(end_col, 0), #last_line)
+	local ok, text = pcall(
+		vim.api.nvim_buf_get_text,
+		0,
+		start_line - 1,
+		start_byte,
+		end_line - 1,
+		end_byte,
+		{}
+	)
 	if ok and text then
 		return table.concat(text, "\n")
 	end
@@ -95,8 +126,10 @@ end
 
 ---@param range integer
 ---@param mode string
+---@param line1 integer|nil
+---@param line2 integer|nil
 ---@return nil
-function M.run_code(range, mode)
+function M.run_code(range, mode, line1, line2)
 	config.ensure()
 
 	local buffer_path, filetype = resolve_current_source_context()
@@ -109,7 +142,7 @@ function M.run_code(range, mode)
 		buffer_id = current_buf,
 	}
 	if range > 0 then
-		local code_to_run = get_visual_selection()
+		local code_to_run = get_visual_selection(line1, line2)
 		if code_to_run == "" then
 			ui_windows.show_output(ERRORS.VISUAL_EMPTY, mode)
 			return
