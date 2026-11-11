@@ -25,6 +25,51 @@ local function copy_lines(lines)
 	return out
 end
 
+---@param line string
+---@return string
+local function strip_ansi(line)
+	local output = {}
+	local index = 1
+	while index <= #line do
+		if line:byte(index) == 0x1B and index < #line then
+			local introducer = line:byte(index + 1)
+			if introducer == string.byte("[") then
+				index = index + 2
+				while index <= #line do
+					local byte = line:byte(index)
+					index = index + 1
+					if byte >= 0x40 and byte <= 0x7E then
+						break
+					end
+				end
+			elseif introducer == string.byte("]") or introducer == string.byte("P")
+				or introducer == string.byte("X") or introducer == string.byte("^")
+				or introducer == string.byte("_")
+			then
+				index = index + 2
+				while index <= #line do
+					if line:byte(index) == 0x07 then
+						index = index + 1
+						break
+					end
+					if line:byte(index) == 0x1B and line:byte(index + 1) == string.byte("\\") then
+						index = index + 2
+						break
+					end
+					index = index + 1
+				end
+			else
+				output[#output + 1] = line:sub(index, index)
+				index = index + 1
+			end
+		else
+			output[#output + 1] = line:sub(index, index)
+			index = index + 1
+		end
+	end
+	return table.concat(output)
+end
+
 ---@param lines string[]
 ---@param max_bytes integer
 ---@return string[], boolean
@@ -137,7 +182,7 @@ local function populate_quickfix_lua(lines, quickfix_opts, truncated)
 		local upper = math.min(#processed, idx + chunk_size - 1)
 		for i = idx, upper do
 			if processed[i]:find("\27", 1, true) then
-				processed[i] = processed[i]:gsub("\27%[[0-9;]*m", "")
+				processed[i] = strip_ansi(processed[i])
 			end
 		end
 		idx = upper + 1

@@ -22,6 +22,19 @@ pub fn tail_output(input: &[u8], max_bytes: usize) -> TailOutput {
         }
         if total_bytes > max_bytes {
             truncated = true;
+            if max_bytes == 0 {
+                lines.clear();
+                start_index = 0;
+                total_bytes = 0;
+            } else {
+                let last = lines.len() - 1;
+                let keep_bytes = max_bytes.saturating_sub(1);
+                if lines[last].len() > keep_bytes {
+                    let keep_from = lines[last].len() - keep_bytes;
+                    lines[last] = lines[last][keep_from..].to_vec();
+                }
+                total_bytes = lines[last].len().saturating_add(1);
+            }
         }
     }
 

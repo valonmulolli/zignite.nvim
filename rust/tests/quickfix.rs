@@ -40,6 +40,18 @@ fn diagnostics_cover_zig_rust_go_gcc_and_clang_shapes() {
 }
 
 #[test]
+fn diagnostics_ignore_log_prefixes_and_parse_parenthesized_stack_locations() {
+    assert_eq!(
+        parse_diagnostic(b"2026-11-11T07:30:12.123 INFO started server.py:42:ok"),
+        None
+    );
+    assert_eq!(
+        parse_diagnostic(b"    at Object.<anonymous> (/x/a.js:3:9)"),
+        Some("/x/a.js:3:9: diagnostic".to_owned())
+    );
+}
+
+#[test]
 fn malformed_and_plain_lines_are_not_diagnostics() {
     assert_eq!(parse_diagnostic(b"error: file not found"), None);
     assert_eq!(parse_diagnostic(b"Compiling project..."), None);
@@ -63,6 +75,16 @@ fn tail_limits_lines_without_underflow() {
         vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]
     );
     assert!(!result.truncated);
+}
+
+#[test]
+fn tail_truncates_a_single_line_to_the_byte_limit() {
+    let input = vec![b'x'; 100_000];
+    let result = tail_output(&input, 1000);
+
+    assert_eq!(result.lines.len(), 1);
+    assert_eq!(result.lines[0].len(), 999);
+    assert!(result.truncated);
 }
 
 #[test]

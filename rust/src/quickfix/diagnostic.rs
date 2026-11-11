@@ -24,7 +24,7 @@ fn parse_colon(line: &str) -> Option<String> {
             continue;
         }
         let path = line[..index].trim();
-        if path.is_empty() || !path.bytes().any(|byte| matches!(byte, b'/' | b'\\' | b'.')) {
+        if !plausible_path(path) {
             continue;
         }
         let line_number = line[line_start..cursor].parse::<usize>().ok()?;
@@ -61,14 +61,22 @@ fn parse_colon(line: &str) -> Option<String> {
 
 fn parse_parenthesized(line: &str) -> Option<String> {
     let open = line.find('(')?;
-    let colon = line[open + 1..].find(':')? + open + 1;
-    let close = line[colon + 1..].find(')')? + colon + 1;
-    let path = line[..open].trim();
-    if path.is_empty() || !path.bytes().any(|byte| matches!(byte, b'/' | b'\\' | b'.')) {
-        return None;
-    }
-    let line_number = line[open + 1..colon].parse::<usize>().ok()?;
-    let column = line[colon + 1..close].parse::<usize>().ok()?;
+    let close = line[open + 1..].find(')')? + open + 1;
+    let prefix = line[..open].trim();
+    let location = line[open + 1..close].trim();
+    let (path, line_number, column) =
+        if let Some((path, line_number, column)) = parse_location_suffix(location) {
+            if !plausible_path(path) {
+                return None;
+            }
+            (path, line_number, column)
+        } else {
+            let (line_number, column) = parse_line_column(location)?;
+            if !plausible_path(prefix) {
+                return None;
+            }
+            (prefix, line_number, column)
+        };
     let message = line[close + 1..].trim();
     Some(format!(
         "{path}:{line_number}:{column}: {}",
@@ -78,4 +86,34 @@ fn parse_parenthesized(line: &str) -> Option<String> {
             message
         }
     ))
+}
+
+fn parse_location_suffix(value: &str) -> Option<(&str, usize, usize)> {
+    let (line_and_path, column) = value.rsplit_once(':')?;
+    let column = column.parse().ok()?;
+    let (path, line_number) = line_and_path.rsplit_once(':')?;
+    let line_number = line_number.parse().ok()?;
+    Some((path.trim(), line_number, column))
+}
+
+fn parse_line_column(value: &str) -> Option<(usize, usize)> {
+    let (line_number, column) = value.split_once(':')?;
+    Some((
+        line_number.trim().parse().ok()?,
+        column.trim().parse().ok()?,
+    ))
+}
+
+fn plausible_path(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() || !path.bytes().any(|byte| matches!(byte, b'/' | b'\\' | b'.')) {
+        return false;
+    }
+    if !path.contains(char::is_whitespace) {
+        return true;
+    }
+    path.starts_with('/')
+        || path.starts_with("./")
+        || path.starts_with("../")
+        || path.as_bytes().get(1) == Some(&b':')
 }

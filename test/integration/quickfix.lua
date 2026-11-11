@@ -26,8 +26,8 @@ local function test_quickfix_on_error_lua_processor()
     local original_get_lines = vim.api.nvim_buf_get_lines
     local test_lines = {
         "line-1",
-        "\27[31merror-2\27[0m",
-        "\27[33merror-3\27[0m",
+        "\27[2K\27[31merror-2\27[0m",
+        "\27]0;title\7\27[33merror-3\27[0m",
     }
 
     vim.fn.expand = function(expr)
@@ -53,8 +53,8 @@ local function test_quickfix_on_error_lua_processor()
     local qf = quickfix_results[#quickfix_results]
     assert(#qf.lines == 3, "Quickfix should include truncation notice plus tailed lines")
     assert(qf.lines[1] == "[zignite] quickfix output truncated", "Quickfix should include truncation notice")
-    assert(not qf.lines[2]:match("\27"), "Quickfix line should be ANSI-stripped")
-    assert(not qf.lines[3]:match("\27"), "Quickfix line should be ANSI-stripped")
+    assert(qf.lines[2] == "error-2", "Lua quickfix should strip CSI cursor and SGR sequences")
+    assert(qf.lines[3] == "error-3", "Lua quickfix should strip OSC and SGR sequences")
     assert(count_quickfix_backend_jobs() == 0, "Lua processor should not spawn the Rust quickfix backend")
 
     state.next_exit_code = 0
