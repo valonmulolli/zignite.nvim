@@ -145,6 +145,15 @@ fn process_forwards_stdin() {
 }
 
 #[test]
+fn process_preserves_exit_status_when_child_closes_stdin_early() {
+    let input = vec![b'x'; 4 * 1024 * 1024];
+    let result = run_argv(&shell("exit 0"), no_timeout(), Some(&input))
+        .expect("a child that closes stdin should still return its process result");
+
+    assert!(result.status.success());
+}
+
+#[test]
 fn backend_command_runs_cleanup_after_primary_command() {
     let marker = unique_temp_path("cleanup");
     let marker_text = marker.to_string_lossy().into_owned();
@@ -164,6 +173,24 @@ fn backend_command_runs_cleanup_after_primary_command() {
         "cleaned"
     );
     fs::remove_file(marker).expect("remove cleanup marker");
+}
+
+#[test]
+fn backend_command_preserves_primary_failure_when_cleanup_fails() {
+    let result = run_backend_command(&shell("exit 3"), no_timeout(), None, Some(&shell("exit 1")))
+        .expect("primary command's nonzero status should be preserved");
+
+    assert_eq!(result.status.code(), Some(3));
+}
+
+#[test]
+fn backend_command_reports_cleanup_failure_after_primary_success() {
+    let result = run_backend_command(&hello_command(), no_timeout(), None, Some(&shell("exit 1")));
+
+    assert!(matches!(
+        result,
+        Err(ProcessError::CleanupFailed { code: Some(1) })
+    ));
 }
 
 #[test]

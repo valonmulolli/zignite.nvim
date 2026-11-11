@@ -9,8 +9,72 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zignite::process::{
-    run_argv, run_backend_terminal_command, run_terminal_command, CommandSpec, TimeoutPolicy,
+    run_argv, run_backend_command, run_backend_terminal_command, run_terminal_command, CommandSpec,
+    TimeoutPolicy,
 };
+
+#[test]
+fn backend_command_shares_and_removes_its_private_temp_directory() {
+    let base = std::env::temp_dir().join(format!(
+        "zignite-private-temp-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    ));
+    let path_marker = base.with_extension("path");
+    let cleanup_marker = base.with_extension("cleanup");
+    let path_marker_text = path_marker.to_string_lossy();
+    let cleanup_marker_text = cleanup_marker.to_string_lossy();
+    let spec = CommandSpec {
+        argv: vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "printf '%s' \"$ZIGNITE_TMPDIR\" > '{path_marker_text}' && test -n \"$ZIGNITE_TMPDIR\" && printf data > \"$ZIGNITE_TMPDIR/item\""
+            )
+            .into(),
+        ],
+        cwd: None,
+        env: Vec::new(),
+    };
+    let cleanup = CommandSpec {
+        argv: vec![
+            "sh".into(),
+            "-c".into(),
+            format!("test -f \"$ZIGNITE_TMPDIR/item\" && printf cleaned > '{cleanup_marker_text}'")
+                .into(),
+        ],
+        cwd: None,
+        env: Vec::new(),
+    };
+
+    let result = run_backend_command(
+        &spec,
+        TimeoutPolicy {
+            timeout: None,
+            grace: Duration::from_millis(50),
+        },
+        None,
+        Some(&cleanup),
+    )
+    .expect("command and cleanup should succeed");
+
+    assert!(result.status.success());
+    assert_eq!(
+        fs::read_to_string(&cleanup_marker).expect("cleanup saw the command's temp file"),
+        "cleaned"
+    );
+    let temp_dir = fs::read_to_string(&path_marker).expect("command reports its temp directory");
+    assert!(!temp_dir.is_empty());
+    assert!(
+        !std::path::Path::new(&temp_dir).exists(),
+        "private temp directory should be removed after cleanup"
+    );
+    let _ = fs::remove_file(path_marker);
+    let _ = fs::remove_file(cleanup_marker);
+}
 
 #[test]
 fn timeout_kills_descendants_in_the_process_group() {

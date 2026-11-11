@@ -1,13 +1,17 @@
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(unix)]
 mod unix;
@@ -39,6 +43,47 @@ pub struct ProcessResult {
 pub struct TimeoutPolicy {
     pub timeout: Option<Duration>,
     pub grace: Duration,
+}
+
+struct ExecutionTempDir(PathBuf);
+
+impl ExecutionTempDir {
+    fn create() -> io::Result<Self> {
+        for _ in 0..128 {
+            let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("zignite-run-{}-{sequence}", std::process::id()));
+            let result = create_private_dir(&path);
+            match result {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique execution directory",
+        ))
+    }
+}
+
+impl Drop for ExecutionTempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+fn create_private_dir(path: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(path: &std::path::Path) -> io::Result<()> {
+    fs::create_dir(path)
 }
 
 fn append_command_args(command: &mut Command, spec: &CommandSpec) {
@@ -158,11 +203,13 @@ fn run_argv_inner(
     if let Some(input) = stdin {
         if let Some(mut child_stdin) = child.stdin.take() {
             if let Err(error) = child_stdin.write_all(input) {
-                let _ = tree.terminate(&mut child, policy.grace);
-                let _ = child.wait();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return Err(ProcessError::Io(error.to_string()));
+                if error.kind() != io::ErrorKind::BrokenPipe {
+                    let _ = tree.terminate(&mut child, policy.grace);
+                    let _ = child.wait();
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(ProcessError::Io(error.to_string()));
+                }
             }
         }
     }
@@ -250,20 +297,12 @@ pub fn run_backend_command(
     stdin: Option<&[u8]>,
     cleanup: Option<&CommandSpec>,
 ) -> Result<ProcessResult, ProcessError> {
-    let result = run_argv(spec, policy, stdin);
-    let cleanup_result = cleanup.map(|command| run_argv(command, policy, None));
-
-    if let Some(Err(error)) = cleanup_result {
-        return Err(error);
-    }
-    if let Some(Ok(cleanup_result)) = cleanup_result {
-        if !cleanup_result.status.success() {
-            return Err(ProcessError::CleanupFailed {
-                code: cleanup_result.status.code(),
-            });
-        }
-    }
-    result
+    let (spec, cleanup, _temp_dir) = prepare_execution_commands(spec, cleanup)?;
+    let result = run_argv(&spec, policy, stdin);
+    let cleanup_result = cleanup
+        .as_ref()
+        .map(|command| run_argv(command, policy, None));
+    preserve_primary_result(result, cleanup_result)
 }
 
 pub fn run_backend_terminal_command(
@@ -275,24 +314,76 @@ pub fn run_backend_terminal_command(
     let _signal_guard =
         TerminalSignalGuard::install().map_err(|error| ProcessError::Io(error.to_string()))?;
 
-    let result = run_terminal_command(spec, policy);
+    let (spec, cleanup, _temp_dir) = prepare_execution_commands(spec, cleanup)?;
+    let result = run_terminal_command(&spec, policy);
     #[cfg(unix)]
     if result.as_ref().is_ok_and(|result| result.cancelled) {
         TERMINAL_STOP_REQUESTED.store(false, Ordering::SeqCst);
     }
-    let cleanup_result = cleanup.map(|command| run_argv_inner(command, policy, None, true));
+    let cleanup_result = cleanup
+        .as_ref()
+        .map(|command| run_argv_inner(command, policy, None, true));
 
-    if let Some(Err(error)) = cleanup_result {
-        return Err(error);
+    preserve_primary_result(result, cleanup_result)
+}
+
+fn prepare_execution_commands(
+    spec: &CommandSpec,
+    cleanup: Option<&CommandSpec>,
+) -> Result<(CommandSpec, Option<CommandSpec>, Option<ExecutionTempDir>), ProcessError> {
+    let uses_temp_dir = std::iter::once(spec).chain(cleanup).any(|command| {
+        command
+            .argv
+            .iter()
+            .any(|argument| argument.to_string_lossy().contains("ZIGNITE_TMPDIR"))
+    });
+    let temp_dir = if uses_temp_dir {
+        Some(ExecutionTempDir::create().map_err(|error| ProcessError::Io(error.to_string()))?)
+    } else {
+        None
+    };
+    let spec = temp_dir
+        .as_ref()
+        .map_or_else(|| spec.clone(), |directory| with_temp_dir(spec, directory));
+    let cleanup = cleanup.map(|command| {
+        temp_dir.as_ref().map_or_else(
+            || command.clone(),
+            |directory| with_temp_dir(command, directory),
+        )
+    });
+    Ok((spec, cleanup, temp_dir))
+}
+
+fn with_temp_dir(spec: &CommandSpec, directory: &ExecutionTempDir) -> CommandSpec {
+    let mut spec = spec.clone();
+    spec.env
+        .retain(|(key, _)| key != std::ffi::OsStr::new("ZIGNITE_TMPDIR"));
+    spec.env.push((
+        OsString::from("ZIGNITE_TMPDIR"),
+        directory.0.as_os_str().to_owned(),
+    ));
+    spec
+}
+
+fn preserve_primary_result(
+    result: Result<ProcessResult, ProcessError>,
+    cleanup_result: Option<Result<ProcessResult, ProcessError>>,
+) -> Result<ProcessResult, ProcessError> {
+    let result = result?;
+    if !result.status.success() {
+        return Ok(result);
     }
-    if let Some(Ok(cleanup_result)) = cleanup_result {
+
+    if let Some(cleanup_result) = cleanup_result {
+        let cleanup_result = cleanup_result?;
         if !cleanup_result.status.success() {
             return Err(ProcessError::CleanupFailed {
                 code: cleanup_result.status.code(),
             });
         }
     }
-    result
+
+    Ok(result)
 }
 
 pub fn shell_command(command: &str) -> CommandSpec {
