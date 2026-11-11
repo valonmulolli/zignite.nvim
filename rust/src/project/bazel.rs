@@ -84,8 +84,23 @@ fn find_build_file(root: &ProjectRoot, match_path: Option<&Path>) -> Option<Path
 
 fn named_attribute(body: &str, name: &str) -> Option<String> {
     let tokens = tokenize(body);
-    tokens
-        .windows(3)
-        .find(|window| window[0] == name && window[1] == "=")
-        .map(|window| window[2].to_owned())
+    for (index, token) in tokens.iter().enumerate() {
+        if token == name {
+            let next = tokens.get(index + 1)?;
+            if next == "=" {
+                return tokens.get(index + 2).cloned();
+            }
+            if let Some(value) = next.strip_prefix('=') {
+                if !value.is_empty() {
+                    return Some(value.to_owned());
+                }
+            }
+        }
+        if let Some((key, value)) = token.split_once('=') {
+            if key == name && !value.is_empty() {
+                return Some(value.to_owned());
+            }
+        }
+    }
+    None
 }

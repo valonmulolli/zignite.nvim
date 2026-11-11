@@ -2,6 +2,7 @@ use std::fs;
 
 use super::common::{invalid_payload, push_command, shell_token};
 use super::core::{read_marker, Project, ProjectError, ProjectKind, ProjectRoot};
+use toml::Value;
 
 pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, ProjectError> {
     let _marker_contents = read_marker(&root)?;
@@ -11,19 +12,21 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
             path: pyproject.clone(),
             source,
         })?;
-        contents
+        let value = contents
             .parse::<toml::Value>()
             .map_err(|error| super::common::invalid_file(&pyproject, error.to_string()))?;
-        Some(contents)
+        Some(value)
     } else {
         None
     };
     let mut project = Project::new(root.clone(), kind);
     let profile = if root.root.join("uv.lock").is_file()
-        || pyproject_contents
-            .as_deref()
-            .is_some_and(|contents| contents.lines().any(|line| line.trim() == "[tool.uv]"))
-    {
+        || pyproject_contents.as_ref().is_some_and(|value| {
+            value
+                .get("tool")
+                .and_then(Value::as_table)
+                .is_some_and(|tool| tool.contains_key("uv"))
+        }) {
         "uv"
     } else if root.root.join("environment.yml").is_file()
         || root.root.join("environment.yaml").is_file()
@@ -69,16 +72,31 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
             push_command(&mut project.commands, "install", "conda env update --prune");
         }
         _ => {
-            push_command(&mut project.commands, "run", "python -m main");
-            push_command(&mut project.commands, "test", "pytest");
+            let python = python_executable();
+            push_command(&mut project.commands, "run", &format!("{python} -m main"));
             push_command(
                 &mut project.commands,
-                "install",
-                "pip install -r requirements.txt",
+                "test",
+                &format!("{python} -m pytest"),
             );
+            if root.root.join("requirements.txt").is_file() {
+                push_command(
+                    &mut project.commands,
+                    "install",
+                    &format!("{python} -m pip install -r requirements.txt"),
+                );
+            }
         }
     }
     Ok(project)
+}
+
+fn python_executable() -> &'static str {
+    if cfg!(windows) {
+        "python"
+    } else {
+        "python3"
+    }
 }
 
 fn parse_environment_name(contents: &str) -> Option<String> {

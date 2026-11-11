@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use zignite::project::{find_project_root, ProjectError, ProjectKind};
+use zignite::project::{find_project_root, ProjectKind};
 
 struct TempProject {
     path: PathBuf,
@@ -42,7 +42,7 @@ fn finds_the_nearest_marker_and_returns_a_canonical_root() {
 }
 
 #[test]
-fn missing_markers_return_none_and_invalid_marker_files_are_errors() {
+fn missing_markers_return_none_and_directory_markers_are_skipped() {
     let project = TempProject::new("missing");
     let source = project.path.join("main.go");
     fs::write(&source, "package main\n").expect("write source");
@@ -52,11 +52,36 @@ fn missing_markers_return_none_and_invalid_marker_files_are_errors() {
         None
     );
 
-    fs::create_dir(project.path.join("go.mod")).expect("create invalid marker path");
-    assert!(matches!(
-        find_project_root(&source, ProjectKind::Go),
-        Err(ProjectError::UnreadableMarker { .. })
-    ));
+    fs::create_dir(project.path.join("go.mod")).expect("create directory named like marker");
+    assert_eq!(
+        find_project_root(&source, ProjectKind::Go).expect("search skips directory marker"),
+        None
+    );
+}
+
+#[test]
+fn directory_marker_does_not_hide_parent_project_marker() {
+    let project = TempProject::new("directory-marker-parent");
+    fs::write(project.path.join("go.mod"), "module example.test/demo\n")
+        .expect("write parent module marker");
+    let nested = project.path.join("nested");
+    fs::create_dir_all(nested.join("go.mod")).expect("create directory named go.mod");
+    let source = nested.join("src").join("main.go");
+    fs::create_dir_all(source.parent().expect("source parent")).expect("create source dir");
+    fs::write(&source, "").expect("write source");
+
+    let result = find_project_root(&source, ProjectKind::Go)
+        .expect("search skips directory marker")
+        .expect("parent Bazel project is found");
+
+    assert_eq!(
+        result.root,
+        fs::canonicalize(&project.path).expect("canonical root")
+    );
+    assert_eq!(
+        result.marker.file_name().and_then(|name| name.to_str()),
+        Some("go.mod")
+    );
 }
 
 #[test]

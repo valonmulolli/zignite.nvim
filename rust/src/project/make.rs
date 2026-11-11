@@ -12,6 +12,9 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
         if line.is_empty() || line.starts_with('#') || line.contains("CMAKE generated file") {
             continue;
         }
+        if is_variable_assignment(line) {
+            continue;
+        }
         let Some(colon) = line.find(':') else {
             continue;
         };
@@ -49,8 +52,14 @@ fn strip_comment(value: &str) -> &str {
 
 fn valid_make_target(value: &str) -> bool {
     !value.is_empty()
+        && !value.contains('%')
         && value.chars().all(|character| {
             character.is_ascii_alphanumeric()
-                || matches!(character, '_' | '-' | '.' | '/' | '%' | '@' | '+' | ':')
+                || matches!(character, '_' | '-' | '.' | '/' | '@' | '+' | ':')
         })
+}
+
+fn is_variable_assignment(line: &str) -> bool {
+    line.split_once('=')
+        .is_some_and(|(left, _)| !left.trim_end_matches(':').contains(':'))
 }

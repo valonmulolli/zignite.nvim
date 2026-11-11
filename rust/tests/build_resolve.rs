@@ -272,7 +272,11 @@ fn cmake_resolution_keeps_baseline_commands_and_target_override() {
     assert_eq!(output.build_ready, Some(false));
     assert_eq!(
         output.command("build").expect("target build").command,
-        "cmake --build build --target demo"
+        "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target demo"
+    );
+    assert_eq!(
+        output.command("run").expect("target run").command,
+        "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target demo && ./build/demo"
     );
     assert!(output.command("cmake-config").is_some());
     assert!(output.command("cmake-test").is_some());

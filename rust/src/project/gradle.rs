@@ -39,69 +39,61 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
 }
 
 fn strip_gradle_comments(contents: &str) -> String {
-    let without_line_comments = strip_slash_comments(contents);
-    strip_block_comments(&without_line_comments)
-}
-
-fn strip_slash_comments(contents: &str) -> String {
     let mut output = String::with_capacity(contents.len());
     let mut quote = None;
+    let mut line_comment = false;
+    let mut block_comment = false;
     let mut index = 0usize;
-    while index < contents.len() {
-        let byte = contents.as_bytes()[index];
-        if let Some(active) = quote {
-            output.push(byte as char);
-            if byte == active {
-                quote = None;
-            } else if byte == b'\\' && index + 1 < contents.len() {
-                index += 1;
-                output.push(contents.as_bytes()[index] as char);
+    let characters = contents.chars().collect::<Vec<_>>();
+    while index < characters.len() {
+        let character = characters[index];
+        let next = characters.get(index + 1).copied();
+        if line_comment {
+            if character == '\n' {
+                output.push('\n');
+                line_comment = false;
+            } else {
+                output.push(' ');
             }
             index += 1;
             continue;
         }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-            output.push(byte as char);
-            index += 1;
-        } else if byte == b'/' && contents.as_bytes().get(index + 1) == Some(&b'/') {
-            output.push(' ');
-            index += 2;
-            while index < contents.len() && contents.as_bytes()[index] != b'\n' {
-                output.push(' ');
-                index += 1;
-            }
-        } else {
-            output.push(byte as char);
-            index += 1;
-        }
-    }
-    output
-}
-
-fn strip_block_comments(contents: &str) -> String {
-    let mut output = String::with_capacity(contents.len());
-    let mut index = 0usize;
-    while index < contents.len() {
-        if contents.as_bytes().get(index..index + 2) == Some(b"/*") {
-            output.push(' ');
-            output.push(' ');
-            index += 2;
-            while index + 1 < contents.len() && &contents.as_bytes()[index..index + 2] != b"*/" {
-                output.push(if contents.as_bytes()[index] == b'\n' {
-                    '\n'
-                } else {
-                    ' '
-                });
-                index += 1;
-            }
-            if index + 1 < contents.len() {
-                output.push(' ');
-                output.push(' ');
+        if block_comment {
+            if character == '*' && next == Some('/') {
+                output.push_str("  ");
+                block_comment = false;
                 index += 2;
+            } else {
+                output.push(if character == '\n' { '\n' } else { ' ' });
+                index += 1;
             }
+            continue;
+        }
+        if let Some(active) = quote {
+            output.push(character);
+            if character == '\\' && index + 1 < characters.len() {
+                index += 1;
+                output.push(characters[index]);
+            } else if character == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if character == '\'' || character == '"' {
+            quote = Some(character);
+            output.push(character);
+            index += 1;
+        } else if character == '/' && next == Some('/') {
+            output.push_str("  ");
+            line_comment = true;
+            index += 2;
+        } else if character == '/' && next == Some('*') {
+            output.push_str("  ");
+            block_comment = true;
+            index += 2;
         } else {
-            output.push(contents.as_bytes()[index] as char);
+            output.push(character);
             index += 1;
         }
     }

@@ -13,7 +13,8 @@ pub(super) fn parse(
 ) -> Result<Project, ProjectError> {
     let contents = read_marker(&root)?;
     let source = strip_hash_comments(&contents);
-    let build_dir = shell_word(&discovered_build_dir(&root.root, "build.ninja").0);
+    let (build_dir, ready) = discovered_build_dir(&root.root, "build.ninja");
+    let build_dir = shell_word(&build_dir);
     let mut project = Project::new(root, kind);
     let relative_match = match_path.and_then(|path| relative_path(&project.root, path));
     let basename = match_path
@@ -22,9 +23,15 @@ pub(super) fn parse(
     let executables = call_bodies(&source, "executable")
         .into_iter()
         .map(|body| (body, true));
-    let libraries = call_bodies(&source, "library")
-        .into_iter()
-        .map(|body| (body, false));
+    let libraries = [
+        "library",
+        "shared_library",
+        "static_library",
+        "both_libraries",
+    ]
+    .into_iter()
+    .flat_map(|rule| call_bodies(&source, rule))
+    .map(|body| (body, false));
     let mut first_target = None;
     let mut matched_target = None;
     for (body, is_executable) in executables.chain(libraries) {
@@ -42,17 +49,33 @@ pub(super) fn parse(
         if matched && matched_target.is_none() {
             matched_target = Some(target);
         }
-        add_target(&mut project, name, &build_dir, is_executable);
+        add_target(&mut project, name, &build_dir, ready, is_executable);
     }
     if let Some((name, is_executable)) = matched_target.or(first_target) {
-        add_default_target(&mut project, &name, &build_dir, is_executable);
+        add_default_target(&mut project, &name, &build_dir, ready, is_executable);
     }
     Ok(project)
 }
 
-fn add_target(project: &mut Project, name: &str, build_dir: &str, is_executable: bool) {
+fn target_build_command(build_dir: &str, ready: bool, name: &str) -> String {
     let quoted = shell_token(name);
     let build = format!("meson compile -C {build_dir} --target {quoted}");
+    if ready {
+        build
+    } else {
+        format!("meson setup {build_dir} && {build}")
+    }
+}
+
+fn add_target(
+    project: &mut Project,
+    name: &str,
+    build_dir: &str,
+    ready: bool,
+    is_executable: bool,
+) {
+    let quoted = shell_token(name);
+    let build = target_build_command(build_dir, ready, name);
     push_command(&mut project.commands, &format!("build-{name}"), &build);
     if is_executable {
         let run = format!("{build} && ./{build_dir}/{quoted}");
@@ -60,9 +83,15 @@ fn add_target(project: &mut Project, name: &str, build_dir: &str, is_executable:
     }
 }
 
-fn add_default_target(project: &mut Project, name: &str, build_dir: &str, is_executable: bool) {
+fn add_default_target(
+    project: &mut Project,
+    name: &str,
+    build_dir: &str,
+    ready: bool,
+    is_executable: bool,
+) {
     let quoted = shell_token(name);
-    let build = format!("meson compile -C {build_dir} --target {quoted}");
+    let build = target_build_command(build_dir, ready, name);
     push_command(&mut project.commands, "build", &build);
     if is_executable {
         let run = format!("{build} && ./{build_dir}/{quoted}");

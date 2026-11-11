@@ -18,13 +18,15 @@ fn parses_make_targets_without_recipe_or_variable_false_positives() {
     let root = TempProject::new("make");
     let makefile = root.write(
         "Makefile",
-        "CC=gcc\n.PHONY: build test\nbuild test: all\n\t@true\nunsafe;touch:\n\t@true\n",
+        "CC=gcc\nCC := clang\nexport FOO := bar\n.PHONY: build test\nbuild test: all\n\t@true\n%.o: %.c\n\t@true\nunsafe;touch:\n\t@true\n",
     );
 
     let project = parse_project(ProjectKind::Make, &makefile, None).expect("make parse succeeds");
     assert_eq!(command(&project, "build").command, "make build");
     assert_eq!(command(&project, "test").command, "make test");
     assert!(project.commands.iter().all(|item| item.name != "CC"));
+    assert!(project.commands.iter().all(|item| item.name != "export"));
+    assert!(project.commands.iter().all(|item| item.name != "%.o"));
     assert!(project.commands.iter().all(|item| !item.name.contains(";")));
 }
 
@@ -62,6 +64,20 @@ fn parses_cargo_bins_and_matches_the_source_bin() {
 
     assert_eq!(command(&project, "api").command, "cargo run --bin api");
     assert!(project.commands.iter().any(|item| item.name == "run-api"));
+}
+
+#[test]
+fn matches_cargo_bin_paths_with_current_directory_components() {
+    let root = TempProject::new("cargo-dot-path");
+    root.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"custom-tool\"\npath = \"./src/bin/tool.rs\"\n",
+    );
+    let source = root.write("src/bin/tool.rs", "fn main() {}\n");
+    let project =
+        parse_project(ProjectKind::Cargo, &source, Some(&source)).expect("cargo project parses");
+
+    assert_eq!(project.primary_selector.as_deref(), Some("custom-tool"));
 }
 
 #[test]
@@ -121,6 +137,32 @@ fn parses_python_uv_project() {
 
     assert_eq!(command(&project, "run").command, "uv run -m main");
     assert_eq!(command(&project, "test").command, "uv run pytest");
+    assert_eq!(command(&project, "install").command, "uv sync");
+}
+
+#[test]
+fn pyproject_only_does_not_offer_missing_requirements_install() {
+    let root = TempProject::new("python-pyproject-only");
+    root.write(
+        "pyproject.toml",
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    let source = root.write("main.py", "print('hello')\n");
+    let project = parse_project(ProjectKind::Python, &source, None).expect("python project parses");
+
+    assert!(project.commands.iter().all(|item| item.name != "install"));
+}
+
+#[test]
+fn detects_uv_nested_tables_in_pyproject() {
+    let root = TempProject::new("python-uv-sources");
+    root.write(
+        "pyproject.toml",
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[tool.uv.sources]\npackage = { workspace = true }\n",
+    );
+    let source = root.write("main.py", "print('hello')\n");
+    let project = parse_project(ProjectKind::Python, &source, None).expect("python project parses");
+
     assert_eq!(command(&project, "install").command, "uv sync");
 }
 

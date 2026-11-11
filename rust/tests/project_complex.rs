@@ -25,7 +25,7 @@ fn parses_cmake_target_with_quoted_comment_awareness() {
         .expect("cmake project parses");
     assert_eq!(
         command(&project, "build"),
-        "cmake --build build --target real"
+        "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target real"
     );
     assert!(project.commands.iter().all(|item| item.name != "fake"));
     assert!(project.commands.iter().all(|item| item.name != "comment"));
@@ -43,11 +43,11 @@ fn parses_meson_target() {
         parse_project(ProjectKind::Meson, &build, Some(&source)).expect("meson project parses");
     assert_eq!(
         command(&project, "build"),
-        "meson compile -C build --target demo-app"
+        "meson setup build && meson compile -C build --target demo-app"
     );
     assert_eq!(
         command(&project, "run"),
-        "meson compile -C build --target demo-app && ./build/demo-app"
+        "meson setup build && meson compile -C build --target demo-app && ./build/demo-app"
     );
 }
 
@@ -108,6 +108,30 @@ fn meson_uses_the_source_matching_target_and_discovered_build_directory() {
 }
 
 #[test]
+fn meson_discovers_shared_and_static_library_targets() {
+    let root = TempProject::new("meson-library-kinds");
+    let build = root.write(
+        "meson.build",
+        "project('demo', 'cpp')\nshared_library('shared', 'src/shared.cpp')\nstatic_library('static', 'src/static.cpp')\nboth_libraries('both', 'src/both.cpp')\n",
+    );
+    let source = root.write("src/shared.cpp", "int shared() { return 1; }\n");
+    let project =
+        parse_project(ProjectKind::Meson, &build, Some(&source)).expect("Meson project parses");
+
+    for name in ["shared", "static", "both"] {
+        assert!(project
+            .commands
+            .iter()
+            .any(|item| item.name == format!("build-{name}")));
+    }
+    assert!(project
+        .commands
+        .iter()
+        .all(|item| item.name != "run-shared"));
+    assert!(project.commands.iter().all(|item| item.name != "run"));
+}
+
+#[test]
 fn cmake_parser_preserves_unicode_before_and_inside_targets() {
     let root = TempProject::new("cmake-unicode");
     root.write(
@@ -120,6 +144,55 @@ fn cmake_parser_preserves_unicode_before_and_inside_targets() {
         .expect("Unicode CMake project parses");
     assert!(command(&project, "build").contains("café-app"));
     assert!(command(&project, "build-café-app").contains("café-app"));
+}
+
+#[test]
+fn cmake_resolves_project_name_and_case_insensitive_commands() {
+    let root = TempProject::new("cmake-project-name-case");
+    root.write(
+        "CMakeLists.txt",
+        "project(demo)\nadd_executable(${PROJECT_NAME} src/main.cpp)\nADD_EXECUTABLE(upper src/upper.cpp)\n",
+    );
+    let source = root.write("src/upper.cpp", "int main() { return 0; }\n");
+
+    let project = parse_project(ProjectKind::CMake, root.path(), Some(&source))
+        .expect("CMake project parses");
+
+    assert!(project
+        .commands
+        .iter()
+        .any(|item| item.name == "build-demo"));
+    assert!(project.commands.iter().any(|item| item.name == "run-demo"));
+    assert_eq!(
+        command(&project, "build"),
+        "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && cmake --build build --target upper"
+    );
+    assert!(project
+        .commands
+        .iter()
+        .any(|item| item.name == "build-upper"));
+}
+
+#[test]
+fn cmake_bracket_comments_do_not_create_targets() {
+    let root = TempProject::new("cmake-bracket-comment");
+    root.write(
+        "CMakeLists.txt",
+        "#[[\nadd_executable(fake src/fake.cpp)\n]]\nadd_executable(real src/main.cpp)\n",
+    );
+    let source = root.write("src/main.cpp", "int main() { return 0; }\n");
+
+    let project = parse_project(ProjectKind::CMake, root.path(), Some(&source))
+        .expect("CMake project parses");
+
+    assert!(project
+        .commands
+        .iter()
+        .any(|item| item.name == "build-real"));
+    assert!(project
+        .commands
+        .iter()
+        .all(|item| item.name != "build-fake"));
 }
 
 #[test]
@@ -145,6 +218,24 @@ fn parses_bazel_nested_build_targets_without_comment_injection() {
 }
 
 #[test]
+fn parses_bazel_compact_named_attributes() {
+    let root = TempProject::new("bazel-compact-attrs");
+    root.write("MODULE.bazel", "module(name = \"demo\")\n");
+    let source = root.write(
+        "BUILD.bazel",
+        "cc_binary(name=\"app\", srcs=[\"main.cc\"])\n",
+    );
+    let project =
+        parse_project(ProjectKind::Bazel, &source, Some(&source)).expect("Bazel project parses");
+
+    assert_eq!(command(&project, "build-app"), "bazel build //:app");
+    assert!(project
+        .commands
+        .iter()
+        .all(|item| item.name != "build-name=app"));
+}
+
+#[test]
 fn parses_maven_and_gradle_project_commands() {
     let maven_root = TempProject::new("maven");
     let pom = maven_root.write(
@@ -164,6 +255,19 @@ fn parses_maven_and_gradle_project_commands() {
     let gradle = parse_project(ProjectKind::Gradle, &build, None).expect("gradle project parses");
     assert_eq!(command(&gradle, "build"), "./gradlew build");
     assert_eq!(command(&gradle, "bootRun"), "./gradlew bootRun");
+}
+
+#[test]
+fn gradle_comments_inside_strings_and_unicode_tasks_are_preserved() {
+    let root = TempProject::new("gradle-comments-strings");
+    let build = root.write(
+        "build.gradle",
+        "plugins { id 'application' }\nfilesMatching('**/*.class') { println 'café' }\ntasks.register('héllo') { doLast { println 'ok' } }\n",
+    );
+    let project = parse_project(ProjectKind::Gradle, &build, None).expect("Gradle project parses");
+
+    assert_eq!(command(&project, "run"), "gradle run");
+    assert_eq!(command(&project, "héllo"), "gradle héllo");
 }
 
 #[test]

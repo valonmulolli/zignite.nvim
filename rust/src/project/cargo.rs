@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use toml::Value;
 
@@ -21,6 +21,7 @@ pub(super) fn parse(
         .and_then(Value::as_str);
     let relative_match = relative_match_path(&root.root, match_path);
     let mut project = Project::new(root, kind);
+    let mut matched_manifest_bin = false;
 
     if let Some(bins) = value.get("bin").and_then(Value::as_array) {
         for bin in bins {
@@ -33,9 +34,10 @@ pub(super) fn parse(
             let path = table.get("path").and_then(Value::as_str);
             let matched = relative_match.as_deref().is_some_and(|candidate| {
                 path.map_or(candidate == format!("src/bin/{name}.rs"), |path| {
-                    candidate == path
+                    candidate == normalize_manifest_path(path)
                 })
             });
+            matched_manifest_bin |= matched;
             add_bin_commands(&mut project, name, matched);
         }
     }
@@ -45,8 +47,10 @@ pub(super) fn parse(
             add_bin_commands(&mut project, name, true);
         }
     }
-    if let Some(candidate) = relative_match.as_deref().and_then(bin_name_from_path) {
-        add_bin_commands(&mut project, candidate, true);
+    if !matched_manifest_bin {
+        if let Some(candidate) = relative_match.as_deref().and_then(bin_name_from_path) {
+            add_bin_commands(&mut project, candidate, true);
+        }
     }
     if project.commands.is_empty() {
         push_command(&mut project.commands, "build", "cargo build");
@@ -54,6 +58,17 @@ pub(super) fn parse(
         push_command(&mut project.commands, "test", "cargo test");
     }
     Ok(project)
+}
+
+fn normalize_manifest_path(path: &str) -> String {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        if component == Component::CurDir {
+            continue;
+        }
+        normalized.push(component.as_os_str());
+    }
+    normalized.to_string_lossy().replace('\\', "/")
 }
 
 fn add_bin_commands(project: &mut Project, name: &str, matched: bool) {

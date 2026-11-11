@@ -219,7 +219,7 @@ pub fn find_project_root(
                         marker,
                     }));
                 }
-                Ok(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+                Ok(_) => continue,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
             }
@@ -236,7 +236,7 @@ pub fn find_project_root(
                             marker,
                         }));
                     }
-                    Ok(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+                    Ok(_) => continue,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                     Err(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
                 }
@@ -254,7 +254,7 @@ pub fn find_project_root(
                         marker,
                     }));
                 }
-                Ok(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
+                Ok(_) => continue,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => return Err(ProjectError::UnreadableMarker { path: marker }),
             }

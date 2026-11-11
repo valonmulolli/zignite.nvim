@@ -88,7 +88,78 @@ pub fn strip_hash_comments(value: &str) -> String {
     result
 }
 
+pub fn strip_cmake_comments(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut index = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < value.len() {
+        let character = value[index..]
+            .chars()
+            .next()
+            .expect("index is within the source");
+        if let Some(active) = quote {
+            output.push(character);
+            if active == '"' && escaped {
+                escaped = false;
+            } else if active == '"' && character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            index += character.len_utf8();
+            continue;
+        }
+        if character == '"' || character == '\'' {
+            quote = Some(character);
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
+        if character == '#' {
+            if let Some((open_len, close)) = bracket_comment_delimiters(value, index + 1) {
+                let body_start = index + 1 + open_len;
+                let comment_end = value[body_start..]
+                    .find(&close)
+                    .map_or(value.len(), |relative| body_start + relative + close.len());
+                for comment_char in value[index..comment_end].chars() {
+                    output.push(if comment_char == '\n' { '\n' } else { ' ' });
+                }
+                index = comment_end;
+                continue;
+            }
+        }
+        output.push(character);
+        index += character.len_utf8();
+    }
+    strip_hash_comments(&output)
+}
+
+fn bracket_comment_delimiters(value: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = value.as_bytes();
+    if bytes.get(start) != Some(&b'[') {
+        return None;
+    }
+    let mut cursor = start + 1;
+    while bytes.get(cursor) == Some(&b'=') {
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'[') {
+        return None;
+    }
+    let equals = cursor - start - 1;
+    Some((cursor - start + 1, format!("]{}]", "=".repeat(equals))))
+}
+
 pub fn call_bodies(source: &str, name: &str) -> Vec<String> {
+    call_bodies_matching(source, name, false)
+}
+
+pub fn call_bodies_ascii_case_insensitive(source: &str, name: &str) -> Vec<String> {
+    call_bodies_matching(source, name, true)
+}
+
+fn call_bodies_matching(source: &str, name: &str, ascii_case_insensitive: bool) -> Vec<String> {
     let mut result = Vec::new();
     let mut offset = 0usize;
     let mut quote = None;
@@ -115,7 +186,12 @@ pub fn call_bodies(source: &str, name: &str) -> Vec<String> {
             offset = next_offset;
             continue;
         }
-        if source[offset..].starts_with(name)
+        let matches_name = source[offset..].starts_with(name)
+            || (ascii_case_insensitive
+                && source[offset..]
+                    .get(..name.len())
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name)));
+        if matches_name
             && source[..offset]
                 .chars()
                 .next_back()
