@@ -2,8 +2,9 @@ use std::fs;
 use std::io::Cursor;
 
 use zignite::config::{apply_config_sync, ConfigState};
+use zignite::filetype::filetype_from_path;
 use zignite::paths::quote_shell_arg;
-use zignite::runtime::materialize::materialize_runner;
+use zignite::runtime::materialize::{materialize_runner, substitute_variables_raw};
 use zignite::runtime::types::{ResolvedRunner, RunnerSource};
 use zignite::runtime::{handle_run_frame, resolve_runner, zig_classifier};
 
@@ -36,6 +37,13 @@ fn configured_runner_wins_and_materializes_file_variables() {
 }
 
 #[test]
+fn requested_filetype_precedes_filename_and_extension_inference() {
+    assert_eq!(filetype_from_path("cpp", "/project/header.h"), "cpp");
+    assert_eq!(filetype_from_path("zig", "/project/Makefile"), "zig");
+    assert_eq!(filetype_from_path("prolog", "/project/main.pl"), "prolog");
+}
+
+#[test]
 fn materialization_does_not_confuse_dir_name_with_dir() {
     let mut runner = ResolvedRunner {
         source: RunnerSource::Config,
@@ -57,6 +65,14 @@ fn materialization_does_not_confuse_dir_name_with_dir() {
             )
             .as_str()
         )
+    );
+}
+
+#[test]
+fn placeholders_are_case_sensitive_and_leave_uppercase_environment_variables() {
+    assert_eq!(
+        substitute_variables_raw("$FILE|$file|$Dir|$dir", "/tmp/app.py"),
+        "$FILE|/tmp/app.py|$Dir|/tmp"
     );
 }
 
@@ -172,6 +188,11 @@ fn zig_project_manifest_selects_project_run_command() {
     fs::write(root.join("build.zig"), "pub fn build(_: anytype) void {}\n")
         .expect("write build manifest");
     let source = root.join("main.zig");
+    fs::write(
+        &source,
+        "const options = @import(\"build_options\");\npub fn main() void { _ = options; }\n",
+    )
+    .expect("write source importing a build module");
 
     let resolved = resolve_runner(
         &ConfigState::default(),
@@ -189,6 +210,56 @@ fn zig_project_manifest_selects_project_run_command() {
         Some(root.to_string_lossy().as_ref())
     );
     fs::remove_dir_all(root).expect("remove runtime fixture");
+}
+
+#[test]
+fn zig_project_manifest_does_not_override_standalone_source() {
+    let root =
+        std::env::temp_dir().join(format!("zignite-runtime-standalone-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create runtime fixture");
+    fs::write(root.join("build.zig"), "pub fn build(_: anytype) void {}\n")
+        .expect("write build manifest");
+    let source = root.join("main.zig");
+    fs::write(
+        &source,
+        "const std = @import(\"std\");\npub fn main() void {}\n",
+    )
+    .expect("write standalone source");
+
+    let resolved = resolve_runner(
+        &ConfigState::default(),
+        &source.to_string_lossy(),
+        "zig",
+        None,
+        Some(&source.to_string_lossy()),
+    )
+    .expect("standalone runner resolves");
+
+    assert_eq!(resolved.source, RunnerSource::Builtin);
+    assert!(resolved
+        .command
+        .as_deref()
+        .is_some_and(|command| command.starts_with("zig run ")));
+    fs::remove_dir_all(root).expect("remove runtime fixture");
+}
+
+#[test]
+fn zig_build_module_import_detection_ignores_comments_strings_and_file_imports() {
+    use zignite::runtime::zig_classifier::contains_build_module_import;
+
+    let non_project_source = r#"
+        // @import("commented")
+        const text = "@import(\\\"string\")";
+        const multiline =
+            \\@import("multiline")
+        ;
+        const std = @import("std");
+        const local = @import("src/local.zig");
+    "#;
+    assert!(!contains_build_module_import(non_project_source));
+    assert!(contains_build_module_import(
+        "const options = @import(\"build_options\");"
+    ));
 }
 
 #[test]

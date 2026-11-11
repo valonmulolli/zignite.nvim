@@ -23,13 +23,11 @@ fn normalize_path_handles_windows_drive_and_unc_paths() {
 }
 
 #[test]
-fn filetype_policy_applies_aliases_and_manifest_names() {
+fn filetype_policy_prefers_requested_type_then_uses_manifest_names() {
     assert_eq!(filetype_from_path("c++", "/tmp/main.cpp"), "cpp");
-    assert_eq!(
-        filetype_from_path("json", "/tmp/package.json"),
-        "javascript"
-    );
-    assert_eq!(filetype_from_path("toml", "/tmp/Cargo.toml"), "rust");
+    assert_eq!(filetype_from_path("json", "/tmp/package.json"), "json");
+    assert_eq!(filetype_from_path("toml", "/tmp/Cargo.toml"), "toml");
+    assert_eq!(filetype_from_path("", "/tmp/Cargo.toml"), "rust");
     assert_eq!(
         filetype_from_path("unknown", "/tmp/main.unknown"),
         "unknown"

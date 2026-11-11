@@ -37,9 +37,20 @@ pub fn resolve_runner(
         normalize_path(path)
     };
 
+    let source_contents = if filetype == "zig" && config.runner_config(&filetype).is_none() {
+        inline_source.map(str::to_owned).or_else(|| {
+            let source_path = context_path.filter(|path| !path.is_empty()).unwrap_or(path);
+            std::fs::read_to_string(source_path).ok()
+        })
+    } else {
+        None
+    };
+
     let mut resolved = if let Some(configured) = config.runner_config(&filetype) {
         from_config(configured, &filetype)
-    } else if let Some(project) = project_runner(config, context_path, &filetype) {
+    } else if let Some(project) =
+        project_runner(config, context_path, &filetype, source_contents.as_deref())
+    {
         project
     } else {
         builtin::runner(&filetype)
@@ -296,6 +307,7 @@ fn project_runner(
     config: &ConfigState,
     context_path: Option<&str>,
     filetype: &str,
+    source_contents: Option<&str>,
 ) -> Option<ResolvedRunner> {
     let context = context_path?;
     let mut directory = std::path::Path::new(context);
@@ -317,7 +329,13 @@ fn project_runner(
     }
     for root in directory.ancestors() {
         let (manifest, command) = match filetype {
-            "zig" if root.join("build.zig").is_file() => ("build.zig", "zig build run"),
+            "zig"
+                if root.join("build.zig").is_file()
+                    && source_contents
+                        .is_some_and(zig_classifier::contains_build_module_import) =>
+            {
+                ("build.zig", "zig build run")
+            }
             "go" if root.join("go.mod").is_file() => ("go.mod", "go run ."),
             "rust" if root.join("Cargo.toml").is_file() => ("Cargo.toml", "cargo run"),
             _ => continue,

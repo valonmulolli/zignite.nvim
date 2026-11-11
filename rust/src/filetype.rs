@@ -2,13 +2,16 @@ use std::collections::HashMap;
 
 pub fn filetype_from_path(requested: &str, path: &str) -> String {
     let requested = alias(requested.trim());
+    if !requested.is_empty() {
+        return requested.to_owned();
+    }
     if let Some(filetype) = filename_filetype(path) {
         return filetype.to_owned();
     }
     if let Some(filetype) = extension_filetype(path) {
         return filetype.to_owned();
     }
-    requested.to_owned()
+    String::new()
 }
 
 pub fn alias(value: &str) -> &str {

@@ -4,31 +4,31 @@ pub struct BuiltinRunner {
 }
 
 #[cfg(unix)]
-const C_COMMAND: &str = "gcc -pipe $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt";
+const C_COMMAND: &str = "gcc -pipe $file -o \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\" && \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(unix)]
-const CPP_COMMAND: &str = "c++ -pipe $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt";
+const CPP_COMMAND: &str = "c++ -pipe $file -o \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\" && \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(unix)]
-const RUST_COMMAND: &str = "rustc $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt";
+const RUST_COMMAND: &str = "rustc $file -o \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\" && \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(unix)]
 const FORTRAN_COMMAND: &str =
-    "gfortran $file -o /tmp/$fileNameWithoutExt && /tmp/$fileNameWithoutExt";
+    "gfortran $file -o \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\" && \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(unix)]
-const TEMP_BINARY_CLEANUP: &str = "rm -f /tmp/$fileNameWithoutExt";
+const TEMP_BINARY_CLEANUP: &str = "rm -f \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(windows)]
 const C_COMMAND: &str =
-    "gcc -pipe $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "gcc -pipe $file -o \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" && \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const CPP_COMMAND: &str =
-    "c++ -pipe $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "c++ -pipe $file -o \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" && \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const RUST_COMMAND: &str =
-    "rustc $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "rustc $file -o \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" && \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const FORTRAN_COMMAND: &str =
-    "gfortran $file -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "gfortran $file -o \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" && \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 #[cfg(windows)]
 const TEMP_BINARY_CLEANUP: &str =
-    "if exist \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" del /Q \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "if exist \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" del /Q \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 
 #[cfg(unix)]
 const PYTHON_COMMAND: &str = "python3 -u $file";
@@ -47,15 +47,15 @@ const OPEN_FILE_COMMAND: &str = "xdg-open $file";
 
 #[cfg(unix)]
 const KOTLIN_COMMAND: &str =
-    "kotlinc $file -include-runtime -d /tmp/$fileNameWithoutExt.jar && java -jar /tmp/$fileNameWithoutExt.jar";
+    "kotlinc $file -include-runtime -d \"$ZIGNITE_TMPDIR/$fileNameWithoutExt.jar\" && java -jar \"$ZIGNITE_TMPDIR/$fileNameWithoutExt.jar\"";
 #[cfg(unix)]
-const KOTLIN_CLEANUP: &str = "rm -f /tmp/$fileNameWithoutExt.jar";
+const KOTLIN_CLEANUP: &str = "rm -f \"$ZIGNITE_TMPDIR/$fileNameWithoutExt.jar\"";
 #[cfg(windows)]
 const KOTLIN_COMMAND: &str =
-    "kotlinc $file -include-runtime -d \"%TEMP%\\zignite-$fileNameWithoutExt.jar\" && java -jar \"%TEMP%\\zignite-$fileNameWithoutExt.jar\"";
+    "kotlinc $file -include-runtime -d \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.jar\" && java -jar \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.jar\"";
 #[cfg(windows)]
 const KOTLIN_CLEANUP: &str =
-    "if exist \"%TEMP%\\zignite-$fileNameWithoutExt.jar\" del /Q \"%TEMP%\\zignite-$fileNameWithoutExt.jar\"";
+    "if exist \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.jar\" del /Q \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.jar\"";
 
 pub fn runner(filetype: &str) -> Option<BuiltinRunner> {
     if let Some(runner) = compiled_runner(filetype) {
@@ -110,10 +110,10 @@ fn compiled_runner(filetype: &str) -> Option<BuiltinRunner> {
 }
 
 #[cfg(unix)]
-const HASKELL_COMMAND: &str = "ghc -o /tmp/$fileNameWithoutExt $file && /tmp/$fileNameWithoutExt";
+const HASKELL_COMMAND: &str = "ghc -o \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\" $file && \"$ZIGNITE_TMPDIR/$fileNameWithoutExt\"";
 #[cfg(windows)]
 const HASKELL_COMMAND: &str =
-    "ghc -o \"%TEMP%\\zignite-$fileNameWithoutExt.exe\" $file && \"%TEMP%\\zignite-$fileNameWithoutExt.exe\"";
+    "ghc -o \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\" $file && \"%ZIGNITE_TMPDIR%\\zignite-$fileNameWithoutExt.exe\"";
 
 #[cfg(unix)]
 const JAVA_CLEANUP: &str = "rm -f $dir/$fileNameWithoutExt.class";

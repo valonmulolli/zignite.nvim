@@ -152,15 +152,6 @@ fn materialize_arguments(
             "empty command arguments".to_owned(),
         ));
     }
-    if tokens.iter().any(|token| {
-        token
-            .bytes()
-            .any(|byte| matches!(byte, b';' | b'|' | b'&' | b'<' | b'>' | b'`'))
-    }) {
-        return Err(super::BuildError::InvalidCommand(
-            "unsafe command arguments".to_owned(),
-        ));
-    }
     let replacement = if filetype == "zig" && command_name == "fetch" {
         let value = tokens.first().expect("checked non-empty");
         let value = if value.starts_with("git+") {

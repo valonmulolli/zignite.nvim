@@ -104,6 +104,38 @@ fn action_returns_argument_metadata_before_execution() {
 }
 
 #[test]
+fn quoted_argument_shell_metacharacters_remain_literal_arguments() {
+    let root = root("quoted-metacharacters");
+    let path = root.join("main.txt");
+    fs::write(&path, "input\n").expect("write source");
+    let mut config = ConfigState::default();
+    apply_config_sync(
+        &mut config,
+        7,
+        r#"{"build_commands":{"text":{"custom":"zignite_missing_tool $zignite_args"}}}"#,
+    )
+    .expect("sync config");
+
+    let plan = resolve_action(
+        &config,
+        &mut BuildState::default(),
+        &path,
+        "text",
+        ActionKind::Named,
+        Some("custom"),
+        Some("\"one;two|three\""),
+    )
+    .expect("resolve command");
+
+    assert_eq!(plan.exec_argv[1], "one;two|three");
+    assert!(plan
+        .exec_command
+        .as_deref()
+        .is_some_and(|command| command.contains("'one;two|three'")));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn action_reports_missing_tool_without_running_it() {
     let mut config = ConfigState::default();
     apply_config_sync(

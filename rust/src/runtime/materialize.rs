@@ -324,17 +324,17 @@ fn substitute(value: &str, path: &str, shell: bool, cwd_hint: Option<&str>) -> S
         }
 
         let name = &value[name_start..end];
-        let replacement = if name.eq_ignore_ascii_case("dir") {
+        let replacement = if name == "dir" {
             Some(dir)
-        } else if name.eq_ignore_ascii_case("file") {
+        } else if name == "file" {
             Some(path)
-        } else if name.eq_ignore_ascii_case("filename") {
+        } else if name == "fileName" {
             Some(basename(path))
-        } else if name.eq_ignore_ascii_case("filenamewithoutext") {
+        } else if name == "fileNameWithoutExt" {
             Some(file_name_without_extension(path))
-        } else if name.eq_ignore_ascii_case("fileext") {
+        } else if name == "fileExt" {
             Some(extension(path))
-        } else if name.eq_ignore_ascii_case("dirname") {
+        } else if name == "dirName" {
             Some(basename(root))
         } else {
             None
