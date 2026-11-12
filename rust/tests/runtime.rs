@@ -185,8 +185,11 @@ fn inline_source_uses_a_stable_extension_path() {
 fn zig_project_manifest_selects_project_run_command() {
     let root = std::env::temp_dir().join(format!("zignite-runtime-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create runtime fixture");
-    fs::write(root.join("build.zig"), "pub fn build(_: anytype) void {}\n")
-        .expect("write build manifest");
+    fs::write(
+        root.join("build.zig"),
+        "pub fn build(b: anytype) void { _ = b.step(\"run\", \"Run app\"); }\n",
+    )
+    .expect("write build manifest");
     let source = root.join("main.zig");
     fs::write(
         &source,
@@ -240,6 +243,40 @@ fn zig_project_manifest_does_not_override_standalone_source() {
         .command
         .as_deref()
         .is_some_and(|command| command.starts_with("zig run ")));
+    fs::remove_dir_all(root).expect("remove runtime fixture");
+}
+
+#[test]
+fn zig_build_module_without_literal_run_step_does_not_select_missing_step() {
+    let root = std::env::temp_dir().join(format!(
+        "zignite-runtime-no-run-step-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create runtime fixture");
+    fs::write(root.join("build.zig"), "pub fn build(_: anytype) void {}\n")
+        .expect("write build manifest without a run step");
+    let source = root.join("main.zig");
+    fs::write(
+        &source,
+        "const options = @import(\"build_options\");\npub fn main() void { _ = options; }\n",
+    )
+    .expect("write source importing a build module");
+
+    let resolved = resolve_runner(
+        &ConfigState::default(),
+        &source.to_string_lossy(),
+        "zig",
+        None,
+        Some(&source.to_string_lossy()),
+    )
+    .expect("project runner resolution completes");
+
+    assert_eq!(resolved.source, RunnerSource::Project);
+    assert!(resolved.command.is_none());
+    assert_eq!(resolved.missing_tool, None);
+    assert!(zignite::runtime::serialize_runner(&resolved, 0)
+        .iter()
+        .any(|line| line.contains("could not confirm an explicit 'run' step")));
     fs::remove_dir_all(root).expect("remove runtime fixture");
 }
 

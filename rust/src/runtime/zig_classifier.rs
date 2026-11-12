@@ -73,6 +73,80 @@ pub fn contains_build_module_import(source: &str) -> bool {
     false
 }
 
+pub fn contains_named_build_step(source: &str, name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"//") {
+            index = skip_line(bytes, index);
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            index = skip_block_comment(bytes, index).0;
+            continue;
+        }
+        if matches!(bytes[index], b'"' | b'\'') {
+            index = skip_quoted(bytes, index, bytes[index]);
+            continue;
+        }
+        if bytes[index..].starts_with(b"step")
+            && (index == 0 || !is_identifier(bytes[index - 1]))
+            && (index + 4 == bytes.len() || !is_identifier(bytes[index + 4]))
+            && previous_non_whitespace(bytes, index) == Some(b'.')
+        {
+            if named_step_call(source, index + 4, name).is_some() {
+                return true;
+            } else {
+                index += 4;
+                continue;
+            }
+        }
+        index += source[index..]
+            .chars()
+            .next()
+            .expect("index is within the source")
+            .len_utf8();
+    }
+    false
+}
+
+fn previous_non_whitespace(bytes: &[u8], mut index: usize) -> Option<u8> {
+    while index > 0 {
+        index -= 1;
+        if !bytes[index].is_ascii_whitespace() {
+            return Some(bytes[index]);
+        }
+    }
+    None
+}
+
+fn named_step_call(source: &str, mut index: usize, name: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'(') {
+        return None;
+    }
+    index += 1;
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'"') {
+        return None;
+    }
+    index += 1;
+    let end = index.checked_add(name.len())?;
+    if source.get(index..end)? != name || bytes.get(end) != Some(&b'"') {
+        return None;
+    }
+    index = end + 1;
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+        index += 1;
+    }
+    matches!(bytes.get(index), Some(b',' | b')')).then_some(index)
+}
+
 fn parse_import_string(source: &str, mut index: usize) -> Option<(&str, usize)> {
     let bytes = source.as_bytes();
     while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
@@ -216,4 +290,35 @@ fn strip_comments_and_strings(source: &str) -> String {
         index += 1;
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_named_build_step;
+
+    #[test]
+    fn detects_literal_run_step_declarations() {
+        assert!(contains_named_build_step(
+            "pub fn build(b: *std.Build) void { _ = b.step(\"run\", \"Run app\"); }",
+            "run"
+        ));
+    }
+
+    #[test]
+    fn ignores_run_step_text_in_comments_and_strings() {
+        let source = r#"
+            // b.step("run", "comment only");
+            const example = "b.step(\\\"run\\\", \\\"not code\\\");";
+            pub fn build(_: *std.Build) void {}
+        "#;
+        assert!(!contains_named_build_step(source, "run"));
+    }
+
+    #[test]
+    fn does_not_treat_other_steps_as_run() {
+        assert!(!contains_named_build_step(
+            "pub fn build(b: *std.Build) void { _ = b.step(\"test\", \"Test\"); }",
+            "run"
+        ));
+    }
 }

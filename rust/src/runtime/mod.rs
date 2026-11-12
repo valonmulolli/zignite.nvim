@@ -174,10 +174,17 @@ pub fn serialize_runner(runner: &ResolvedRunner, revision: u64) -> Vec<String> {
         .map(|tool| format!("Error: Required executable '{tool}' was not found in PATH."))
         .or_else(|| {
             (!ok).then(|| {
-                format!(
-                    "Error: No runner configured for filetype: {}",
-                    runner.filetype
-                )
+                if runner.source == RunnerSource::Project
+                    && runner.filetype == "zig"
+                    && runner.command.is_none()
+                {
+                    "Error: Zignite could not confirm an explicit 'run' step in build.zig for this build-module import. Add b.step(\"run\", ...) or configure a Zig runner.".to_owned()
+                } else {
+                    format!(
+                        "Error: No runner configured for filetype: {}",
+                        runner.filetype
+                    )
+                }
             })
         });
     let system_argv = if ok {
@@ -328,14 +335,24 @@ fn project_runner(
         });
     }
     for root in directory.ancestors() {
+        if filetype == "zig"
+            && root.join("build.zig").is_file()
+            && source_contents.is_some_and(zig_classifier::contains_build_module_import)
+        {
+            let command = std::fs::read_to_string(root.join("build.zig"))
+                .ok()
+                .filter(|source| zig_classifier::contains_named_build_step(source, "run"))
+                .map(|_| "zig build run".to_owned());
+            return Some(ResolvedRunner {
+                source: RunnerSource::Project,
+                filetype: filetype.to_owned(),
+                command,
+                cwd: Some(root.to_string_lossy().into_owned()),
+                name: Some("Zig Project".to_owned()),
+                ..ResolvedRunner::default()
+            });
+        }
         let (manifest, command) = match filetype {
-            "zig"
-                if root.join("build.zig").is_file()
-                    && source_contents
-                        .is_some_and(zig_classifier::contains_build_module_import) =>
-            {
-                ("build.zig", "zig build run")
-            }
             "go" if root.join("go.mod").is_file() => ("go.mod", "go run ."),
             "rust" if root.join("Cargo.toml").is_file() => ("Cargo.toml", "cargo run"),
             _ => continue,
