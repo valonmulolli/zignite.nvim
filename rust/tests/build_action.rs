@@ -128,10 +128,15 @@ fn quoted_argument_shell_metacharacters_remain_literal_arguments() {
     .expect("resolve command");
 
     assert_eq!(plan.exec_argv[1], "one;two|three");
+    let quoted_argument = if cfg!(windows) {
+        "\"one;two|three\""
+    } else {
+        "'one;two|three'"
+    };
     assert!(plan
         .exec_command
         .as_deref()
-        .is_some_and(|command| command.contains("'one;two|three'")));
+        .is_some_and(|command| command.contains(quoted_argument)));
     let _ = fs::remove_dir_all(root);
 }
 
