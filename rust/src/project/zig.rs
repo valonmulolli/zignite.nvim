@@ -9,18 +9,7 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
     let _ = read_marker(&root)?;
     let result = run_argv(
         &CommandSpec {
-            argv: [
-                "zig",
-                "build",
-                "--cache-dir",
-                ".zig-cache",
-                "--global-cache-dir",
-                ".zig-global-cache",
-                "-l",
-            ]
-            .into_iter()
-            .map(OsString::from)
-            .collect(),
+            argv: list_steps_argv(),
             cwd: Some(root.root.clone()),
             env: Vec::new(),
         },
@@ -53,6 +42,13 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
     Ok(project)
 }
 
+fn list_steps_argv() -> Vec<OsString> {
+    ["zig", "build", "--cache-dir", ".zig-cache", "-l"]
+        .into_iter()
+        .map(OsString::from)
+        .collect()
+}
+
 pub fn parse_steps(output: &str) -> Vec<String> {
     let mut steps = Vec::new();
     for line in output.lines().map(str::trim) {
@@ -73,4 +69,22 @@ pub fn parse_steps(output: &str) -> Vec<String> {
         }
     }
     steps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_steps_argv;
+
+    #[test]
+    fn step_listing_uses_supported_zig_build_arguments() {
+        let arguments = list_steps_argv()
+            .into_iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            arguments,
+            ["zig", "build", "--cache-dir", ".zig-cache", "-l"]
+        );
+    }
 }
