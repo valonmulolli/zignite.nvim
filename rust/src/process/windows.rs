@@ -175,6 +175,14 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn child_marker_helper() {
+        let Some(marker) = std::env::var_os("ZIGNITE_SUSPENDED_CHILD_MARKER") else {
+            return;
+        };
+        fs::write(marker, b"started").expect("write child marker");
+    }
+
+    #[test]
     fn child_does_not_run_before_job_assignment() {
         let marker = std::env::temp_dir().join(format!(
             "zignite-suspended-child-{}.txt",
@@ -182,10 +190,15 @@ mod tests {
         ));
         let _ = fs::remove_file(&marker);
 
-        let script = format!("echo started > \"{}\"", marker.display());
-        let mut command = Command::new("cmd.exe");
+        let executable = std::env::current_exe().expect("current test executable");
+        let mut command = Command::new(executable);
         command
-            .args(["/C", &script])
+            .args([
+                "--exact",
+                "process::windows::tests::child_marker_helper",
+                "--nocapture",
+            ])
+            .env("ZIGNITE_SUSPENDED_CHILD_MARKER", &marker)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -193,14 +206,22 @@ mod tests {
         let mut child = command.spawn().expect("spawn suspended child");
 
         thread::sleep(Duration::from_millis(200));
-        assert!(
-            !marker.exists(),
-            "child executed before it was assigned to the job"
-        );
+        if marker.exists() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("child executed before it was assigned to the job");
+        }
 
-        let _tree = ProcessTree::new(&child).expect("assign and resume child");
+        let _tree = match ProcessTree::new(&child) {
+            Ok(tree) => tree,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("assign and resume child: {error}");
+            }
+        };
         let status = child.wait().expect("wait for resumed child");
-        assert!(status.success());
+        assert!(status.success(), "child exited with {status}");
         assert!(marker.exists(), "child should execute after job assignment");
 
         fs::remove_file(marker).expect("remove marker");
