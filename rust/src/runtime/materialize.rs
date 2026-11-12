@@ -37,6 +37,10 @@ pub fn substitute_variables_shell(value: &str, path: &str) -> String {
 }
 
 pub fn tokenize_command(command: &str) -> Result<Vec<String>, String> {
+    tokenize_command_for_platform(command, cfg!(windows))
+}
+
+fn tokenize_command_for_platform(command: &str, windows: bool) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut quote = None;
@@ -47,7 +51,7 @@ pub fn tokenize_command(command: &str) -> Result<Vec<String>, String> {
             escaped = false;
             continue;
         }
-        if character == '\\' && quote != Some('\'') {
+        if !windows && character == '\\' && quote != Some('\'') {
             escaped = true;
             continue;
         }
@@ -56,6 +60,18 @@ pub fn tokenize_command(command: &str) -> Result<Vec<String>, String> {
                 quote = None;
             } else {
                 current.push(character);
+            }
+            continue;
+        }
+        if windows {
+            match character {
+                '"' => quote = Some(character),
+                value if value.is_whitespace() => {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                value => current.push(value),
             }
             continue;
         }
@@ -79,7 +95,11 @@ pub fn tokenize_command(command: &str) -> Result<Vec<String>, String> {
 }
 
 pub(crate) fn first_external_program(command: &str) -> Option<String> {
-    let tokens = tokenize_command(command).ok()?;
+    first_external_program_for_platform(command, cfg!(windows))
+}
+
+fn first_external_program_for_platform(command: &str, windows: bool) -> Option<String> {
+    let tokens = tokenize_command_for_platform(command, windows).ok()?;
     let mut at_segment_start = true;
     for token in tokens {
         if matches!(token.as_str(), "&&" | "||" | ";" | "|" | "&") {
@@ -406,7 +426,10 @@ fn is_reserved_argv_command(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_external_program, requires_shell, tokenize_command};
+    use super::{
+        first_external_program, first_external_program_for_platform, requires_shell,
+        tokenize_command, tokenize_command_for_platform,
+    };
 
     #[test]
     fn executable_lookup_skips_shell_builtins_and_checks_later_commands() {
@@ -449,6 +472,19 @@ mod tests {
         assert_eq!(
             first_external_program("CC=clang make build"),
             Some("make".to_owned())
+        );
+    }
+
+    #[test]
+    fn windows_executable_lookup_preserves_absolute_path_separators() {
+        let command = r#""C:\Program Files\LLVM\bin\clang.exe" -c source.c"#;
+        assert_eq!(
+            first_external_program_for_platform(command, true),
+            Some(r#"C:\Program Files\LLVM\bin\clang.exe"#.to_owned())
+        );
+        assert_eq!(
+            tokenize_command_for_platform(command, true).expect("Windows command parses"),
+            vec![r#"C:\Program Files\LLVM\bin\clang.exe"#, "-c", "source.c"]
         );
     }
 }
