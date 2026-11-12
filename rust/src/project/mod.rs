@@ -1,6 +1,7 @@
 mod bazel;
 mod cargo;
 mod cmake;
+mod cmake_runner;
 pub(crate) mod common;
 mod core;
 mod go;
@@ -20,6 +21,7 @@ use crate::protocol::{
     ResponseFrame, DEFAULT_MAX_LINE,
 };
 
+pub use cmake_runner::run_target as run_cmake_target;
 pub use core::{
     find_project_root, walk_upward, Project, ProjectCommand, ProjectError, ProjectKind, ProjectRoot,
 };

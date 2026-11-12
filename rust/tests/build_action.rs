@@ -217,3 +217,43 @@ fn action_checks_relative_tools_from_the_project_directory() {
     assert_eq!(plan.reason.as_deref(), Some("missing_tool"));
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn cmake_run_action_uses_the_backend_target_runner() {
+    if std::process::Command::new("cmake")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+
+    let root = root("cmake-runner");
+    fs::create_dir_all(root.join("src")).expect("create source directory");
+    fs::write(
+        root.join("CMakeLists.txt"),
+        "project(demo C)\nadd_executable(demo src/main.c)\n",
+    )
+    .expect("write CMake project");
+    let source = root.join("src/main.c");
+    fs::write(&source, "int main(void) { return 0; }\n").expect("write source");
+
+    let plan = resolve_action(
+        &ConfigState::default(),
+        &mut BuildState::default(),
+        &source,
+        "c",
+        ActionKind::Named,
+        Some("run"),
+        None,
+    )
+    .expect("resolve CMake run action");
+
+    assert!(plan.ok);
+    assert_eq!(plan.system_argv[1], "--cmake-run-target");
+    assert!(plan
+        .system_argv
+        .iter()
+        .any(|argument| argument == "--target=demo"));
+    let _ = fs::remove_dir_all(root);
+}

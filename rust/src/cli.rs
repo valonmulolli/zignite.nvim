@@ -15,6 +15,7 @@ pub enum Mode {
     BuildResolve,
     BuildAction,
     RunResolve,
+    CMakeRunTarget,
     Command,
     Argv,
 }
@@ -84,6 +85,7 @@ fn mode_for(argument: &str) -> Option<Mode> {
         "--build-resolve" => Mode::BuildResolve,
         "--build-action" => Mode::BuildAction,
         "--run-resolve" => Mode::RunResolve,
+        "--cmake-run-target" => Mode::CMakeRunTarget,
         _ => return None,
     })
 }
@@ -115,5 +117,19 @@ mod tests {
         assert_eq!(cli.mode, Mode::Argv);
         assert!(cli.options.is_empty());
         assert_eq!(cli.argv, vec!["printf", "--timeout=child"]);
+    }
+
+    #[test]
+    fn parses_internal_cmake_target_mode_options() {
+        let cli = parse_args([
+            "--cmake-run-target",
+            "--source-dir=/project",
+            "--build-dir=/project/build",
+            "--target=app",
+        ])
+        .expect("CMake target mode parses");
+
+        assert_eq!(cli.mode, Mode::CMakeRunTarget);
+        assert_eq!(cli.options.len(), 3);
     }
 }

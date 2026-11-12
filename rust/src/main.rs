@@ -45,6 +45,7 @@ fn run() -> Result<ExitCode, BackendError> {
         Mode::Command => run_command_mode(&cli.argv, &cli.options),
         Mode::Argv => run_argv_mode(&cli.argv, &cli.options),
         Mode::RunResolve => run_run_resolve_mode(&cli.options),
+        Mode::CMakeRunTarget => run_cmake_target_mode(&cli.options),
     }
 }
 
@@ -169,6 +170,29 @@ fn run_run_resolve_mode(options: &[String]) -> Result<ExitCode, BackendError> {
         println!("{line}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_cmake_target_mode(options: &[String]) -> Result<ExitCode, BackendError> {
+    let source_dir = option_value(options, "--source-dir=")
+        .ok_or(zignite::error::CliError::MissingValue("--source-dir="))?;
+    let build_dir = option_value(options, "--build-dir=")
+        .ok_or(zignite::error::CliError::MissingValue("--build-dir="))?;
+    let target = option_value(options, "--target=")
+        .ok_or(zignite::error::CliError::MissingValue("--target="))?;
+    let timeout = option_value(options, "--timeout-ms=")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map(Duration::from_millis)
+                .map_err(|_| zignite::error::CliError::InvalidValue(value.to_owned()))
+        })
+        .transpose()?;
+    zignite::project::run_cmake_target(
+        std::path::Path::new(source_dir),
+        std::path::Path::new(build_dir),
+        target,
+        timeout,
+    )
 }
 
 fn run_argv_mode(argv: &[String], options: &[String]) -> Result<ExitCode, BackendError> {

@@ -7,7 +7,7 @@ use crate::runtime::materialize::{
 };
 
 use super::resolve::resolve_build;
-use super::types::{ActionKind, ActionPlan, BuildState};
+use super::types::{ActionKind, ActionPlan, BuildSource, BuildState};
 
 pub fn resolve_action(
     config: &ConfigState,
@@ -113,7 +113,23 @@ pub fn resolve_action(
         }
     }
     state.remember(&filetype, &entry.name);
-    let system_argv = system_argv(&exec_command, &exec_argv, config);
+    let system_argv = if resolved.system.as_deref() == Some("cmake")
+        && entry.source == BuildSource::Project
+        && (selected_name == "run" || selected_name.starts_with("run-"))
+    {
+        let project_root = resolved.root.as_deref().ok_or_else(|| {
+            super::BuildError::InvalidCommand("CMake project root is unavailable".to_owned())
+        })?;
+        cmake_run_target_argv(project_root, &entry.command, config.execution_timeout()).ok_or_else(
+            || {
+                super::BuildError::InvalidCommand(
+                    "could not resolve the CMake executable target".to_owned(),
+                )
+            },
+        )?
+    } else {
+        system_argv(&exec_command, &exec_argv, config)
+    };
     Ok(ActionPlan {
         ok: true,
         reason: None,
@@ -131,6 +147,52 @@ pub fn resolve_action(
         system_argv,
         config_revision: config.revision(),
     })
+}
+
+fn cmake_run_target_argv(
+    project_root: &str,
+    command: &str,
+    timeout: Option<std::time::Duration>,
+) -> Option<Vec<String>> {
+    let tokens = command
+        .split("&&")
+        .filter_map(|segment| tokenize_command(segment).ok())
+        .find(|tokens| {
+            tokens.first().map(String::as_str) == Some("cmake")
+                && tokens.iter().any(|token| token == "--build")
+        })?;
+    let build_dir = option_argument(&tokens, "--build")?;
+    let target = option_argument(&tokens, "--target")?;
+    let project_root_path = Path::new(project_root);
+    let build_dir = Path::new(build_dir);
+    let build_dir = if build_dir.is_absolute() {
+        build_dir.to_path_buf()
+    } else {
+        project_root_path.join(build_dir)
+    };
+    let executable = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "zignite".to_owned());
+    let mut argv = vec![
+        executable,
+        "--cmake-run-target".to_owned(),
+        format!("--source-dir={project_root}"),
+        format!("--build-dir={}", build_dir.to_string_lossy()),
+        format!("--target={target}"),
+    ];
+    if let Some(timeout) = timeout {
+        argv.push(format!(
+            "--timeout-ms={}",
+            timeout.as_millis().min(u64::MAX as u128)
+        ));
+    }
+    Some(argv)
+}
+
+fn option_argument<'a>(tokens: &'a [String], option: &str) -> Option<&'a str> {
+    let index = tokens.iter().position(|token| token == option)?;
+    tokens.get(index + 1).map(String::as_str)
 }
 
 fn materialize_arguments(
@@ -220,5 +282,27 @@ impl ActionPlan {
     fn with_command_name(mut self, name: String) -> Self {
         self.resolved_command_name = Some(name);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cmake_run_target_argv;
+    use std::time::Duration;
+
+    #[test]
+    fn cmake_run_action_passes_target_paths_as_backend_arguments() {
+        let argv = cmake_run_target_argv(
+            "/tmp/project with spaces",
+            "cmake --build build --target demo && ./build/demo",
+            Some(Duration::from_secs(3)),
+        )
+        .expect("CMake run command parses");
+
+        assert_eq!(argv[1], "--cmake-run-target");
+        assert_eq!(argv[2], "--source-dir=/tmp/project with spaces");
+        assert_eq!(argv[3], "--build-dir=/tmp/project with spaces/build");
+        assert_eq!(argv[4], "--target=demo");
+        assert_eq!(argv[5], "--timeout-ms=3000");
     }
 }
