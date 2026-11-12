@@ -54,14 +54,24 @@ pub fn read_line_limited<R: BufRead>(
     if read == 0 {
         return Ok(None);
     }
-    if bytes.len() > limit {
-        return Err(ProtocolError::LineTooLong { limit });
-    }
     if bytes.last() == Some(&b'\n') {
         bytes.pop();
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+    } else if bytes.len() > limit && bytes.last() == Some(&b'\r') {
+        let has_lf = reader
+            .fill_buf()
+            .map_err(|error| ProtocolError::Io(error.to_string()))?
+            .first()
+            == Some(&b'\n');
+        if has_lf {
+            reader.consume(1);
+            bytes.pop();
+        }
     }
-    if bytes.last() == Some(&b'\r') {
-        bytes.pop();
+    if bytes.len() > limit {
+        return Err(ProtocolError::LineTooLong { limit });
     }
     String::from_utf8(bytes)
         .map(Some)
@@ -187,4 +197,30 @@ fn validate_value(value: &str) -> Result<(), ProtocolError> {
         return Err(ProtocolError::ControlCharacter);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_line_limited, ProtocolError};
+    use std::io::Cursor;
+
+    #[test]
+    fn accepts_exact_limit_before_line_ending() {
+        for ending in [b"\n".as_slice(), b"\r\n".as_slice()] {
+            let mut input = vec![b'x'; 8];
+            input.extend_from_slice(ending);
+            assert_eq!(
+                read_line_limited(&mut Cursor::new(input), 8).expect("line fits"),
+                Some("xxxxxxxx".to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_content_one_byte_over_limit() {
+        assert_eq!(
+            read_line_limited(&mut Cursor::new(b"123456789\n"), 8),
+            Err(ProtocolError::LineTooLong { limit: 8 })
+        );
+    }
 }
