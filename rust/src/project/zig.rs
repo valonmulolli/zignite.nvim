@@ -33,11 +33,7 @@ pub(super) fn parse(root: ProjectRoot, kind: ProjectKind) -> Result<Project, Pro
 
     let mut project = Project::new(root, kind);
     for step in parse_steps(&String::from_utf8_lossy(&result.stdout)) {
-        push_command(
-            &mut project.commands,
-            &step,
-            &format!("zig build {}", super::common::shell_token(&step)),
-        );
+        push_command(&mut project.commands, &step, &step_command(&step));
     }
     Ok(project)
 }
@@ -47,6 +43,14 @@ fn list_steps_argv() -> Vec<OsString> {
         .into_iter()
         .map(OsString::from)
         .collect()
+}
+
+fn step_command(step: &str) -> String {
+    let mut command = format!("zig build {}", super::common::shell_token(step));
+    if step == "test" {
+        command.push_str(" --summary all");
+    }
+    command
 }
 
 pub fn parse_steps(output: &str) -> Vec<String> {
@@ -73,7 +77,7 @@ pub fn parse_steps(output: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::list_steps_argv;
+    use super::{list_steps_argv, step_command};
 
     #[test]
     fn step_listing_uses_supported_zig_build_arguments() {
@@ -86,5 +90,11 @@ mod tests {
             arguments,
             ["zig", "build", "--cache-dir", ".zig-cache", "-l"]
         );
+    }
+
+    #[test]
+    fn test_step_shows_success_summary_without_changing_other_steps() {
+        assert_eq!(step_command("test"), "zig build test --summary all");
+        assert_eq!(step_command("run"), "zig build run");
     }
 }
